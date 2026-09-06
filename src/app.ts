@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { createReadStream, existsSync } from "node:fs";
+import { isIP } from "node:net";
 import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -122,7 +124,7 @@ const BACKUP_VERSION = 1;
 async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
   let target = new URL(url);
   for (let redirect = 0; redirect <= 3; redirect++) {
-    assertSafeRemoteUrl(target, fetcher === fetch);
+    await assertSafeRemoteUrl(target, fetcher === fetch);
     const response = await fetchWithTimeout(fetcher, target, { redirect: "manual", headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -138,18 +140,29 @@ async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof 
   throw new Error("PDF_TOO_MANY_REDIRECTS");
 }
 
-function assertSafeRemoteUrl(url: URL, resolveHost: boolean): void {
+function isBlockedIp(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (isIP(normalized) === 4) {
+    const [first, second] = normalized.split(".").map(Number);
+    return first === 0 || first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
+  }
+  if (isIP(normalized) === 6) {
+    return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb") || normalized.startsWith("::ffff:127.") || normalized.startsWith("::ffff:10.") || normalized.startsWith("::ffff:192.168.") || normalized.startsWith("::ffff:172.");
+  }
+  return true;
+}
+
+async function assertSafeRemoteUrl(url: URL, resolveHost: boolean): Promise<void> {
   if (!/^https?:$/i.test(url.protocol)) throw new Error("PDF_URL_INVALID");
   const hostname = url.hostname.toLowerCase().replace(/[.]$/, "");
   if (["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"].includes(hostname) || hostname.endsWith(".localhost") || hostname.endsWith(".internal") || hostname.endsWith(".local")) throw new Error("PDF_URL_BLOCKED");
   const numericHost = hostname.match(/^\d+$/) ? Number(hostname) : 0;
-  if (numericHost >= 0x7f000000 && numericHost <= 0x7fffffff) throw new Error("PDF_URL_BLOCKED");
-  const octets = hostname.split(".").map(Number);
-  if (octets.length === 4 && octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
-    const [first, second] = octets;
-    if (first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || first === 0) throw new Error("PDF_URL_BLOCKED");
+  if (numericHost > 0 && numericHost <= 0xffffffff && isBlockedIp([numericHost >>> 24, (numericHost >>> 16) & 255, (numericHost >>> 8) & 255, numericHost & 255].join("."))) throw new Error("PDF_URL_BLOCKED");
+  if (isIP(hostname) && isBlockedIp(hostname)) throw new Error("PDF_URL_BLOCKED");
+  if (resolveHost) {
+    const addresses = await lookup(hostname, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some((entry) => isBlockedIp(entry.address))) throw new Error("PDF_URL_BLOCKED");
   }
-  if (resolveHost && hostname.includes(":")) throw new Error("PDF_URL_BLOCKED");
 }
 
 function sessionToken(password: string): string {
@@ -238,6 +251,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "same-origin");
+    c.header("Cache-Control", "no-store");
     c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
   });
   app.use("*", async (c, next) => {
@@ -254,7 +268,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
       const origin = c.req.header("origin");
       const expectedOrigin = process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
-      if (origin && origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
+      if (origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
     }
     return next();
   });

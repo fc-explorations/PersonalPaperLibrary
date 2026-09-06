@@ -388,6 +388,7 @@ describe("HTTP application", () => {
     expect(saveResponse.status).toBe(201);
     const settings = await source.app.request("/settings");
     const settingsHtml = await settings.text();
+    expect(settingsHtml).toContain('<section class="panel settings-page">');
     expect(settingsHtml).toContain("Download backup");
     expect(settingsHtml).toContain("data-restore-backup");
     const backupResponse = await source.app.request("/api/export/backup");

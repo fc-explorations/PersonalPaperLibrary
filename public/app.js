@@ -226,6 +226,13 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
   }
 });
 
+const folderPdfInput = document.querySelector("[data-folder-pdf-input]");
+const folderPdfCount = document.querySelector("[data-folder-pdf-count]");
+folderPdfInput?.addEventListener("change", () => {
+  const pdfCount = [...folderPdfInput.files].filter((file) => /\.pdf$/i.test(file.name)).length;
+  if (folderPdfCount) folderPdfCount.textContent = pdfCount ? `${pdfCount} PDF file${pdfCount === 1 ? "" : "s"} selected` : "No PDF files selected";
+});
+
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
