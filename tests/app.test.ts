@@ -394,6 +394,9 @@ describe("HTTP application", () => {
     expect(settingsHtml).toContain('<section class="panel settings-page">');
     expect(settingsHtml).toContain("Download backup");
     expect(settingsHtml).toContain("data-restore-backup");
+    expect(settingsHtml).toContain("Entries per page");
+    expect(settingsHtml).toContain('value="10" data-theme-setting="pageSize"');
+    expect(settingsHtml).toContain('value="25" data-theme-setting="pageSize"');
     const backupResponse = await source.app.request("/api/export/backup");
     expect(backupResponse.status).toBe(200);
     const backup = await backupResponse.json();
@@ -434,16 +437,26 @@ describe("HTTP application", () => {
 
   it("paginates the library without changing the total count", async () => {
     const context = testApp();
-    for (let index = 0; index < 51; index += 1) {
+    for (let index = 0; index < 501; index += 1) {
       const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: `Pagination paper ${index}`, metadataSource: "manual" }) });
       expect(response.status).toBe(201);
     }
     const firstPage = await (await context.app.request("/")).text();
-    expect(firstPage).toContain("51 papers");
-    expect(firstPage).toContain("Page 1 of 2");
+    expect(firstPage).toContain("501 papers");
+    expect(firstPage).toContain("Page 1 of 11");
+    expect(firstPage).toContain(">First</span>");
+    expect(firstPage).toContain(">Previous</span>");
+    expect(firstPage).toContain(">2</a>");
+    expect(firstPage).toContain(">…</span>");
+    expect(firstPage).toContain(">Next</a>");
+    expect(firstPage).toContain(">Last</a>");
     const secondPage = await (await context.app.request("/?page=2")).text();
-    expect(secondPage).toContain("Page 2 of 2");
+    expect(secondPage).toContain("Page 2 of 11");
     expect(secondPage).toContain("Pagination paper");
+    const compactPage = await (await context.app.request("/?pageSize=25&page=3")).text();
+    expect(compactPage).toContain("Page 3 of 21");
+    const smallPage = await (await context.app.request("/?pageSize=10&page=3")).text();
+    expect(smallPage).toContain("Page 3 of 51");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

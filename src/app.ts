@@ -40,6 +40,7 @@ const DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024;
 const SESSION_COOKIE = "ppl_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 const LIBRARY_PAGE_SIZE = 50;
+const LIBRARY_PAGE_SIZES = [10, 25, 50, 100] as const;
 
 function jsonError(c: Context, status: number, code: string, message: string) {
   return c.json({ error: { code, message } }, status as ContentfulStatusCode);
@@ -51,6 +52,11 @@ function errorMessage(error: unknown): string {
 
 function isClientValidationError(message: string): boolean {
   return ["TITLE_REQUIRED", "TITLE_TOO_LONG", "INVALID_YEAR", "INVALID_ARXIV_ID", "INVALID_DATE", "INVALID_URL", "INVALID_DOI"].includes(message);
+}
+
+function parsePageSize(value: unknown): number {
+  const parsed = Number(value);
+  return LIBRARY_PAGE_SIZES.includes(parsed as typeof LIBRARY_PAGE_SIZES[number]) ? parsed : LIBRARY_PAGE_SIZE;
 }
 
 async function finalizeMove(storage: FileStorage, move: StorageMove): Promise<void> {
@@ -292,10 +298,11 @@ export function createApp(dependencies: AppDependencies = {}) {
     const { q, tag, all, untagged } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
     const filters = { q, tag, untagged };
+    const pageSize = parsePageSize(c.req.query("pageSize"));
     const total = repo.count(filters);
     const requestedPage = Math.max(1, Number.parseInt(c.req.query("page") || "1", 10) || 1);
-    const page = total ? Math.min(requestedPage, Math.ceil(total / LIBRARY_PAGE_SIZE)) : 1;
-    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: LIBRARY_PAGE_SIZE, offset: (page - 1) * LIBRARY_PAGE_SIZE }), repo.tags.list(), { q, tag, sort, all, untagged, page, total, storedPdfCount: repo.countStored(filters) }));
+    const page = total ? Math.min(requestedPage, Math.ceil(total / pageSize)) : 1;
+    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: pageSize, offset: (page - 1) * pageSize }), repo.tags.list(), { q, tag, sort, all, untagged, page, pageSize, total, storedPdfCount: repo.countStored(filters) }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));

@@ -14,6 +14,7 @@ const backgroundThemes = {
   mint: "#e5f1ea",
 };
 const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
+const pageSizeOptions = ["10", "25", "50", "100"];
 
 function loadTheme() {
   try {
@@ -33,6 +34,7 @@ function applyTheme(theme) {
   const selectedAccent = accentKey === "custom" ? { accent: customAccent, dark: `color-mix(in srgb, ${customAccent} 82%, black 18%)`, soft: `color-mix(in srgb, ${customAccent} 12%, white 88%)`, border: `color-mix(in srgb, ${customAccent} 48%, white 52%)` } : accent;
   const selectedBackground = backgroundKey === "custom" ? customBackground : background;
   const contentWidth = contentWidthOptions.includes(String(theme.contentWidth)) ? String(theme.contentWidth) : "90";
+  const pageSize = pageSizeOptions.includes(String(theme.pageSize)) ? String(theme.pageSize) : "50";
   document.documentElement.style.setProperty("--accent", selectedAccent.accent);
   document.documentElement.style.setProperty("--accent-dark", selectedAccent.dark);
   document.documentElement.style.setProperty("--accent-soft", selectedAccent.soft);
@@ -40,7 +42,7 @@ function applyTheme(theme) {
   document.documentElement.style.setProperty("--page-bg", selectedBackground);
   document.querySelectorAll("[data-theme-setting]").forEach((input) => {
     const setting = input.dataset.themeSetting;
-    const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : contentWidth;
+    const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : setting === "contentWidth" ? contentWidth : pageSize;
     input.checked = input.value === selected;
   });
   document.documentElement.style.setProperty("--content-width", `${contentWidth}%`);
@@ -51,6 +53,17 @@ function applyTheme(theme) {
 
 let selectedTheme = loadTheme();
 applyTheme(selectedTheme);
+
+const libraryPageSize = document.querySelector("[data-library-page-size]");
+if (libraryPageSize && !new URLSearchParams(window.location.search).has("pageSize")) {
+  const savedPageSize = pageSizeOptions.includes(String(selectedTheme.pageSize)) ? String(selectedTheme.pageSize) : "50";
+  if (libraryPageSize.dataset.libraryPageSize !== savedPageSize) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("pageSize", savedPageSize);
+    url.searchParams.delete("page");
+    window.location.replace(url);
+  }
+}
 
 document.querySelectorAll("[data-theme-setting]").forEach((input) => input.addEventListener("change", () => {
   selectedTheme = { ...selectedTheme, [input.dataset.themeSetting]: input.value };
