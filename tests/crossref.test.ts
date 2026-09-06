@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { lookupCrossref } from "../src/services/crossref.js";
+
+const work = {
+  title: ["An Introduction to Variational Methods for Graphical Models"],
+  author: [{ given: "Michael I.", family: "Jordan" }, { given: "Zoubin", family: "Ghahramani" }],
+  DOI: "10.1007/example",
+  URL: "https://doi.org/10.1007/example",
+  abstract: "<p>A useful abstract.</p>",
+  "container-title": ["Machine Learning"],
+  volume: "37",
+  page: "183-233",
+  published: { "date-parts": [[1999]] },
+};
+
+describe("Crossref lookup", () => {
+  it("looks up an exact DOI", async () => {
+    const fetcher = async () => new Response(JSON.stringify({ message: work }), { status: 200 });
+    const result = await lookupCrossref({ doi: "10.1007/example" }, fetcher);
+    expect(result).toMatchObject({ authors: ["Michael I. Jordan", "Zoubin Ghahramani"], year: 1999, journalRef: "Machine Learning, vol. 37, pp. 183-233", doi: "10.1007/example" });
+    expect(result.abstract).toBe("A useful abstract.");
+  });
+
+  it("looks up a corrected title", async () => {
+    const fetcher = async () => new Response(JSON.stringify({ message: { items: [work] } }), { status: 200 });
+    const result = await lookupCrossref({ title: work.title[0] }, fetcher);
+    expect(result.title).toBe(work.title[0]);
+    expect(result.journalRef).toContain("Machine Learning");
+  });
+});

@@ -1,4 +1,4 @@
-# Personal arXiv Paper Library
+# PersonalPaperLibrary
 
 A small, private local web app for collecting academic papers for research and later reading.
 
@@ -28,6 +28,14 @@ npm run dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
+Or start the server and open the default browser automatically:
+
+```bash
+npm run local
+```
+
+Press `Ctrl-C` in the terminal to stop it.
+
 The local app binds to localhost and does not require authentication.
 
 ## Useful commands
@@ -37,6 +45,7 @@ npm run dev          # Start the development server with reloads
 npm run build        # Type-check the project
 npm test             # Run automated tests
 npm run db:migrate   # Apply SQLite migrations
+npm run metadata:backfill # Reparse PDFs and refresh citation metadata
 ```
 
 ## Local data
@@ -52,6 +61,8 @@ This directory is intentionally ignored by Git. Back it up separately if you wan
 ## Scope
 
 Version 1 focuses on arXiv imports, individual and bulk local PDF uploads, metadata editing, grouping tags, search, sorting, and PDF viewing. It does not include reading states, priorities, notes, annotations, folders, full-text search, or multiple users.
+
+Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv or Crossref using the current arXiv ID, DOI, or corrected title.
 
 Cloudflare Workers, D1, R2, and Access are planned for a later deployment phase.
 

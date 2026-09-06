@@ -7,10 +7,12 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openDatabase } from "./db/database.js";
 import { PaperRepository } from "./repositories/papers.js";
 import { normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
+import { extractPdfMetadata } from "./services/pdf-metadata.js";
+import { lookupCrossref } from "./services/crossref.js";
 import { FileStorage } from "./services/storage.js";
 import { parseAuthors, parseTags, parseYear, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { renderAddPage, renderEditPage, renderLibrary, renderPaperPage } from "./views.js";
-import type { PaperDraftInput, SortOrder } from "./types.js";
+import type { PaperDraftInput, PaperMetadata, SortOrder } from "./types.js";
 
 export interface AppDependencies {
   db?: Database;
@@ -35,6 +37,10 @@ function categories(value: unknown): string[] {
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
   return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
+}
+
+function doiFromInput(input: string): string | undefined {
+  return input.match(/10\.\d{4,9}\/[\-._;()/:A-Z0-9]+/i)?.[0];
 }
 
 function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
@@ -100,27 +106,66 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/api/papers", (c) => c.json({ papers: repo.list({ q: c.req.query("q"), tag: c.req.query("tag"), sort: (c.req.query("sort") || "newest") as SortOrder }), tags: repo.tags.list() }));
 
-  app.post("/api/import/arxiv", async (c) => {
+  const importPaper = async (c: Context) => {
     try {
       const body = await c.req.json<{ input?: string }>();
-      const normalized = body.input ? normalizeArxivInput(body.input) : null;
-      if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_INPUT", "Enter a valid arXiv ID or URL.");
-      const existing = repo.findDuplicate({ arxivId: normalized.id, title: "" });
-      if (existing) return c.json({ existing, duplicate: true });
-      const metadata = await fetchArxivMetadata(normalized, fetcher);
-      metadata.sourceUrl = body.input?.trim() || normalized.abstractUrl;
-      const warnings: string[] = [];
-      let pdf: { status: string; stagingToken?: string; sizeBytes?: number; sha256?: string } = { status: "not_found" };
-      try {
-        const bytes = await fetchArxivPdf(normalized, maxPdfBytes, fetcher);
-        const staged = storage.stage(bytes);
-        pdf = { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 };
-      } catch (error) {
-        warnings.push(errorMessage(error) === "PDF_TOO_LARGE" ? "The arXiv PDF is larger than the configured upload limit." : "The arXiv PDF could not be downloaded. You can upload it manually.");
+      const input = body.input?.trim() || "";
+      if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter a paper title, DOI, URL, or identifier.");
+
+      const normalized = normalizeArxivInput(input);
+      if (normalized) {
+        const existing = repo.findDuplicate({ arxivId: normalized.id, title: "" });
+        if (existing) return c.json({ existing, duplicate: true });
+        const metadata = await fetchArxivMetadata(normalized, fetcher);
+        metadata.sourceUrl = input || normalized.abstractUrl;
+        const warnings: string[] = [];
+        let pdf: { status: string; stagingToken?: string; sizeBytes?: number; sha256?: string } = { status: "not_found" };
+        try {
+          const bytes = await fetchArxivPdf(normalized, maxPdfBytes, fetcher);
+          const staged = storage.stage(bytes);
+          pdf = { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 };
+        } catch (error) {
+          warnings.push(errorMessage(error) === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
+        }
+        return c.json({ paper: metadata, pdf, warnings });
       }
-      return c.json({ paper: metadata, pdf, warnings });
+
+      const doi = doiFromInput(input);
+      let metadata: PaperMetadata;
+      const warnings: string[] = [];
+      try {
+        metadata = await lookupCrossref(doi ? { doi } : { title: input }, fetcher);
+      } catch {
+        metadata = {
+          title: input,
+          authors: [],
+          categories: [],
+          metadataSource: "manual",
+          sourceUrl: /^https?:\/\//i.test(input) ? input : undefined,
+        };
+        warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+      }
+      if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
+      return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings });
     } catch (error) {
-      return jsonError(c, 502, "ARXIV_IMPORT_FAILED", errorMessage(error));
+      return jsonError(c, 502, "IMPORT_FAILED", errorMessage(error));
+    }
+  };
+
+  app.post("/api/import", importPaper);
+  app.post("/api/import/arxiv", importPaper);
+
+  app.post("/api/metadata/lookup", async (c) => {
+    try {
+      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string }>();
+      if (body.arxivId) {
+        const normalized = normalizeArxivInput(body.arxivId);
+        if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
+        return c.json({ paper: await fetchArxivMetadata(normalized, fetcher), provider: "arxiv" });
+      }
+      return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi }, fetcher), provider: "crossref" });
+    } catch (error) {
+      return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
     }
   });
 
@@ -153,7 +198,35 @@ export function createApp(dependencies: AppDependencies = {}) {
           validatePdf(bytes, file.name || "paper.pdf", maxPdfBytes);
           const title = titleFromFilename(file.name || "paper.pdf");
           const staged = storage.stage(bytes);
-          const draft: PaperDraftInput = { title, authors: [], categories: [], metadataSource: "manual", tags: [] };
+          const extracted = await extractPdfMetadata(storage.getStagedPath(staged.token));
+          let arxivMetadata: Awaited<ReturnType<typeof fetchArxivMetadata>> | undefined;
+          if (extracted.arxivId) {
+            const normalized = normalizeArxivInput(extracted.arxivId);
+            if (normalized) {
+              try {
+                arxivMetadata = await fetchArxivMetadata(normalized, fetcher);
+              } catch {
+                // Keep local first-page extraction when arXiv is unavailable.
+              }
+            }
+          }
+          const draft: PaperDraftInput = {
+            title: arxivMetadata?.title || extracted.title || title,
+            authors: arxivMetadata?.authors.length ? arxivMetadata.authors : extracted.authors,
+            year: arxivMetadata?.year || extracted.year,
+            publishedDate: arxivMetadata?.publishedDate,
+            updatedDate: arxivMetadata?.updatedDate,
+            abstract: arxivMetadata?.abstract,
+            primaryCategory: arxivMetadata?.primaryCategory,
+            categories: arxivMetadata?.categories.length ? arxivMetadata.categories : [],
+            journalRef: arxivMetadata ? arxivMetadata.journalRef : extracted.journalRef,
+            doi: arxivMetadata ? arxivMetadata.doi : undefined,
+            arxivId: arxivMetadata?.arxivId || extracted.arxivId,
+            arxivUrl: arxivMetadata?.arxivUrl,
+            sourceUrl: arxivMetadata?.sourceUrl || (extracted.arxivId ? `https://arxiv.org/abs/${extracted.arxivId}` : undefined),
+            metadataSource: arxivMetadata ? "arxiv" : "mixed",
+            tags: [],
+          };
           const duplicate = repo.findDuplicate(draft, staged.sha256);
           if (duplicate) {
             storage.discardStagedFile(staged.token);

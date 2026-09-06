@@ -36,6 +36,10 @@ export class FileStorage {
     if (existsSync(path)) unlinkSync(path);
   }
 
+  getStagedPath(token: string): string {
+    return this.stagedPath(token);
+  }
+
   put(paperId: string, bytes: Uint8Array): { key: string; sha256: string } {
     const key = `papers/${paperId}.pdf`;
     writeFileSync(this.pdfPath(paperId), bytes);
@@ -45,6 +49,10 @@ export class FileStorage {
   get(paperId: string): Buffer | null {
     const path = this.pdfPath(paperId);
     return existsSync(path) ? readFileSync(path) : null;
+  }
+
+  getPath(paperId: string): string {
+    return this.pdfPath(paperId);
   }
 
   delete(paperId: string): void {
@@ -66,7 +74,7 @@ export class FileStorage {
   }
 
   private pdfPath(paperId: string) {
-    if (!/^[a-f0-9-]+$/i.test(paperId)) throw new Error("INVALID_PAPER_ID");
+    if (!/^[a-z0-9_-]+$/i.test(paperId)) throw new Error("INVALID_PAPER_ID");
     return join(this.pdfDir, `${paperId}.pdf`);
   }
 

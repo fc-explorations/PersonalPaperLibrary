@@ -1,4 +1,4 @@
-# Personal arXiv Paper Library
+# PersonalPaperLibrary
 
 ## Build brief
 
@@ -29,6 +29,7 @@ The coding LLM should implement, test, and deploy the application when the requi
 - Upload a PDF manually from the user's computer.
 - Import a folder containing multiple PDFs.
 - Edit basic metadata for any saved paper.
+- Refresh metadata from arXiv or Crossref using an arXiv ID, DOI, or corrected title.
 - Group papers with user-defined tags.
 - Search and browse the collection.
 - Open and download stored PDFs.
@@ -90,6 +91,16 @@ https://arxiv.org/abs/{arxiv_id}
 
 If the user supplies an explicit version, preserve it in the stored identifier and link. For duplicate detection, treat different versions of the same base arXiv identifier as the same paper unless the user explicitly chooses to keep both.
 
+### Refresh citation metadata
+
+The add and edit forms provide a `Find metadata` action. Lookup precedence is:
+
+1. Exact arXiv ID through arXiv.
+2. Exact DOI through Crossref.
+3. Corrected title through Crossref title search.
+
+Populate the form with the matched authors, publication date/year, venue or journal reference, abstract, DOI, and source URL. Preserve the user's current title and require the user to review and save the result. A failed lookup must leave the existing form unchanged.
+
 ### Add from a local PDF
 
 The Add Paper page also provides an Upload PDF action.
@@ -116,7 +127,7 @@ For each file:
 - Create a manual paper record with the derived title.
 - Detect exact duplicates by PDF hash and skip them.
 
-Bulk import does not attempt PDF parsing or metadata extraction. Each created record can be edited later. The response and UI must report imported, skipped, and failed files individually so one bad file does not abort the whole folder.
+Bulk import performs lightweight first-page metadata extraction when the local `pdftotext` utility is available. When a detected arXiv identifier can be resolved, prefer exact arXiv metadata. Each created record can be edited later. The response and UI must report imported, skipped, and failed files individually so one bad file does not abort the whole folder.
 
 ### Browse the library
 
@@ -426,6 +437,7 @@ API:
 ```text
 GET    /api/papers
 POST   /api/import/arxiv       Resolve arXiv metadata and PDF status
+POST   /api/metadata/lookup    Find metadata by arXiv ID, DOI, or title
 POST   /api/uploads             Stage one local PDF
 POST   /api/bulk-upload         Import multiple local PDFs
 POST   /api/papers             Create a paper record
@@ -433,8 +445,8 @@ GET    /api/papers/:id
 PATCH  /api/papers/:id
 DELETE /api/papers/:id
 POST   /api/papers/:id/pdf     Upload or replace a PDF
-GET    /papers/:id/pdf         Stream PDF inline
-GET    /papers/:id/pdf?download=1
+GET    /api/papers/:id/pdf     Stream PDF inline
+GET    /api/papers/:id/pdf?download=1
 
 GET    /api/tags
 POST   /api/tags
@@ -529,7 +541,7 @@ PAPERS   R2 bucket for private PDFs
 Recommended environment variables:
 
 ```text
-APP_NAME=Personal arXiv Paper Library
+APP_NAME=PersonalPaperLibrary
 MAX_PDF_MB=50
 OWNER_EMAIL=owner@example.com
 ```

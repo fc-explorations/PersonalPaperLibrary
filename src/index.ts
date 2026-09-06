@@ -6,5 +6,5 @@ const storage = new FileStorage();
 storage.cleanupStaging();
 
 serve({ fetch: createApp().fetch, hostname: "127.0.0.1", port: Number(process.env.PORT || 3000) }, (info) => {
-  console.log(`Personal arXiv Paper Library running at http://${info.address}:${info.port}`);
+  console.log(`PersonalPaperLibrary running at http://${info.address}:${info.port}`);
 });

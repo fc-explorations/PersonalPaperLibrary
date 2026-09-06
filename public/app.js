@@ -52,12 +52,12 @@ async function jsonRequest(url, options) {
   return body;
 }
 
-document.querySelector("[data-arxiv-form]")?.addEventListener("submit", async (event) => {
+document.querySelector("[data-import-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  setStatus(form, "Fetching metadata and PDF…");
+  setStatus(form, "Looking up paper metadata…");
   try {
-    const body = await jsonRequest("/api/import/arxiv", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) });
+    const body = await jsonRequest("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) });
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
       form.insertAdjacentHTML("beforeend", `<a class="inline-link" href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
@@ -92,7 +92,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
     const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: new FormData(form) });
     setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}.`);
     const results = form.querySelector("[data-bulk-results]");
-    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
+    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), `<a class="inline-link" href="/">View library →</a>`].join("");
   } catch (error) {
     setStatus(form, error.message, true);
   }
@@ -112,6 +112,28 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
   try {
     const result = await jsonRequest(id ? `/api/papers/${encodeURIComponent(id)}` : "/api/papers", { method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
+  } catch (error) {
+    setStatus(form, error.message, true);
+  }
+}));
+
+document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
+  const form = button.closest("[data-paper-form]");
+  setStatus(form, "Looking up citation metadata…");
+  try {
+    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId") }) });
+    setValue(form, "title", result.paper.title);
+    setValue(form, "authors", (result.paper.authors || []).join("\n"));
+    setValue(form, "year", result.paper.year);
+    setValue(form, "publishedDate", result.paper.publishedDate);
+    setValue(form, "abstract", result.paper.abstract);
+    setValue(form, "primaryCategory", result.paper.primaryCategory);
+    setValue(form, "categories", (result.paper.categories || []).join(", "));
+    setValue(form, "journalRef", result.paper.journalRef);
+    setValue(form, "doi", result.paper.doi);
+    setValue(form, "arxivId", result.paper.arxivId);
+    setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
+    setStatus(form, `Metadata found via ${result.provider}. Review it, then save.`);
   } catch (error) {
     setStatus(form, error.message, true);
   }
@@ -147,3 +169,14 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
 function escapeText(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
+
+const libraryToolbar = document.querySelector(".toolbar");
+libraryToolbar?.querySelector("select")?.addEventListener("change", () => {
+  libraryToolbar.requestSubmit();
+});
+libraryToolbar?.querySelector("input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    libraryToolbar.requestSubmit();
+  }
+});
