@@ -281,11 +281,21 @@ document.querySelector("[data-delete-group]")?.addEventListener("click", async (
 document.querySelector("[data-toggle-bulk-tags]")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
   const editor = document.querySelector("[data-bulk-tag-editor]");
+  const actions = document.querySelector("[data-bulk-actions]");
   if (!editor) return;
-  const open = editor.hidden;
-  editor.hidden = !open;
-  button.setAttribute("aria-expanded", String(open));
-  if (open) editor.querySelector("input")?.focus();
+  editor.hidden = false;
+  if (actions) actions.hidden = true;
+  button.setAttribute("aria-expanded", "true");
+  editor.querySelector("select")?.focus();
+});
+
+document.querySelector("[data-cancel-bulk-tags]")?.addEventListener("click", () => {
+  const editor = document.querySelector("[data-bulk-tag-editor]");
+  const actions = document.querySelector("[data-bulk-actions]");
+  const toggle = document.querySelector("[data-toggle-bulk-tags]");
+  if (editor) editor.hidden = true;
+  if (actions) actions.hidden = false;
+  toggle?.setAttribute("aria-expanded", "false");
 });
 
 document.querySelector("[data-bulk-tag-select]")?.addEventListener("change", (event) => {
