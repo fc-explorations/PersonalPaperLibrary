@@ -1,4 +1,5 @@
 import type { PaperRecord, PaperMetadata, SortOrder } from "./types.js";
+import type { SummaryRecord, StoredQuestion } from "./repositories/analysis.js";
 
 export function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -73,6 +74,38 @@ function renderText(value: unknown, autoLink = true): string {
   return linked.replace(/\u0000(\d+)\u0000/g, (_, index: string) => fragments[Number(index)]);
 }
 
+/** Render the small Markdown subset used by generated analysis without ever trusting raw HTML. */
+export function renderMarkdown(value: string): string {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] = [];
+  let inCode = false;
+  const inline = (text: string) => escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/_([^_]+)_/g, "<em>$1</em>");
+  const flushParagraph = () => { if (paragraph.length) { output.push(`<p>${inline(paragraph.join(" "))}</p>`); paragraph = []; } };
+  const flushList = () => { if (list.length) { output.push(`<ul>${list.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>`); list = []; } };
+  const flushCode = () => { if (code.length) { output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`); code = []; } };
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) { flushParagraph(); flushList(); if (inCode) flushCode(); inCode = !inCode; continue; }
+    if (inCode) { code.push(line); continue; }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { flushParagraph(); flushList(); const level = heading[1].length; output.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
+    const item = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (item) { flushParagraph(); list.push(item[1]); continue; }
+    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (numbered) { flushParagraph(); list.push(numbered[1]); continue; }
+    flushList(); paragraph.push(line.trim());
+  }
+  flushParagraph(); flushList(); if (inCode) flushCode();
+  return output.join("");
+}
+
 function layout(title: string, body: string, showHeader = true): string {
   return `<!doctype html>
 <html lang="en">
@@ -90,7 +123,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=7" defer></script>
+  <script src="/app.js?v=8" defer></script>
 </body>
 </html>`;
 }
@@ -165,6 +198,18 @@ function folderIcon(): string {
 
 function copyIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>`;
+}
+
+function analysisIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>`;
+}
+
+function refreshIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">refresh</span>`;
+}
+
+function expandIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">unfold_more</span>`;
 }
 
 function bibtexEscape(value: string): string {
@@ -357,8 +402,29 @@ export function renderAddPage(): string {
   return layout("Add paper", body);
 }
 
-export function renderPaperPage(paper: PaperRecord): string {
-  const summary = paperSummary(paper);
+function analysisMeta(provider: string, model: string, generatedAt: string, durationMs?: number, className = "analysis-meta"): string {
+  const duration = durationMs === undefined ? "" : ` · ${Math.floor(durationMs / 60000)}:${String(Math.floor(durationMs / 1000) % 60).padStart(2, "0")}`;
+  return `<p class="${className} muted">${escapeHtml(provider)} · ${escapeHtml(model)} · ${escapeHtml(new Date(generatedAt).toLocaleString("en-GB"))}${duration}</p>`;
+}
+
+function renderSummarySection(summary?: SummaryRecord | null): string {
+  const state = summary?.status === "stale" ? `<p class="status-warning">The stored summary is stale because the PDF changed. Regenerate it.</p>` : summary?.status === "error" ? `<p class="status-error">Summary generation failed: ${escapeHtml(summary.errorMessage || "Unknown error")}</p>` : "";
+  const content = summary?.status === "complete" && summary.content ? `<div class="analysis-content">${renderMarkdown(summary.content.replace(/(^|\n)(\s*(?:[-*+]\s+|\d+[.)]\s+)[^\n]+(?:\n|$))+/g, (_, prefix: string, block: string) => `${prefix}${block.split(/\n/).map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")}\n`))}</div>` : "";
+  const button = summary?.status === "complete" ? `<button class="button button-secondary button-small" type="button" data-regenerate-summary>${refreshIcon()}<span>Regenerate summary</span></button>` : `<button class="button button-secondary" type="button" data-generate-summary>${analysisIcon()}<span>Generate summary</span></button>`;
+  return `<details class="detail-section analysis-section" data-summary-section><summary>Paper summary</summary><div class="analysis-body">${state}${content}${summary ? analysisMeta(summary.provider, summary.model, summary.generatedAt, summary.durationMs) : ""}<div class="analysis-actions">${button}<span class="form-status" data-summary-status role="status"></span></div></div></details>`;
+}
+
+function renderQuestionsSection(questions: StoredQuestion[], summary?: SummaryRecord | null): string {
+  const summaryReady = summary?.status === "complete";
+  const groups = new Map<string, StoredQuestion[]>();
+  questions.forEach((question) => groups.set(question.groupId, [...(groups.get(question.groupId) || []), question]));
+  const groupSections = [...groups.entries()].map(([groupId, items]) => `<details class="question-group" data-question-group="${escapeHtml(groupId)}"><summary>${escapeHtml(items[0].groupTitle)}</summary><div class="question-group-body"><p class="muted">${escapeHtml(items[0].groupDescription)}</p>${items.map((question) => `<article class="question-item" data-question-id="${escapeHtml(question.id)}"><h3>${escapeHtml(question.label)}</h3>${question.answer?.status === "complete" ? `<div class="analysis-content question-answer">${renderMarkdown(question.answer.content)}</div>${analysisMeta(question.answer.provider, question.answer.model, question.answer.generatedAt, question.answer.durationMs, "analysis-meta question-answer-meta")}` : question.answer?.status === "error" ? `<p class="status-error">Answer generation failed: ${escapeHtml(question.answer.errorMessage || "Unknown error")}</p>` : question.answer?.status === "stale" ? `<p class="status-warning">This answer is stale because the PDF changed.</p>` : `<p class="muted question-empty">Not answered yet.</p>`}<div class="question-actions"><button class="button button-secondary button-small" type="button" data-generate-question="${escapeHtml(question.id)}"${summaryReady ? "" : " disabled"}>${question.answer ? refreshIcon() : analysisIcon()}<span>${question.answer ? "Regenerate answer" : "Generate answer"}</span></button>${question.isCustom ? `<button class="button button-danger button-small" type="button" data-delete-question="${escapeHtml(question.id)}">${deleteIcon()}<span>Delete</span></button>` : ""}</div><span class="form-status" data-question-status role="status"></span></article>`).join("")} </div></details>`).join("");
+  const addQuestion = `<details class="add-question-form"><summary>Add new question</summary><div class="add-question-body"><p class="muted">Ask an additional open question about this paper. It will be saved for this paper.</p><form data-add-question><label>Question<textarea name="question" required maxlength="5000" rows="3" placeholder="What else would you like to know?"></textarea></label><button class="button button-secondary" type="submit">${analysisIcon()}<span>Add question</span></button><p class="form-status" role="status"></p></form></div></details>`;
+  return `<section class="detail-section analysis-questions" data-questions-section><div class="section-heading"><h2>Paper questions</h2><div class="question-section-actions"><button class="icon-button" type="button" data-toggle-questions aria-label="Expand all questions" title="Expand all questions">${expandIcon()}</button><button class="button button-secondary button-small" type="button" data-generate-all-questions${summaryReady ? "" : " disabled"}>${analysisIcon()}<span>Generate all questions</span></button></div></div><p class="form-status${summaryReady ? "" : " status-warning"}" data-questions-status role="status">${summaryReady ? "" : "Generate the paper summary before generating answers."}</p>${groupSections}${addQuestion}</section>`;
+}
+
+export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | null, questions: StoredQuestion[] = []): string {
+  const paperLine = paperSummary(paper);
   const bibtex = bibtexEntry(paper);
   const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
   const metadata = [
@@ -374,7 +440,7 @@ export function renderPaperPage(paper: PaperRecord): string {
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
   const tagsSection = paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : "";
   const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : webResourceUrl ? `<a class="icon-button" href="${escapeHtml(webResourceUrl)}" target="_blank" rel="noreferrer" aria-label="Open web resource" title="Open web resource">${openIcon()}<span>Web resource</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section>${tagsSection}<section class="detail-section bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
+  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${renderText(paperLine)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section>${tagsSection}${renderSummarySection(summary)}${renderQuestionsSection(questions, summary)}<section class="detail-section bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
   return layout(paper.title, body);
 }
 
@@ -406,6 +472,7 @@ export function renderSettingsPage(): string {
     <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "mint", "Mint", "#e5f1ea")}${customThemeOption("background", "#f7f6f2")}</div></div>
     <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("50")}${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>
     <div class="settings-group"><h2>Entries per page</h2><p class="muted">Choose how many papers appear on each library page.</p><div class="width-options">${pageSizeOption("10")}${pageSizeOption("25")}${pageSizeOption("50")}${pageSizeOption("100")}</div></div>
+    <div class="settings-group"><h2>AI providers</h2><p class="muted">Choose the provider used for on-demand paper summaries and questions.</p><form data-ai-settings><section class="settings-subsection active-provider-settings"><h3>Active provider</h3><label>Provider<select name="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama</option></select></label></section><div class="ai-provider-columns"><section class="settings-subsection"><h3>OpenAI</h3><label>Model<select name="openaiModel"><option>gpt-5-nano</option><option>gpt-5.4-nano</option><option>gpt-5.4-mini</option><option>gpt-5.4</option><option>gpt-5.5</option><option>gpt-4.1-mini</option><option>gpt-4.1</option><option>gpt-4.1-nano</option><option>gpt-4o-mini</option><option>gpt-4o</option></select></label><label>API key<input name="openaiApiKey" type="password" autocomplete="new-password" placeholder="Enter a replacement key"><span class="muted" data-openai-key-status>Checking key status…</span></label></section><section class="settings-subsection"><h3>Ollama</h3><label>Base URL<input name="ollamaBaseUrl" type="url" placeholder="http://localhost:11434"></label><label>Model<input name="ollamaModel" type="text" placeholder="e.g. llama3.2"></label></section></div><div class="ai-key-actions"><button class="button button-secondary" type="submit">Save AI settings</button><button class="button button-secondary" type="button" data-clear-openai-key>Clear OpenAI key</button></div><p class="form-status" data-ai-settings-status role="status"></p></form></div>
     <div class="settings-group"><h2>Backup and restore</h2><p class="muted">Download your metadata and PDFs as one backup file, or restore a backup into this library. Existing papers are preserved.</p><div class="backup-actions"><a class="button button-secondary" href="/api/export/backup">Download backup</a><form data-restore-backup><label class="backup-file">Choose backup<input name="backup" type="file" accept="application/json,.json" required></label><button class="button button-secondary" type="submit">Restore backup</button><p class="form-status" role="status"></p></form></div></div>
   </section>`;
   return layout("Settings", body);

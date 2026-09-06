@@ -20,10 +20,14 @@ import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
 import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
+import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
+import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
+import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
+import { extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
-import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderPaperPage, renderSettingsPage } from "./views.js";
+import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 
@@ -34,6 +38,9 @@ export interface AppDependencies {
   maxPdfBytes?: number;
   maxRequestBytes?: number;
   authPassword?: string;
+  llmClient?: LlmClient;
+  pdfTextExtractor?: PdfTextExtractor;
+  keychain?: KeychainAdapter;
 }
 
 const DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024;
@@ -41,6 +48,8 @@ const SESSION_COOKIE = "ppl_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 const LIBRARY_PAGE_SIZE = 50;
 const LIBRARY_PAGE_SIZES = [10, 25, 50, 100] as const;
+const SUMMARY_CHUNK_CONCURRENCY = 4;
+const SUMMARY_OPENAI_MODEL = "gpt-4.1-mini";
 
 function jsonError(c: Context, status: number, code: string, message: string) {
   return c.json({ error: { code, message } }, status as ContentfulStatusCode);
@@ -57,6 +66,20 @@ function isClientValidationError(message: string): boolean {
 function parsePageSize(value: unknown): number {
   const parsed = Number(value);
   return LIBRARY_PAGE_SIZES.includes(parsed as typeof LIBRARY_PAGE_SIZES[number]) ? parsed : LIBRARY_PAGE_SIZE;
+}
+
+async function mapWithConcurrency<Input, Output>(items: Input[], limit: number, mapper: (item: Input, index: number) => Promise<Output>): Promise<Output[]> {
+  const results = new Array<Output>(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
 }
 
 async function finalizeMove(storage: FileStorage, move: StorageMove): Promise<void> {
@@ -125,7 +148,7 @@ function pdfFilename(title: string, used: Set<string>): string {
 
 type StagedPdfResult = { status: "not_found" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
 
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 
 async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
   let target = new URL(url);
@@ -245,12 +268,97 @@ export function createApp(dependencies: AppDependencies = {}) {
   const db = dependencies.db || openDatabase();
   const storage = dependencies.storage || new FileStorage();
   const repo = new PaperRepository(db);
+  const analysis = new AnalysisRepository(db);
+  const keychain = dependencies.keychain || createKeychainAdapter();
+  const pdfTextExtractor = dependencies.pdfTextExtractor || extractPdfText;
   const fetcher = dependencies.fetcher || fetch;
   const maxPdfBytes = dependencies.maxPdfBytes ?? (Number(process.env.MAX_PDF_MB || 50) * 1024 * 1024 || DEFAULT_MAX_PDF_BYTES);
   const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
   const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
   const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
+  const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number }>();
+
+  function selectedLlm(settings: AiSettings, summaryModel?: string): { provider: LlmProvider; model: string; client: LlmClient } {
+    if (settings.provider === "ollama") {
+      if (!settings.ollamaModel.trim()) throw new Error("OLLAMA_MODEL_REQUIRED");
+      return { provider: "ollama", model: settings.ollamaModel.trim(), client: dependencies.llmClient || new OllamaLlmClient({ fetcher, ollamaBaseUrl: settings.ollamaBaseUrl }) };
+    }
+    return { provider: "openai", model: summaryModel || settings.openaiModel.trim() || "gpt-5-nano", client: dependencies.llmClient || new OpenAiLlmClient({ fetcher, openaiApiKey: () => keychain.get() }) };
+  }
+
+  async function paperText(paperId: string): Promise<{ text: string; sha256: string }> {
+    const paper = repo.findById(paperId);
+    if (!paper) throw new Error("PAPER_NOT_FOUND");
+    const path = storage.getPath(paper.id);
+    if (!existsSync(path)) throw new Error("PDF_NOT_FOUND");
+    const text = await pdfTextExtractor(path);
+    if (!text.trim()) throw new Error("PDF_TEXT_EMPTY");
+    return { text, sha256: paper.pdfSha256 || await sha256File(path) };
+  }
+
+  async function completeSummary(paperId: string): Promise<import("./repositories/analysis.js").SummaryRecord> {
+    const source = await paperText(paperId);
+    const selected = selectedLlm(analysis.getSettings(), SUMMARY_OPENAI_MODEL);
+    const startedAt = Date.now();
+    const messages = (content: string) => [{ role: "system" as const, content: "You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details." }, { role: "user" as const, content }];
+    try {
+      const chunks = splitTextIntoChunks(source.text);
+      if (!chunks.length) throw new Error("PDF_TEXT_EMPTY");
+      summaryProgress.set(paperId, { phase: "digesting", current: 0, total: chunks.length });
+      let completedChunks = 0;
+      const digests = await mapWithConcurrency(chunks, SUMMARY_CHUNK_CONCURRENCY, async (chunk, index) => {
+        const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Create a compact factual digest of chunk ${index + 1} of ${chunks.length}. Keep claims, methods, results, limitations, and section context. Do not omit information because it is inconvenient.\n\n${chunk}`) });
+        completedChunks += 1;
+        summaryProgress.set(paperId, { phase: "digesting", current: completedChunks, total: chunks.length });
+        return digest;
+      });
+      summaryProgress.set(paperId, { phase: "synthesizing" });
+      let current = digests;
+      let reductionRounds = 0;
+      while (current.join("\n\n").length > 20_000) {
+        if (reductionRounds++ >= 8) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
+        const batches: string[][] = [];
+        let batch: string[] = [];
+        for (const digest of current) {
+          if (batch.length && `${batch.join("\n\n")}\n\n${digest}`.length > 20_000) { batches.push(batch); batch = []; }
+          batch.push(digest);
+        }
+        if (batch.length) batches.push(batch);
+        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Synthesize these paper digests into one complete, factual digest. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
+      }
+      const content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
+      if (!hasRequiredSummaryHeadings(content)) throw new Error("SUMMARY_FORMAT_INVALID");
+      const summary = { paperId, content, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" as const };
+      analysis.saveSummary(summary);
+      return summary;
+    } catch (error) {
+      analysis.saveSummary({ paperId, content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "error", errorMessage: errorMessage(error) });
+      throw error;
+    } finally {
+      summaryProgress.delete(paperId);
+    }
+  }
+
+  async function completeQuestion(paperId: string, questionId: string): Promise<import("./repositories/analysis.js").QuestionAnswer> {
+    const summary = analysis.getSummary(paperId);
+    if (!summary || summary.status !== "complete") throw new Error("SUMMARY_REQUIRED");
+    const question = analysis.listQuestions(paperId).find((item) => item.id === questionId);
+    if (!question) throw new Error("QUESTION_NOT_FOUND");
+    const source = await paperText(paperId);
+    const selected = selectedLlm(analysis.getSettings());
+    const startedAt = Date.now();
+    try {
+      const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: "Answer questions about a scientific paper accurately. Use only the supplied paper text and summary. Do not invent evidence." }, { role: "user", content: `${question.prompt}\n\nPaper summary:\n${summary.content}\n\nFull paper text:\n${source.text}` }] });
+      const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, status: "complete" as const };
+      analysis.saveAnswer(paperId, questionId, record);
+      return record;
+    } catch (error) {
+      const record = { content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, status: "error" as const, errorMessage: errorMessage(error) };
+      analysis.saveAnswer(paperId, questionId, record);
+      throw error;
+    }
+  }
 
   app.use("*", async (c, next) => {
     await next();
@@ -309,9 +417,51 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/settings", (c) => c.html(renderSettingsPage()));
 
+  app.get("/api/settings/llm", async (c) => {
+    const settings = analysis.getSettings();
+    const key = await keychain.get();
+    return c.json({ ...settings, openaiConfigured: Boolean(key), openaiKeySource: key ? keychain.source : "none", openaiKeyEditable: keychain.writable });
+  });
+
+  app.put("/api/settings/llm", async (c) => {
+    try {
+      const body = await c.req.json<Record<string, unknown>>();
+      if (body.provider !== undefined && body.provider !== "openai" && body.provider !== "ollama") return jsonError(c, 400, "PROVIDER_INVALID", "Choose OpenAI or Ollama.");
+      const provider = body.provider === "ollama" ? "ollama" : body.provider === "openai" ? "openai" : undefined;
+      const openaiModel = typeof body.openaiModel === "string" && body.openaiModel.trim() ? body.openaiModel.trim() : undefined;
+      const ollamaModel = typeof body.ollamaModel === "string" ? body.ollamaModel.trim() : undefined;
+      const ollamaBaseUrl = typeof body.ollamaBaseUrl === "string" && /^https?:\/\//i.test(body.ollamaBaseUrl.trim()) ? body.ollamaBaseUrl.trim().replace(/\/$/, "") : undefined;
+      if (body.ollamaBaseUrl !== undefined && !ollamaBaseUrl) return jsonError(c, 400, "OLLAMA_URL_INVALID", "Enter a valid Ollama HTTP URL.");
+      if (body.openaiApiKey !== undefined) {
+        if (typeof body.openaiApiKey !== "string" || !body.openaiApiKey.trim()) return jsonError(c, 400, "OPENAI_KEY_REQUIRED", "Enter an OpenAI API key.");
+        await keychain.set(body.openaiApiKey);
+      }
+      const update: Partial<AiSettings> = {};
+      if (provider) update.provider = provider;
+      if (openaiModel) update.openaiModel = openaiModel;
+      if (ollamaModel !== undefined) update.ollamaModel = ollamaModel;
+      if (ollamaBaseUrl) update.ollamaBaseUrl = ollamaBaseUrl;
+      const settings = analysis.updateSettings(update);
+      const key = await keychain.get();
+      return c.json({ ...settings, openaiConfigured: Boolean(key), openaiKeySource: key ? keychain.source : "none", openaiKeyEditable: keychain.writable });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The AI provider settings could not be saved.");
+    }
+  });
+
+  app.delete("/api/settings/llm/openai-key", async (c) => {
+    try {
+      await keychain.clear();
+      return c.json({ ok: true });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The OpenAI API key could not be cleared.");
+    }
+  });
+
   app.get("/papers/:id", (c) => {
     const paper = repo.findById(c.req.param("id"));
-    return paper ? c.html(renderPaperPage(paper)) : pageError(c, 404, "Paper not found", "That paper does not exist.");
+    if (!paper) return pageError(c, 404, "Paper not found", "That paper does not exist.");
+    return c.html(renderPaperPage(paper, analysis.getSummary(paper.id), analysis.listQuestions(paper.id)));
   });
 
   app.get("/papers/:id/edit", (c) => {
@@ -544,6 +694,80 @@ export function createApp(dependencies: AppDependencies = {}) {
     return paper ? c.json({ paper }) : jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
   });
 
+  app.get("/api/papers/:id/summary", (c) => {
+    if (!repo.findById(c.req.param("id"))) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    return c.json({ summary: analysis.getSummary(c.req.param("id")) });
+  });
+
+  app.get("/api/papers/:id/summary/progress", (c) => {
+    if (!repo.findById(c.req.param("id"))) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    return c.json({ progress: summaryProgress.get(c.req.param("id")) || { phase: "idle" } });
+  });
+
+  app.post("/api/papers/:id/summary", async (c) => {
+    const id = c.req.param("id");
+    if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    try {
+      return c.json({ summary: await completeSummary(id) });
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = message === "PDF_NOT_FOUND" || message === "PAPER_NOT_FOUND" ? 404 : message === "OPENAI_KEY_NOT_CONFIGURED" || message === "OLLAMA_MODEL_REQUIRED" ? 409 : 502;
+      return jsonError(c, status, message, "The summary could not be generated. Please check the provider settings and retry.");
+    }
+  });
+
+  app.get("/api/papers/:id/questions", (c) => {
+    const id = c.req.param("id");
+    if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    return c.json({ questions: analysis.listQuestions(id), summary: analysis.getSummary(id) });
+  });
+
+  app.post("/api/papers/:id/questions", async (c) => {
+    const id = c.req.param("id");
+    if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    try {
+      const body = await c.req.json<{ question?: string; label?: string; prompt?: string }>();
+      const question = body.question?.trim() || body.label?.trim() || "";
+      const created = analysis.addQuestion(id, question, body.prompt?.trim() || question);
+      if (!analysis.getSummary(id) || analysis.getSummary(id)?.status !== "complete") await completeSummary(id);
+      const answer = await completeQuestion(id, created.id);
+      return c.json({ question: { ...created, answer }, answer }, 201);
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = message === "QUESTION_TEXT_REQUIRED" || message === "QUESTION_TEXT_TOO_LONG" ? 400 : message === "PDF_NOT_FOUND" ? 404 : 502;
+      return jsonError(c, status, message, "The question could not be added and answered. Please retry.");
+    }
+  });
+
+  app.post("/api/papers/:id/questions/:questionId", async (c) => {
+    const id = c.req.param("id");
+    if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    if (c.req.param("questionId") === "generate-all") {
+      if (!analysis.getSummary(id) || analysis.getSummary(id)?.status !== "complete") return jsonError(c, 409, "SUMMARY_REQUIRED", "Generate a paper summary before generating questions.");
+      const results: Array<{ questionId: string; ok: boolean; error?: string }> = [];
+      for (const question of analysis.listQuestions(id)) {
+        try { await completeQuestion(id, question.id); results.push({ questionId: question.id, ok: true }); }
+        catch (error) { results.push({ questionId: question.id, ok: false, error: errorMessage(error) }); }
+      }
+      return c.json({ results, questions: analysis.listQuestions(id) });
+    }
+    try {
+      const answer = await completeQuestion(id, c.req.param("questionId"));
+      return c.json({ answer, answerHtml: renderMarkdown(answer.content) });
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = ["QUESTION_NOT_FOUND", "SUMMARY_REQUIRED", "PDF_NOT_FOUND"].includes(message) ? 409 : 502;
+      const detail = message === "SUMMARY_REQUIRED" ? "Generate the paper summary before generating answers." : message === "PDF_NOT_FOUND" ? "The paper PDF is not available." : "The question could not be answered. Please retry.";
+      return jsonError(c, status, message, detail);
+    }
+  });
+
+  app.delete("/api/papers/:id/questions/:questionId", (c) => {
+    const id = c.req.param("id");
+    if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+    return analysis.deleteQuestion(id, c.req.param("questionId")) ? c.json({ ok: true }) : jsonError(c, 404, "CUSTOM_QUESTION_NOT_FOUND", "Only custom questions can be deleted.");
+  });
+
   app.post("/api/papers/bulk-delete", async (c) => {
     try {
       const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; untagged?: boolean }>();
@@ -604,6 +828,7 @@ export function createApp(dependencies: AppDependencies = {}) {
         promoted = await storage.promoteStagedFile(draft.stagingToken, id);
       }
       const paper = repo.update(id, draft, promoted);
+      if (promoted) analysis.markFileChanged(id, promoted.sha256);
       if (backup) await finalizeMove(storage, backup);
       return c.json({ paper });
     } catch (error) {
@@ -696,8 +921,9 @@ export function createApp(dependencies: AppDependencies = {}) {
       const bytes = paper.r2Key ? await storage.get(paper.id) : null;
       return { paper, pdfBase64: bytes?.toString("base64") };
     }));
+    const analysisData = analysis.exportData(new Set(exported.papers.map((paper) => paper.id)));
     c.header("Content-Disposition", "attachment; filename=paper-library-backup.json");
-    return c.json({ version: BACKUP_VERSION, exportedAt: new Date().toISOString(), papers, tags: exported.tags });
+    return c.json({ version: BACKUP_VERSION, exportedAt: new Date().toISOString(), papers, tags: exported.tags, analysis: analysisData });
   });
 
   app.post("/api/import/backup", async (c) => {
@@ -706,8 +932,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       const file = uploadedFile(body.backup);
       if (!file) return jsonError(c, 400, "BACKUP_REQUIRED", "Choose a PersonalPaperLibrary backup file.");
       if (file.size > maxRequestBytes) return jsonError(c, 413, "BACKUP_TOO_LARGE", "The backup is larger than the configured request limit.");
-      const backup = JSON.parse(new TextDecoder().decode(await file.arrayBuffer())) as { version?: number; papers?: Array<{ paper?: Record<string, unknown>; pdfBase64?: string }>; };
-      if (backup.version !== BACKUP_VERSION || !Array.isArray(backup.papers)) return jsonError(c, 400, "BACKUP_INVALID", "This is not a supported PersonalPaperLibrary backup.");
+      const backup = JSON.parse(new TextDecoder().decode(await file.arrayBuffer())) as { version?: number; papers?: Array<{ paper?: Record<string, unknown>; pdfBase64?: string }>; analysis?: { summaries?: Array<Record<string, unknown>>; questions?: Array<Record<string, unknown>>; answers?: Array<Record<string, unknown>> } };
+      if ((backup.version !== 1 && backup.version !== BACKUP_VERSION) || !Array.isArray(backup.papers)) return jsonError(c, 400, "BACKUP_INVALID", "This is not a supported PersonalPaperLibrary backup.");
       let restored = 0;
       let skipped = 0;
       for (const entry of backup.papers) {
@@ -728,6 +954,21 @@ export function createApp(dependencies: AppDependencies = {}) {
             stored = await storage.put(record.id, bytes);
           }
           repo.create({ ...record, id: record.id, tags: Array.isArray(record.tags) ? record.tags : [] } as PaperDraftInput, stored);
+          if (backup.version === BACKUP_VERSION && backup.analysis) {
+            const summary = backup.analysis.summaries?.find((item) => item.paperId === record.id);
+            if (summary && typeof summary.content === "string" && typeof summary.provider === "string" && typeof summary.model === "string" && typeof summary.generatedAt === "string" && typeof summary.promptVersion === "string") {
+              analysis.saveSummary({ paperId: record.id, content: summary.content, provider: summary.provider, model: summary.model, generatedAt: summary.generatedAt, durationMs: typeof summary.durationMs === "number" ? summary.durationMs : undefined, sourcePdfSha256: typeof summary.sourcePdfSha256 === "string" ? summary.sourcePdfSha256 : undefined, promptVersion: summary.promptVersion, status: summary.status === "stale" || summary.status === "error" ? summary.status : "complete", errorMessage: typeof summary.errorMessage === "string" ? summary.errorMessage : undefined });
+            }
+            analysis.ensureQuestions(record.id);
+            for (const question of backup.analysis.questions || []) {
+              if (question.paperId !== record.id || typeof question.questionId !== "string" || typeof question.groupId !== "string" || typeof question.groupTitle !== "string" || typeof question.groupDescription !== "string" || typeof question.label !== "string" || typeof question.prompt !== "string" || typeof question.definitionHash !== "string") continue;
+              analysis.saveQuestion(record.id, { id: question.questionId, groupId: question.groupId, groupTitle: question.groupTitle, groupDescription: question.groupDescription, label: question.label, prompt: question.prompt, order: Number(question.order) || 0, definitionHash: question.definitionHash, isCustom: Boolean(question.isCustom) });
+            }
+            for (const answer of backup.analysis.answers || []) {
+              if (answer.paperId !== record.id || typeof answer.questionId !== "string" || typeof answer.content !== "string" || typeof answer.provider !== "string" || typeof answer.model !== "string" || typeof answer.generatedAt !== "string" || typeof answer.promptVersion !== "string") continue;
+              analysis.saveAnswer(record.id, answer.questionId, { content: answer.content, provider: answer.provider, model: answer.model, generatedAt: answer.generatedAt, durationMs: typeof answer.durationMs === "number" ? answer.durationMs : undefined, sourcePdfSha256: typeof answer.sourcePdfSha256 === "string" ? answer.sourcePdfSha256 : undefined, promptVersion: answer.promptVersion, status: answer.status === "stale" || answer.status === "error" ? answer.status : "complete", errorMessage: typeof answer.errorMessage === "string" ? answer.errorMessage : undefined });
+            }
+          }
           restored++;
         } catch (error) {
           if (stored) await storage.delete(record.id);

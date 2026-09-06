@@ -96,6 +96,7 @@ function setStatus(form, message, error = false) {
 }
 
 function clientErrorMessage(error) {
+  if (error instanceof Error && /load failed|failed to fetch|networkerror/i.test(error.message)) return "The library server connection failed. Check that it is running, then retry.";
   return error instanceof Error ? error.message : "Request failed";
 }
 
@@ -172,6 +173,53 @@ document.querySelector("[data-restore-backup]")?.addEventListener("submit", asyn
     setStatus(form, clientErrorMessage(error), true);
   }
 });
+
+const aiSettingsForm = document.querySelector("[data-ai-settings]");
+if (aiSettingsForm) {
+  const keyStatus = aiSettingsForm.querySelector("[data-openai-key-status]");
+  const clearKey = aiSettingsForm.querySelector("[data-clear-openai-key]");
+  const loadAiSettings = async () => {
+    try {
+      const settings = await jsonRequest("/api/settings/llm");
+      aiSettingsForm.elements.namedItem("provider").value = settings.provider;
+      aiSettingsForm.elements.namedItem("openaiModel").value = settings.openaiModel;
+      aiSettingsForm.elements.namedItem("ollamaBaseUrl").value = settings.ollamaBaseUrl;
+      aiSettingsForm.elements.namedItem("ollamaModel").value = settings.ollamaModel;
+      if (keyStatus) keyStatus.textContent = settings.openaiConfigured ? `OpenAI key configured (${settings.openaiKeySource}).${settings.openaiKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenAI key not configured.";
+      if (clearKey) clearKey.disabled = !settings.openaiConfigured || !settings.openaiKeyEditable;
+      const keyInput = aiSettingsForm.elements.namedItem("openaiApiKey");
+      if (keyInput) keyInput.disabled = !settings.openaiKeyEditable;
+    } catch (error) {
+      if (keyStatus) keyStatus.textContent = clientErrorMessage(error);
+    }
+  };
+  loadAiSettings();
+  aiSettingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = { provider: value(aiSettingsForm, "provider"), openaiModel: value(aiSettingsForm, "openaiModel"), ollamaBaseUrl: value(aiSettingsForm, "ollamaBaseUrl"), ollamaModel: value(aiSettingsForm, "ollamaModel") };
+    const key = value(aiSettingsForm, "openaiApiKey");
+    if (key) body.openaiApiKey = key;
+    setStatus(aiSettingsForm, "Saving AI settings…");
+    try {
+      await jsonRequest("/api/settings/llm", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      aiSettingsForm.elements.namedItem("openaiApiKey").value = "";
+      setStatus(aiSettingsForm, "AI settings saved.");
+      await loadAiSettings();
+    } catch (error) {
+      setStatus(aiSettingsForm, clientErrorMessage(error), true);
+    }
+  });
+  clearKey?.addEventListener("click", async () => {
+    if (!window.confirm("Clear the stored OpenAI API key?")) return;
+    try {
+      await jsonRequest("/api/settings/llm/openai-key", { method: "DELETE" });
+      setStatus(aiSettingsForm, "OpenAI key cleared.");
+      await loadAiSettings();
+    } catch (error) {
+      setStatus(aiSettingsForm, clientErrorMessage(error), true);
+    }
+  });
+}
 
 function renderPreview(data, stagingToken = "") {
   const preview = document.querySelector("[data-preview]");
@@ -370,6 +418,150 @@ document.querySelectorAll("[data-copy-bibtex]").forEach((button) => button.addEv
     window.setTimeout(() => { label.textContent = previous; }, 1500);
   }
 }));
+
+const paperDetail = document.querySelector("[data-paper-id]");
+const paperId = paperDetail?.dataset.paperId;
+const summaryStatus = paperDetail?.querySelector("[data-summary-status]");
+const generateSummary = async (button) => {
+  if (!paperId) return;
+  button.disabled = true;
+  if (summaryStatus) {
+    summaryStatus.textContent = "Preparing summary…";
+    summaryStatus.classList.remove("status-error");
+  }
+  const updateSummaryProgress = async () => {
+    if (!summaryStatus) return;
+    try {
+      const body = await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/summary/progress`);
+      const progress = body.progress;
+      if (progress.phase === "digesting" && progress.total) summaryStatus.textContent = `Digesting chunk ${progress.current || 0} of ${progress.total}…`;
+      else if (progress.phase === "synthesizing") summaryStatus.textContent = "Synthesizing summary…";
+    } catch {
+      // The generation request remains the source of truth if progress polling fails.
+    }
+  };
+  const progressTimer = window.setInterval(() => { void updateSummaryProgress(); }, 750);
+  void updateSummaryProgress();
+  try {
+    await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST" });
+    window.location.reload();
+  } catch (error) {
+    button.disabled = false;
+    if (summaryStatus) { summaryStatus.textContent = clientErrorMessage(error); summaryStatus.classList.add("status-error"); }
+  } finally {
+    window.clearInterval(progressTimer);
+  }
+};
+document.querySelectorAll("[data-generate-summary], [data-regenerate-summary]").forEach((button) => button.addEventListener("click", () => generateSummary(button)));
+
+function formatAnalysisDuration(durationMs) {
+  if (typeof durationMs !== "number") return "";
+  return ` · ${Math.floor(durationMs / 60000)}:${String(Math.floor(durationMs / 1000) % 60).padStart(2, "0")}`;
+}
+
+function showQuestionAnswer(item, answer, answerHtml) {
+  if (!item || !answer) return;
+  item.querySelector("p.question-empty, p.status-error, p.status-warning")?.remove();
+
+  let content = item.querySelector(".question-answer");
+  if (!content) {
+    content = document.createElement("div");
+    content.className = "analysis-content question-answer";
+    item.querySelector(".question-actions")?.before(content);
+  }
+  content.innerHTML = answerHtml || escapeText(answer.content || "");
+
+  let meta = item.querySelector(".question-answer-meta");
+  if (!meta) {
+    meta = document.createElement("p");
+    meta.className = "analysis-meta question-answer-meta muted";
+    item.querySelector(".question-actions")?.before(meta);
+  }
+  const generatedAt = new Date(answer.generatedAt).toLocaleString("en-GB");
+  meta.textContent = `${answer.provider} · ${answer.model} · ${generatedAt}${formatAnalysisDuration(answer.durationMs)}`;
+
+  const label = item.querySelector("[data-generate-question] span:last-child");
+  if (label) label.textContent = "Regenerate answer";
+}
+
+async function generateOneQuestion(button) {
+  if (!paperId) return false;
+  const item = button.closest("[data-question-id]");
+  const status = item?.querySelector("[data-question-status]");
+  button.disabled = true;
+  if (status) {
+    status.textContent = "Generating…";
+    status.classList.remove("status-error");
+  }
+  try {
+    const body = await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(button.dataset.generateQuestion)}`, { method: "POST" });
+    showQuestionAnswer(item, body.answer, body.answerHtml);
+    button.disabled = false;
+    if (status) {
+      status.textContent = "Saved.";
+      status.classList.remove("status-error");
+    }
+    return true;
+  } catch (error) {
+    button.disabled = false;
+    item?.querySelector("p.question-empty")?.remove();
+    if (status) { status.textContent = clientErrorMessage(error); status.classList.add("status-error"); }
+    return false;
+  }
+}
+document.querySelectorAll("[data-generate-question]").forEach((button) => button.addEventListener("click", () => generateOneQuestion(button)));
+document.querySelectorAll("[data-delete-question]").forEach((button) => button.addEventListener("click", async () => {
+  if (!paperId || !window.confirm("Delete this custom question and its answer?")) return;
+  button.disabled = true;
+  try {
+    await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(button.dataset.deleteQuestion)}`, { method: "DELETE" });
+    window.location.reload();
+  } catch (error) {
+    button.disabled = false;
+    const item = button.closest("[data-question-id]");
+    const status = item?.querySelector("[data-question-status]");
+    if (status) { status.textContent = clientErrorMessage(error); status.classList.add("status-error"); }
+  }
+}));
+document.querySelector("[data-toggle-questions]")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const groups = [...document.querySelectorAll("[data-question-group]")];
+  const expand = groups.some((group) => !group.open);
+  groups.forEach((group) => { group.open = expand; });
+  button.setAttribute("aria-label", expand ? "Collapse all questions" : "Expand all questions");
+  button.setAttribute("title", expand ? "Collapse all questions" : "Expand all questions");
+  const icon = button.querySelector(".material-symbols-outlined");
+  if (icon) icon.textContent = expand ? "unfold_less" : "unfold_more";
+});
+document.querySelector("[data-generate-all-questions]")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("[data-questions-status]");
+  const buttons = [...document.querySelectorAll("[data-generate-question]")];
+  button.disabled = true;
+  let completed = 0;
+  let failed = 0;
+  for (const questionButton of buttons) {
+    if (status) status.textContent = `Generating question ${completed + failed + 1} of ${buttons.length}…`;
+    if (await generateOneQuestion(questionButton)) completed += 1; else failed += 1;
+  }
+  button.disabled = false;
+  if (status) status.textContent = `Saved ${completed} answer${completed === 1 ? "" : "s"}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`;
+});
+
+document.querySelector("[data-add-question]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const detail = document.querySelector("[data-paper-id]");
+  const id = detail?.dataset.paperId;
+  if (!id) return;
+  setStatus(form, "Adding question…");
+  try {
+    await jsonRequest(`/api/papers/${encodeURIComponent(id)}/questions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: value(form, "question") }) });
+    window.location.reload();
+  } catch (error) {
+    setStatus(form, clientErrorMessage(error), true);
+  }
+});
 
 document.querySelector("[data-delete-paper]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;

@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createApp } from "../src/app.js";
+import { createApp, type AppDependencies } from "../src/app.js";
 import { FileStorage } from "../src/services/storage.js";
 
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
-function testApp(fetcherOverride?: typeof fetch, authPassword?: string) {
+function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "pdfTextExtractor" | "keychain"> = {}) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
@@ -19,7 +19,7 @@ function testApp(fetcherOverride?: typeof fetch, authPassword?: string) {
     return new Response(url.includes("/pdf/") ? pdf : atom, { status: 200, headers: { "content-type": url.includes("/pdf/") ? "application/pdf" : "application/atom+xml" } });
   };
   const storage = new FileStorage(root);
-  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher, authPassword }), db, root };
+  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher, authPassword, ...extras }), db, root };
 }
 
 describe("HTTP application", () => {
@@ -400,7 +400,7 @@ describe("HTTP application", () => {
     const backupResponse = await source.app.request("/api/export/backup");
     expect(backupResponse.status).toBe(200);
     const backup = await backupResponse.json();
-    expect(backup.version).toBe(1);
+    expect(backup.version).toBe(2);
     expect(backup.papers[0].pdfBase64).toBeTruthy();
 
     const target = testApp();
@@ -412,10 +412,19 @@ describe("HTTP application", () => {
     const restored = (await (await target.app.request("/api/papers")).json()).papers[0];
     expect(restored.title).toBe("Backup paper");
     expect((await target.app.request(`/api/papers/${restored.id}/pdf`)).status).toBe(200);
+    const legacyTarget = testApp();
+    const legacyBackup = { ...backup, version: 1 } as Record<string, unknown>;
+    delete legacyBackup.analysis;
+    const legacyForm = new FormData();
+    legacyForm.append("backup", new File([JSON.stringify(legacyBackup)], "legacy-backup.json", { type: "application/json" }));
+    const legacyRestore = await legacyTarget.app.request("/api/import/backup", { method: "POST", body: legacyForm });
+    expect((await legacyRestore.json()).restored).toBe(1);
     source.db.close();
     target.db.close();
+    legacyTarget.db.close();
     rmSync(source.root, { recursive: true, force: true });
     rmSync(target.root, { recursive: true, force: true });
+    rmSync(legacyTarget.root, { recursive: true, force: true });
   });
 
   it("requires the configured password before serving the library", async () => {
@@ -457,6 +466,77 @@ describe("HTTP application", () => {
     expect(compactPage).toContain("Page 3 of 21");
     const smallPage = await (await context.app.request("/?pageSize=10&page=3")).text();
     expect(smallPage).toContain("Page 3 of 51");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("stores AI settings, generates summaries and persists custom paper questions", async () => {
+    let storedKey: string | undefined;
+    let calls = 0;
+    const llmClient = {
+      complete: async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
+        calls += 1;
+        const prompt = messages.at(-1)?.content || "";
+        if (prompt.startsWith("Write the final paper summary")) return "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG";
+        return "Generated answer";
+      },
+    };
+    const keychain = {
+      source: "keychain" as const,
+      writable: true,
+      get: async () => storedKey,
+      set: async (value: string) => { storedKey = value; },
+      clear: async () => { storedKey = undefined; },
+    };
+    const context = testApp(undefined, undefined, { llmClient, keychain, pdfTextExtractor: async () => "Complete extracted paper text." });
+    const settingsPage = await context.app.request("/settings");
+    expect(await settingsPage.text()).toContain("AI providers");
+    const initialSettings = await (await context.app.request("/api/settings/llm")).json();
+    expect(initialSettings.openaiModel).toBe("gpt-5-nano");
+    const saveSettings = await context.app.request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", openaiModel: "gpt-5.4-nano", openaiApiKey: "secret-value" }) });
+    expect(saveSettings.status).toBe(200);
+    const settings = await saveSettings.json();
+    expect(settings.openaiConfigured).toBe(true);
+    expect(JSON.stringify(settings)).not.toContain("secret-value");
+    const form = new FormData();
+    form.append("file", new File([pdf], "ai-paper.pdf", { type: "application/pdf" }));
+    const upload = await (await context.app.request("/api/uploads", { method: "POST", body: form })).json();
+    const saved = await (await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "AI paper", metadataSource: "manual", stagingToken: upload.pdf.stagingToken }) })).json();
+    const paperId = saved.paper.id;
+    const beforeSummary = await (await context.app.request(`/papers/${paperId}`)).text();
+    expect(beforeSummary).toContain("Generate the paper summary before generating answers.");
+    expect(beforeSummary).toMatch(/data-generate-all-questions disabled/);
+    const summaryResponse = await context.app.request(`/api/papers/${paperId}/summary`, { method: "POST" });
+    expect(summaryResponse.status).toBe(200);
+    const generatedSummary = (await summaryResponse.json()).summary;
+    expect(generatedSummary.content).toContain("# Why It Matters");
+    expect(generatedSummary.model).toBe("gpt-4.1-mini");
+    expect(generatedSummary.durationMs).toBeTypeOf("number");
+    expect(calls).toBe(2);
+    const questions = await (await context.app.request(`/api/papers/${paperId}/questions`)).json();
+    expect(questions.questions).toHaveLength(16);
+    expect(questions.questions.map((question: { groupTitle: string }) => question.groupTitle)).toContain("Evaluate");
+    const addQuestion = await context.app.request(`/api/papers/${paperId}/questions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: "What is one extra concern?", prompt: "Answer from the paper." }) });
+    expect(addQuestion.status).toBe(201);
+    const custom = await addQuestion.json();
+    const answer = await context.app.request(`/api/papers/${paperId}/questions/${custom.question.id}`, { method: "POST" });
+    expect(answer.status).toBe(200);
+    expect((await answer.json()).answer.content).toBe("Generated answer");
+    const paperPage = await (await context.app.request(`/papers/${paperId}`)).text();
+    expect(paperPage).toContain("Paper summary");
+    expect(paperPage).toContain("What is one extra concern?");
+    expect(paperPage).toMatch(/openai · gpt-4\.1-mini · .* · 0:\d{2}/);
+    expect(paperPage).toMatch(/openai · gpt-5\.4-nano · .* · 0:\d{2}/);
+    const backup = await (await context.app.request("/api/export/backup")).json();
+    expect(backup.version).toBe(2);
+    expect(backup.analysis.summaries).toHaveLength(1);
+    expect(backup.analysis.questions.some((question: { isCustom: boolean }) => question.isCustom)).toBe(true);
+    expect(JSON.stringify(backup)).not.toContain("secret-value");
+    const deleteQuestion = await context.app.request(`/api/papers/${paperId}/questions/${custom.question.id}`, { method: "DELETE" });
+    expect(deleteQuestion.status).toBe(200);
+    expect((await (await context.app.request(`/api/papers/${paperId}/questions`)).json()).questions.some((question: { id: string }) => question.id === custom.question.id)).toBe(false);
+    await context.app.request("/api/settings/llm/openai-key", { method: "DELETE" });
+    expect(storedKey).toBeUndefined();
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

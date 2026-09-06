@@ -1,0 +1,146 @@
+# The paper question catalog. Edit labels, prompts, or order here and restart the server.
+questions:
+  - id: evaluate_main_claim
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      What problem does the paper address, and what central claim does it make?
+    prompt: >
+      Answer in four short parts: Problem, Setting, Central claim, and Claim type. State the central claim in one precise sentence and identify whether it is empirical, theoretical, methodological, conceptual, practical, or interpretive. Include the target task, population, or regime when the paper specifies one. Do not list secondary contributions. If the paper does not make a single central claim, say so and identify the two most important claims. Mark details as insufficient when the supplied paper text does not establish them.
+  - id: understand_method
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      How does the proposed method or argument work?
+    prompt: >
+      Explain the mechanism in at most five numbered steps, followed by one paragraph on why it should support the central claim. Adapt to the paper type: describe the algorithm and data flow for empirical ML, the logical structure and assumptions for theory, the architecture and operating constraints for systems, and the interpretive framework for qualitative or conceptual work. Cite only evidence present in the paper text. Say Not applicable when there is no method or mechanism to explain.
+  - id: understand_assumptions
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      What assumptions does the paper rely on?
+    prompt: >
+      List at most four consequential assumptions. For each, state: Assumption, where it appears, whether the paper tests or just adopts it, and how violating it could affect the central claim. Cover data, modeling, causal, theoretical, measurement, or interpretive assumptions as applicable. Do not infer an assumption solely from general field practice; say insufficient information when the paper does not support one.
+  - id: evaluate_claim_evidence
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      What evidence directly supports the main claim?
+    prompt: >
+      Return a claim-evidence table with at most five rows and columns: Claim component, direct evidence, page or section, what it establishes, and what it does not establish. Separate primary evidence from supporting or boundary evidence. Adapt to the paper type: experiments, proofs, observations, case material, or conceptual analysis. Use only evidence from the paper; say insufficient information where a direct test is absent.
+  - id: evaluate_allowable_conclusion
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      What conclusion is actually justified?
+    prompt: >
+      Use four headings: Strongest justified conclusion, Scope, What remains unsupported, and Confidence. Rewrite the paper's conclusion in a defensible form if it is broader than the evidence. Distinguish local, general, regime-specific, mechanism-supported, practical, and exploratory conclusions. Do not penalize the paper for evidence that is not applicable to its type.
+  - id: evaluate_failure_modes
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      Where could the argument fail?
+    prompt: >
+      Identify at most three consequential failure modes. For each, give: Failure mode, paper claim affected, whether it is tested, and why it matters. Prioritize weak assumptions, missing controls, leakage, narrow evaluation, alternative explanations, or untested mechanisms as applicable. If no important failure mode is supported by the paper text, say that the information is insufficient rather than inventing one.
+  - id: evaluate_evaluation_design
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      Is the evaluation fair and technically convincing?
+    prompt: >
+      Assess the evaluation in at most five bullets covering data or sample selection, baselines or controls, metrics or measurements, experimental protocol, and uncertainty or statistical support. Identify one concrete design choice that strengthens the result and one missing control or fairness concern if present. Adapt to theory, systems, qualitative, and conceptual papers; say Not applicable for dimensions that do not apply.
+  - id: evaluate_robustness_scope
+    group_id: evaluate
+    group: Evaluate
+    group_description: >
+      Assess the claims in the paper and the evidence to support them.
+    label: >
+      How robust and generalizable are the findings?
+    prompt: >
+      Use the headings Robustness evidence, Scope of tested settings, Likely transfer limits, and Confidence. Check ablations, sensitivity, seeds or repetitions, datasets, populations, environments, and distribution shift when applicable. Do not claim generalization beyond the tested evidence. If robustness is not evaluated, state that explicitly.
+  - id: compare_gap
+    group_id: compare
+    group: Compare
+    group_description: >
+      Position the paper against prior work, baselines, and competing explanations.
+    label: >
+      What gap does the paper claim to fill?
+    prompt: >
+      Explain the gap the paper claims to address. State what existing work, practice, method, framework, or assumption is said to be insufficient. Then assess whether the paper convincingly shows that this gap is real and important.
+  - id: compare_baselines
+    group_id: compare
+    group: Compare
+    group_description: >
+      Position the paper against prior work, baselines, and competing explanations.
+    label: >
+      Are the right comparisons made?
+    prompt: >
+      Assess whether the paper compares itself against the right alternatives. Consider baselines, prior frameworks, methods, examples, datasets, theories, or counterarguments. Identify the single most important missing comparison, if there is one.
+  - id: compare_novelty
+    group_id: compare
+    group: Compare
+    group_description: >
+      Position the paper against prior work, baselines, and competing explanations.
+    label: >
+      What is genuinely new here?
+    prompt: >
+      Identify what is genuinely new in the paper. Distinguish between a new idea, a new method, a new framing, a new combination of known elements, a new empirical result, or a clearer presentation of existing practice. Say whether the novelty is central or secondary.
+  - id: compare_key_references
+    group_id: compare
+    group: Compare
+    group_description: >
+      Position the paper against prior work, baselines, and competing explanations.
+    label: >
+      What are the most important references for understanding this paper?
+    prompt: >
+      Select at most six cited works visible in the supplied paper text. For each, give the citation text as written, its role (problem, method, baseline, background, or contrast), and why it matters for interpreting this paper. Do not invent authors, titles, years, or claims. If the references section is incomplete or unreadable, say so.
+  - id: review_strength
+    group_id: review
+    group: Review
+    group_description: >
+      Identify the strongest reasons to value, challenge, and improve the paper.
+    label: >
+      What is the strongest reason to value the paper?
+    prompt: >
+      Give one strongest contribution and one sentence explaining why it matters. Ground it in the paper's problem, method, evidence, or framework. Do not predict influence or practical impact unless the paper provides evidence for it. Say insufficient information if the paper's value cannot be assessed from the supplied text.
+  - id: review_weakness
+    group_id: review
+    group: Review
+    group_description: >
+      Identify the strongest reasons to value, challenge, and improve the paper.
+    label: >
+      What is the strongest reason to challenge the paper?
+    prompt: >
+      Identify the single most consequential limitation. Use the headings Limitation, Evidence, Claim affected, and Consequence. Do not list minor issues or manufacture a criticism that is not grounded in the paper.
+  - id: review_decisive_fix
+    group_id: review
+    group: Review
+    group_description: >
+      Identify the strongest reasons to value, challenge, and improve the paper.
+    label: >
+      What one change would most improve the paper?
+    prompt: >
+      Propose one discriminating next step: experiment, analysis, proof, example, comparison, clarification, or reframing. State the unresolved uncertainty it addresses, the claim it would test or strengthen, and what result would change the assessment. Keep it feasible and do not assume resources or evidence absent from the paper.
+  - id: review_author_questions
+    group_id: review
+    group: Review
+    group_description: >
+      Identify the strongest reasons to value, challenge, and improve the paper.
+    label: >
+      What should the authors be asked?
+    prompt: >
+      Write exactly three focused questions for the authors. Derive each from a specific unresolved issue in the claim, evidence, scope, novelty, reproducibility, or comparison. After each question, add the paper passage or page that motivates it. Avoid generic requests to clarify or do more experiments.

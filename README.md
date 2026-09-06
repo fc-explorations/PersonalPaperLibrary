@@ -61,6 +61,8 @@ The application stores its local data under `data/` (or under `DATA_DIR` when co
 - `data/staging/` — temporary files awaiting confirmation
 - `data/trash/` — recoverable files moved aside during replacement or deletion
 
+Paper analysis questions are defined in [`config/questions.yaml`](./config/questions.yaml). Edit that file and restart the server to change the built-in Evaluate, Compare, and Review catalog. Additional per-paper open questions can be added from the paper page. AI provider settings, summaries, answers, and question definitions are stored in SQLite; OpenAI keys are kept in macOS Keychain (or read-only from `OPENAI_API_KEY`) and are never included in backups.
+
 This directory is intentionally ignored by Git. The Settings page provides **Download backup** and **Restore backup** controls for a portable JSON backup containing metadata, tags, and stored PDFs. Restore preserves existing papers and skips matching records. Keep backup files private because they contain the PDFs themselves.
 
 ## Scope
@@ -82,6 +84,7 @@ Optional environment variables:
 - `PUBLIC_ORIGIN` — expected origin for state-changing requests when the app is exposed behind a proxy.
 - `CROSSREF_MAILTO` — contact address sent to Crossref when configured.
 - `SEMANTIC_SCHOLAR_API_KEY` — optional key for higher Semantic Scholar API limits.
+- `QUESTION_BANK_PATH` — optional path to a compatible YAML question catalog; defaults to `config/questions.yaml`.
 
 Folder imports consider only `.pdf` files. Non-PDF files are ignored; failures are reported only when a selected PDF cannot be validated or stored. The interface uses European (`en-GB`) date formatting for displayed timestamps.
 
