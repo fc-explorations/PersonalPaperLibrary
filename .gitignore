@@ -12,6 +12,12 @@ coverage/
 .wrangler/
 .dev.vars
 
+# Local application data
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Environment files and local secrets
 .env
 .env.*
