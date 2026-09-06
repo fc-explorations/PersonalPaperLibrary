@@ -103,6 +103,10 @@ select { width: auto; min-width: 150px; }
 .settings-page { padding-bottom: 60px; }
 .settings-group { border-bottom: 1px solid var(--border); padding: 24px 0; }
 .settings-group:first-child { padding-top: 0; }
+.backup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.backup-actions form { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.backup-file { display: inline-flex !important; align-items: center; gap: 9px; }
+.backup-file input { width: auto; }
 .theme-options { display: flex; flex-wrap: wrap; gap: 14px; }
 .theme-option { position: relative; display: grid; gap: 7px; min-width: 86px; color: var(--muted); cursor: pointer; }
 .theme-option input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; }

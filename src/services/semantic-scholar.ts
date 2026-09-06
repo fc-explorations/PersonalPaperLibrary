@@ -1,4 +1,5 @@
 import type { PaperMetadata } from "../types.js";
+import { fetchWithTimeout, readResponseJson } from "./http.js";
 
 interface SemanticScholarPaper {
   title?: string | null;
@@ -62,9 +63,9 @@ export async function lookupSemanticScholar(title: string, fetcher: typeof fetch
   url.searchParams.set("fields", "title,authors,year,publicationDate,abstract,venue,journal,externalIds,url,openAccessPdf");
   const headers: Record<string, string> = { "User-Agent": "PersonalPaperLibrary/1.0" };
   if (process.env.SEMANTIC_SCHOLAR_API_KEY) headers["x-api-key"] = process.env.SEMANTIC_SCHOLAR_API_KEY;
-  const response = await fetcher(url, { headers });
+  const response = await fetchWithTimeout(fetcher, url, { headers });
   if (!response.ok) throw new Error(`SEMANTICSCHOLAR_HTTP_${response.status}`);
-  const payload = await response.json() as { data?: SemanticScholarPaper[] };
+  const payload = await readResponseJson<{ data?: SemanticScholarPaper[] }>(response);
   const papers = payload.data || [];
   const match = papers.map((paper) => ({ paper, score: similarity(title, paper.title || "") })).sort((left, right) => right.score - left.score)[0];
   if (!match || match.score < 0.55) throw new Error("SEMANTICSCHOLAR_NO_MATCH");

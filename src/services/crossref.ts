@@ -1,5 +1,6 @@
 import type { PaperMetadata } from "../types.js";
 import { normalizeArxivDoi, normalizeArxivInput } from "./arxiv.js";
+import { fetchWithTimeout, readResponseJson } from "./http.js";
 
 interface CrossrefWork {
   title?: string[];
@@ -75,9 +76,9 @@ async function requestCrossref(url: string, fetcher: typeof fetch): Promise<Cros
   const mailto = process.env.CROSSREF_MAILTO;
   const target = new URL(url);
   if (mailto) target.searchParams.set("mailto", mailto);
-  const response = await fetcher(target, { headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
+  const response = await fetchWithTimeout(fetcher, target, { headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
   if (!response.ok) throw new Error(`CROSSREF_HTTP_${response.status}`);
-  const payload = await response.json() as { message?: CrossrefWork | { items?: CrossrefWork[] } };
+  const payload = await readResponseJson<{ message?: CrossrefWork | { items?: CrossrefWork[] } }>(response);
   const message = payload.message;
   if (!message) throw new Error("CROSSREF_INVALID_RESPONSE");
   return Array.isArray((message as { items?: CrossrefWork[] }).items) ? ((message as { items: CrossrefWork[] }).items) : message as CrossrefWork;

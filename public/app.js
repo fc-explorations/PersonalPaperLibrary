@@ -146,6 +146,20 @@ document.querySelectorAll("input[name=sourceUrl]").forEach((input) => {
   input.addEventListener("input", () => updateSourceUrlAction(input.form));
 });
 
+document.querySelector("[data-restore-backup]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!window.confirm("Restore this backup? Existing papers will be preserved and matching records will be skipped.")) return;
+  setStatus(form, "Restoring backup…");
+  try {
+    const body = await jsonRequest("/api/import/backup", { method: "POST", body: new FormData(form) });
+    setStatus(form, `Restored ${body.restored} paper${body.restored === 1 ? "" : "s"}; skipped ${body.skipped}. Reloading…`);
+    window.setTimeout(() => window.location.reload(), 400);
+  } catch (error) {
+    setStatus(form, clientErrorMessage(error), true);
+  }
+});
+
 function renderPreview(data, stagingToken = "") {
   const preview = document.querySelector("[data-preview]");
   if (!preview) return;

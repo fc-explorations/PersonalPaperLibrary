@@ -1,5 +1,6 @@
 import type { PaperMetadata } from "../types.js";
 import { normalizeArxivDoi, normalizeArxivInput } from "./arxiv.js";
+import { fetchWithTimeout, readResponseJson } from "./http.js";
 
 interface OpenAlexWork {
   title?: string;
@@ -64,11 +65,11 @@ function mapWork(work: OpenAlexWork): PaperMetadata {
 }
 
 export async function lookupOpenAlex(title: string, fetcher: typeof fetch = fetch): Promise<PaperMetadata> {
-  const response = await fetcher(`https://api.openalex.org/works?search=${encodeURIComponent(title.trim())}&per-page=5`, {
+  const response = await fetchWithTimeout(fetcher, `https://api.openalex.org/works?search=${encodeURIComponent(title.trim())}&per-page=5`, {
     headers: { "User-Agent": "PersonalPaperLibrary/1.0" },
   });
   if (!response.ok) throw new Error(`OPENALEX_HTTP_${response.status}`);
-  const payload = await response.json() as { results?: OpenAlexWork[] };
+  const payload = await readResponseJson<{ results?: OpenAlexWork[] }>(response);
   const works = payload.results || [];
   const match = works.map((work) => ({ work, score: similarity(title, work.title || "") })).sort((left, right) => right.score - left.score)[0];
   if (!match || match.score < 0.55) throw new Error("OPENALEX_NO_MATCH");

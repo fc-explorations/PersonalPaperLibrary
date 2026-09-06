@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { Readable } from "node:stream";
+import { getCookie, setCookie } from "hono/cookie";
 import type { Database } from "better-sqlite3";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -16,8 +17,10 @@ import { lookupSemanticScholar } from "./services/semantic-scholar.js";
 import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
 import { createZipStream } from "./services/zip.js";
+import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderPaperPage, renderSettingsPage } from "./views.js";
+import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 
 export interface AppDependencies {
@@ -25,7 +28,13 @@ export interface AppDependencies {
   storage?: FileStorage;
   fetcher?: typeof fetch;
   maxPdfBytes?: number;
+  maxRequestBytes?: number;
+  authPassword?: string;
 }
+
+const DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024;
+const SESSION_COOKIE = "ppl_session";
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 
 function jsonError(c: Context, status: number, code: string, message: string) {
   return c.json({ error: { code, message } }, status as ContentfulStatusCode);
@@ -105,16 +114,54 @@ function pdfFilename(title: string, used: Set<string>): string {
 
 type StagedPdfResult = { status: "not_found" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
 
+const BACKUP_VERSION = 1;
+
 async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
-  const parsed = new URL(url);
-  if (!/^https?:$/i.test(parsed.protocol)) throw new Error("PDF_URL_INVALID");
-  const response = await fetcher(parsed, { headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
-  if (!response.ok) throw new Error(`PDF_HTTP_${response.status}`);
-  const declaredSize = Number(response.headers.get("content-length") || 0);
-  if (declaredSize > maxPdfBytes) throw new Error("PDF_TOO_LARGE");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  validatePdf(bytes, "paper.pdf", maxPdfBytes);
-  return bytes;
+  let target = new URL(url);
+  for (let redirect = 0; redirect <= 3; redirect++) {
+    assertSafeRemoteUrl(target, fetcher === fetch);
+    const response = await fetchWithTimeout(fetcher, target, { redirect: "manual", headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location || redirect === 3) throw new Error("PDF_TOO_MANY_REDIRECTS");
+      target = new URL(location, target);
+      continue;
+    }
+    if (!response.ok) throw new Error(`PDF_HTTP_${response.status}`);
+    const bytes = await readResponseBytes(response, maxPdfBytes);
+    validatePdf(bytes, "paper.pdf", maxPdfBytes);
+    return bytes;
+  }
+  throw new Error("PDF_TOO_MANY_REDIRECTS");
+}
+
+function assertSafeRemoteUrl(url: URL, resolveHost: boolean): void {
+  if (!/^https?:$/i.test(url.protocol)) throw new Error("PDF_URL_INVALID");
+  const hostname = url.hostname.toLowerCase().replace(/[.]$/, "");
+  if (["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"].includes(hostname) || hostname.endsWith(".localhost") || hostname.endsWith(".internal") || hostname.endsWith(".local")) throw new Error("PDF_URL_BLOCKED");
+  const numericHost = hostname.match(/^\d+$/) ? Number(hostname) : 0;
+  if (numericHost >= 0x7f000000 && numericHost <= 0x7fffffff) throw new Error("PDF_URL_BLOCKED");
+  const octets = hostname.split(".").map(Number);
+  if (octets.length === 4 && octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    const [first, second] = octets;
+    if (first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || first === 0) throw new Error("PDF_URL_BLOCKED");
+  }
+  if (resolveHost && hostname.includes(":")) throw new Error("PDF_URL_BLOCKED");
+}
+
+function sessionToken(password: string): string {
+  const expires = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
+  const signature = createHmac("sha256", password).update(String(expires)).digest("base64url");
+  return `${expires}.${signature}`;
+}
+
+function validSession(token: string | undefined, password: string): boolean {
+  const [expiry, signature] = token?.split(".") || [];
+  if (!expiry || !signature || Number(expiry) < Math.floor(Date.now() / 1000)) return false;
+  const expected = createHmac("sha256", password).update(expiry).digest("base64url");
+  const actualBytes = Buffer.from(signature);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 async function stageMetadataPdf(metadata: PaperMetadata, storage: FileStorage, maxPdfBytes: number, fetcher: typeof fetch): Promise<{ pdf: StagedPdfResult; warning?: string }> {
@@ -178,10 +225,50 @@ export function createApp(dependencies: AppDependencies = {}) {
   const repo = new PaperRepository(db);
   const fetcher = dependencies.fetcher || fetch;
   const maxPdfBytes = dependencies.maxPdfBytes ?? (Number(process.env.MAX_PDF_MB || 50) * 1024 * 1024 || DEFAULT_MAX_PDF_BYTES);
+  const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
+  const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
+
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("X-Frame-Options", "DENY");
+    c.header("Referrer-Policy", "same-origin");
+    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+  });
+  app.use("*", async (c, next) => {
+    const contentLength = Number(c.req.header("content-length") || 0);
+    if (contentLength > maxRequestBytes) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The request is larger than the configured limit.");
+    return next();
+  });
+  app.use("*", async (c, next) => {
+    if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js") return next();
+    if (!validSession(getCookie(c, SESSION_COOKIE), authPassword)) {
+      if (c.req.method === "GET" || c.req.method === "HEAD") return c.redirect("/login");
+      return jsonError(c, 401, "AUTH_REQUIRED", "Sign in to use the paper library.");
+    }
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
+      const origin = c.req.header("origin");
+      const expectedOrigin = process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
+      if (origin && origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
+    }
+    return next();
+  });
 
   app.use("/styles.css", serveStatic({ root: "./public" }));
   app.use("/app.js", serveStatic({ root: "./public" }));
+
+  app.get("/login", (c) => c.html(renderLoginPage()));
+  app.post("/login", async (c) => {
+    if (!authPassword) return c.redirect("/");
+    const body = await c.req.parseBody() as Record<string, unknown>;
+    const password = typeof body.password === "string" ? body.password : "";
+    const expected = Buffer.from(authPassword);
+    const actual = Buffer.from(password);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return c.html(renderLoginPage("Incorrect password."), 401);
+    setCookie(c, SESSION_COOKIE, sessionToken(authPassword), { httpOnly: true, sameSite: "Strict", secure: new URL(c.req.url).protocol === "https:", path: "/", maxAge: SESSION_MAX_AGE });
+    return c.redirect("/");
+  });
 
   app.get("/", (c) => {
     const { q, tag, all, untagged } = requestFilters(c);
@@ -560,6 +647,56 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.get("/api/export/metadata", (c) => {
     c.header("Content-Disposition", "attachment; filename=paper-library.json");
     return c.json(repo.exportData());
+  });
+
+  app.get("/api/export/backup", async (c) => {
+    const exported = repo.exportData();
+    const papers = await Promise.all(exported.papers.map(async (paper) => {
+      const bytes = paper.r2Key ? await storage.get(paper.id) : null;
+      return { paper, pdfBase64: bytes?.toString("base64") };
+    }));
+    c.header("Content-Disposition", "attachment; filename=paper-library-backup.json");
+    return c.json({ version: BACKUP_VERSION, exportedAt: new Date().toISOString(), papers, tags: exported.tags });
+  });
+
+  app.post("/api/import/backup", async (c) => {
+    try {
+      const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
+      const file = uploadedFile(body.backup);
+      if (!file) return jsonError(c, 400, "BACKUP_REQUIRED", "Choose a PersonalPaperLibrary backup file.");
+      if (file.size > maxRequestBytes) return jsonError(c, 413, "BACKUP_TOO_LARGE", "The backup is larger than the configured request limit.");
+      const backup = JSON.parse(new TextDecoder().decode(await file.arrayBuffer())) as { version?: number; papers?: Array<{ paper?: Record<string, unknown>; pdfBase64?: string }>; };
+      if (backup.version !== BACKUP_VERSION || !Array.isArray(backup.papers)) return jsonError(c, 400, "BACKUP_INVALID", "This is not a supported PersonalPaperLibrary backup.");
+      let restored = 0;
+      let skipped = 0;
+      for (const entry of backup.papers) {
+        const record = entry.paper;
+        if (!record || typeof record.id !== "string" || !/^[a-z0-9_-]+$/i.test(record.id) || typeof record.title !== "string" || !record.title.trim()) {
+          skipped++;
+          continue;
+        }
+        if (repo.findById(record.id) || repo.findDuplicate(record as PaperDraftInput, typeof record.pdfSha256 === "string" ? record.pdfSha256 : undefined)) {
+          skipped++;
+          continue;
+        }
+        let stored: { key: string; sha256: string } | undefined;
+        try {
+          if (entry.pdfBase64) {
+            const bytes = Uint8Array.from(Buffer.from(entry.pdfBase64, "base64"));
+            validatePdf(bytes, `${record.id}.pdf`, maxPdfBytes);
+            stored = await storage.put(record.id, bytes);
+          }
+          repo.create({ ...record, id: record.id, tags: Array.isArray(record.tags) ? record.tags : [] } as PaperDraftInput, stored);
+          restored++;
+        } catch (error) {
+          if (stored) await storage.delete(record.id);
+          throw error;
+        }
+      }
+      return c.json({ ok: true, restored, skipped });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The backup could not be restored.");
+    }
   });
 
   return app;

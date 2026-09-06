@@ -1,4 +1,5 @@
 import type { PaperMetadata } from "../types.js";
+import { fetchWithTimeout, readResponseText, readResponseBytes } from "./http.js";
 
 export interface NormalizedArxivInput {
   id: string;
@@ -101,11 +102,11 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
 }
 
 export async function fetchArxivMetadata(normalized: NormalizedArxivInput, fetcher: typeof fetch = fetch): Promise<PaperMetadata> {
-  const response = await fetcher(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(normalized.id)}`, {
+  const response = await fetchWithTimeout(fetcher, `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(normalized.id)}`, {
     headers: { "User-Agent": "PersonalArxivPaperLibrary/1.0" },
   });
   if (!response.ok) throw new Error(`ARXIV_HTTP_${response.status}`);
-  return parseArxivMetadata(await response.text(), normalized);
+  return parseArxivMetadata(await readResponseText(response), normalized);
 }
 
 export async function fetchArxivPdf(
@@ -113,12 +114,9 @@ export async function fetchArxivPdf(
   maxBytes = 50 * 1024 * 1024,
   fetcher: typeof fetch = fetch,
 ): Promise<Uint8Array> {
-  const response = await fetcher(normalized.pdfUrl, { headers: { "User-Agent": "PersonalArxivPaperLibrary/1.0" } });
+  const response = await fetchWithTimeout(fetcher, normalized.pdfUrl, { headers: { "User-Agent": "PersonalArxivPaperLibrary/1.0" } });
   if (!response.ok) throw new Error(`ARXIV_PDF_HTTP_${response.status}`);
-  const declaredSize = Number(response.headers.get("content-length") || 0);
-  if (declaredSize > maxBytes) throw new Error("PDF_TOO_LARGE");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) throw new Error("PDF_TOO_LARGE");
+  const bytes = await readResponseBytes(response, maxBytes);
   const signature = new TextDecoder().decode(bytes.slice(0, 4));
   if (signature !== "%PDF") throw new Error("ARXIV_NOT_A_PDF");
   return bytes;
