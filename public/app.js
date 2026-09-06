@@ -75,7 +75,7 @@ document.querySelectorAll("[data-theme-picker]").forEach((input) => input.addEve
 }));
 
 function setStatus(form, message, error = false) {
-  const status = form.querySelector(".form-status");
+  const status = form?.querySelector(".form-status") || (form?.id ? document.querySelector(`[data-form-status-for="${form.id}"]`) : null);
   if (status) {
     status.textContent = message;
     status.classList.toggle("status-error", error);
@@ -102,6 +102,7 @@ function setValue(form, name, next) {
   if (input) {
     input.value = next || "";
     if (name === "authors") resizeAuthorsField(input);
+    if (name === "sourceUrl") updateSourceUrlAction(form);
   }
 }
 
@@ -110,7 +111,7 @@ function commaValues(text) {
 }
 
 function updateWebResource(form, paper, pdf) {
-  const link = form?.querySelector("[data-web-resource]");
+  const link = form?.querySelector("[data-web-resource]") || (form?.id ? document.querySelector(`[data-web-resource-for="${form.id}"]`) : null);
   if (!link) return;
   const doiUrl = paper?.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "";
   const url = paper?.arxivUrl || doiUrl || paper?.sourceUrl || paper?.pdfUrl || "";
@@ -119,9 +120,30 @@ function updateWebResource(form, paper, pdf) {
   if (available) link.href = url;
 }
 
+function updateSourceUrlAction(form) {
+  const input = form?.elements.namedItem("sourceUrl");
+  const link = form?.querySelector("[data-source-url-go]");
+  if (!input || !link) return;
+  const rawUrl = input.value.trim();
+  let url = "";
+  try {
+    const parsed = new URL(rawUrl);
+    if (/^https?:$/.test(parsed.protocol)) url = parsed.toString();
+  } catch {
+    // Keep the action hidden until the field contains a valid web URL.
+  }
+  link.hidden = !url;
+  if (url) link.href = url;
+}
+
 document.querySelectorAll("textarea[name=authors]").forEach((input) => {
   resizeAuthorsField(input);
   input.addEventListener("input", () => resizeAuthorsField(input));
+});
+
+document.querySelectorAll("input[name=sourceUrl]").forEach((input) => {
+  updateSourceUrlAction(input.form);
+  input.addEventListener("input", () => updateSourceUrlAction(input.form));
 });
 
 function renderPreview(data, stagingToken = "") {
@@ -238,7 +260,7 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
 }));
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
-  const form = button.closest("[data-paper-form]");
+  const form = button.form || button.closest("[data-paper-form]");
   setStatus(form, "Looking up citation metadata…");
   try {
     const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId") }) });
@@ -312,14 +334,15 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
 document.querySelector("[data-delete-group]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const all = button.dataset.deleteAll === "true";
+  const untagged = button.dataset.deleteUntagged === "true";
   const query = button.dataset.deleteQuery;
   const tags = JSON.parse(button.dataset.deleteTags || "[]");
   const count = button.dataset.deleteCount || "0";
-  const selection = all ? "all papers" : tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
-  if ((!query && !tags.length && !all) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
+  const selection = all ? "all papers" : untagged ? "papers without tags" : tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
+  if ((!query && !tags.length && !all && !untagged) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
   button.disabled = true;
   try {
-    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags, all }) });
+    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags, all, untagged }) });
     window.location.href = "/";
   } catch (error) {
     button.disabled = false;
@@ -365,6 +388,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
   const selectedTag = value(form, "tag");
   const name = selectedTag === "__new__" ? value(form, "newTag") : selectedTag;
   const all = form.dataset.selectionAll === "true";
+  const untagged = form.dataset.selectionUntagged === "true";
   const tags = JSON.parse(form.dataset.selectionTags || "[]");
   if (action === "remove" && selectedTag === "__new__") {
     setStatus(form, "Choose an existing tag to remove.", true);
@@ -372,7 +396,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
   }
   setStatus(form, "Updating tags…");
   try {
-    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, all, name, action }) });
+    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, all, untagged, name, action }) });
     window.location.reload();
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);

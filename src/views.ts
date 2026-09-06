@@ -193,12 +193,13 @@ function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
 
-function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false): string {
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false, untagged = false): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   tags.forEach((tag) => params.append("tag", tag));
   params.set("sort", sort);
   if (all) params.set("all", "1");
+  if (untagged) params.set("untagged", "1");
   return params.toString();
 }
 
@@ -245,26 +246,27 @@ function paperCard(paper: PaperRecord): string {
   </article>`;
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean }): string {
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean; untagged?: boolean }): string {
   const sort = query.sort || "newest";
   const selectedFilters = query.tag || [];
   const allSelected = Boolean(query.all);
-  const downloadQuery = libraryQuery(query.q, selectedFilters, sort, allSelected);
+  const untaggedSelected = Boolean(query.untagged);
+  const downloadQuery = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected);
   const storedPdfCount = papers.filter((paper) => paper.r2Key).length;
-  const hasSelection = Boolean(papers.length && (query.q?.trim() || selectedFilters.length || allSelected));
+  const hasSelection = Boolean(papers.length && (query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
-  const selectionLabel = allSelected ? "Delete all" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
+  const selectionLabel = allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
-  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
-    ${allSelected ? `<input type="hidden" name="all" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
+    ${allSelected ? `<input type="hidden" name="all" value="1">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${allSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, !allSelected)}" aria-pressed="${allSelected}">All</a> ${groupTagLinks(tags, allSelected ? [] : selectedFilters, query.q, sort)}</section>
+  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${allSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, !allSelected)}" aria-pressed="${allSelected}">All</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected)}" aria-pressed="${untaggedSelected}">NaN</a> ${groupTagLinks(tags, allSelected || untaggedSelected ? [] : selectedFilters, query.q, sort)}</section>
   <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
   return layout("Library", body);
@@ -276,26 +278,40 @@ function field(label: string, name: string, value: unknown, options: { type?: st
   return `${labelHtml}<input name="${name}" type="${options.type || "text"}" value="${escapeHtml(value)}" placeholder="${escapeHtml(options.placeholder || "")}"></label>`;
 }
 
-export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add"): string {
+function sourceUrlField(value: unknown): string {
+  const url = typeof value === "string" ? value.trim() : "";
+  const validUrl = /^https?:\/\//i.test(url);
+  return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>Go</a></div></label>`;
+}
+
+function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
+  const webResourceUrl = !data.r2Key ? paperWebResource(data) : undefined;
+  const webResourceButton = `<a class="button button-secondary" data-web-resource data-web-resource-for="${escapeHtml(formId)}"${webResourceUrl ? ` href="${escapeHtml(webResourceUrl)}"` : ""} target="_blank" rel="noreferrer"${webResourceUrl ? "" : " hidden"}>${openIcon()}<span>Open web resource</span></a>`;
+  const cancelButton = isEdit ? "" : `<a class="button button-secondary" href="/">${closeIcon()}<span>Cancel</span></a>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-left"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${webResourceButton}</div><div class="form-actions-right"><button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button>${cancelButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+}
+
+export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {
   const isEdit = mode === "edit";
   const data = paper || { title: "", authors: [], categories: [], tags: [] };
+  const formId = isEdit ? `paper-form-${data.id}` : "paper-form-new";
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
-  const openPdfButton = isEdit && data.r2Key ? `<a class="button button-secondary" href="/api/papers/${escapeHtml(data.id)}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open PDF</span></a>` : "";
-  const webResourceUrl = !data.r2Key ? paperWebResource(data) : undefined;
-  const webResourceButton = `<a class="button button-secondary" data-web-resource${webResourceUrl ? ` href="${escapeHtml(webResourceUrl)}"` : ""} target="_blank" rel="noreferrer"${webResourceUrl ? "" : " hidden"}>${openIcon()}<span>Open web resource</span></a>`;
-  const fields = `${field("Title", "title", data.title, { placeholder: "Paper title" })}
+  const openPdfButton = isEdit && data.r2Key ? `<a class="button button-secondary button-small" href="/api/papers/${escapeHtml(data.id)}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : "";
+  const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
+  const fields = `${titleField}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
     ${field("Abstract", "abstract", data.abstract, { rows: 6 })}
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
     <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("DOI", "doi", data.doi)}</div>
-    <div class="form-row">${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}${field("Source URL", "sourceUrl", data.sourceUrl)}</div>
+    <div class="form-row">${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}${sourceUrlField(data.sourceUrl)}</div>
     ${field("Tags", "tags", (data.tags || []).join(", "), { placeholder: "topic, project, method" })}`;
-  return `<form class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
+  const actions = formActions(data, isEdit, formId);
+  return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <div class="form-grid">${fields}</div>
     <input type="hidden" name="stagingToken" value="">
-    <div class="form-actions"><div class="form-actions-left"><button class="button button-secondary" type="button" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${webResourceButton}${openPdfButton}</div><span class="form-status" role="status"></span><div class="form-actions-right"><button class="button" type="submit">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button><a class="button button-secondary" href="${isEdit ? `/papers/${escapeHtml(data.id)}` : "/"}">${closeIcon()}<span>Cancel</span></a></div></div>
+    ${actionsOutside ? "" : actions}
   </form>`;
 }
 
@@ -323,13 +339,16 @@ export function renderPaperPage(paper: PaperRecord): string {
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
   ].join("");
   const webResourceUrl = paperWebResource(paper);
-  const body = `<section class="page-heading paper-heading"><div><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : webResourceUrl ? `<a class="icon-button" href="${escapeHtml(webResourceUrl)}" target="_blank" rel="noreferrer" aria-label="Open web resource" title="Open web resource">${openIcon()}<span>Web resource</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail"><div class="detail-content"><div>${paper.abstract?.trim() ? `<h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p>` : ""}<section class="metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section></div>${paper.tags.length ? `<section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : ""}<section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
+  const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
+  const tagsSection = paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : "";
+  const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : webResourceUrl ? `<a class="icon-button" href="${escapeHtml(webResourceUrl)}" target="_blank" rel="noreferrer" aria-label="Open web resource" title="Open web resource">${openIcon()}<span>Web resource</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
+  <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section>${tagsSection}<section class="detail-section bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
   return layout(paper.title, body);
 }
 
 export function renderEditPage(paper: PaperRecord): string {
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading"><div><p class="eyebrow">Edit metadata</p><h1>${renderText(paper.title)}</h1></div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit")}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  const formId = `paper-form-${paper.id}`;
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {

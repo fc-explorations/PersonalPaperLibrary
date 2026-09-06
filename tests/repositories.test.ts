@@ -26,6 +26,8 @@ describe("paper repository", () => {
     expect(repo.list({ q: "lovelace" })[0].id).toBe(paper.id);
     expect(repo.list({ tag: "vision" })[0].id).toBe(paper.id);
     const secondPaper = repo.create({ title: "A Research Paper", tags: ["Research"], metadataSource: "manual" });
+    const untaggedPaper = repo.create({ title: "An Untagged Paper", metadataSource: "manual" });
+    expect(repo.list({ untagged: true }).map((item) => item.id)).toEqual([untaggedPaper.id]);
     repo.tags.replaceForPaper(paper.id, ["vision", "Research"]);
     expect(repo.findById(paper.id)?.tags).toEqual(["Research", "Vision"]);
     expect(repo.list({ tag: ["vision", "Research"] }).map((item) => item.id)).toEqual([paper.id]);

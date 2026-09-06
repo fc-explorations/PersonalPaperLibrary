@@ -157,7 +157,7 @@ export class PaperRepository {
     })();
   }
 
-  list(options: { q?: string; tag?: string | string[]; sort?: SortOrder } = {}): PaperRecord[] {
+  list(options: { q?: string; tag?: string | string[]; untagged?: boolean; sort?: SortOrder } = {}): PaperRecord[] {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
     if (options.q?.trim()) {
@@ -168,6 +168,7 @@ export class PaperRepository {
       params.q = `%${options.q.trim()}%`;
     }
     const tags = (Array.isArray(options.tag) ? options.tag : options.tag ? [options.tag] : []).map((tag) => tag.trim()).filter(Boolean);
+    if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu WHERE ptu.paper_id = p.id)");
     tags.forEach((tag, index) => {
       const parameter = `tag${index}`;
       clauses.push(`EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`);

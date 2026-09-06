@@ -57,11 +57,11 @@ function tagFilters(value: unknown, fallback?: unknown): string[] {
   return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function requestFilters(c: Context): { q?: string; tag?: string[]; all?: boolean } {
+function requestFilters(c: Context): { q?: string; tag?: string[]; all?: boolean; untagged?: boolean } {
   const url = new URL(c.req.url);
   const q = c.req.query("q")?.trim() || undefined;
   const tags = tagFilters(url.searchParams.getAll("tag"));
-  return { q, tag: tags.length ? tags : undefined, all: c.req.query("all") === "1" };
+  return { q, tag: tags.length ? tags : undefined, all: c.req.query("all") === "1", untagged: c.req.query("untagged") === "1" };
 }
 
 function titleFromFilename(filename: string): string {
@@ -184,9 +184,9 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use("/app.js", serveStatic({ root: "./public" }));
 
   app.get("/", (c) => {
-    const { q, tag, all } = requestFilters(c);
+    const { q, tag, all, untagged } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
-    return c.html(renderLibrary(repo.list({ q, tag, sort }), repo.tags.list(), { q, tag, sort, all }));
+    return c.html(renderLibrary(repo.list({ q, tag, untagged, sort }), repo.tags.list(), { q, tag, sort, all, untagged }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));
@@ -204,8 +204,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/papers", (c) => {
-    const { q, tag } = requestFilters(c);
-    return c.json({ papers: repo.list({ q, tag, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
+    const { q, tag, untagged } = requestFilters(c);
+    return c.json({ papers: repo.list({ q, tag, untagged, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
   });
 
   const importPaper = async (c: Context) => {
@@ -428,11 +428,11 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-delete", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; untagged?: boolean }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
-      if (!q && !tags.length && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
-      const papers = repo.list({ q, tag: tags });
+      if (!q && !tags.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+      const papers = repo.list({ q, tag: tags, untagged: body.untagged });
       const moved: StorageMove[] = [];
       try {
         for (const paper of papers) {
@@ -455,14 +455,14 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-tags", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; name?: string; action?: string }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; untagged?: boolean; name?: string; action?: string }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
       const name = body.name?.trim() || "";
-      if (!q && !tags.length && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
+      if (!q && !tags.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
       if (!name || name.includes(",")) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter one tag without commas.");
       if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
-      const papers = repo.list({ q, tag: tags });
+      const papers = repo.list({ q, tag: tags, untagged: body.untagged });
       if (body.action === "add") repo.tags.addToPapers(papers.map((paper) => paper.id), name);
       else repo.tags.removeFromPapers(papers.map((paper) => paper.id), name);
       return c.json({ ok: true, updated: papers.length, action: body.action, tag: name });
@@ -524,8 +524,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/export/pdfs", (c) => {
-    const { q, tag } = requestFilters(c);
-    const papers = repo.list({ q, tag, sort: parseSortOrder(c.req.query("sort")) });
+    const { q, tag, untagged } = requestFilters(c);
+    const papers = repo.list({ q, tag, untagged, sort: parseSortOrder(c.req.query("sort")) });
     const usedNames = new Set<string>();
     const files = papers.flatMap((paper) => existsSync(storage.getPath(paper.id)) ? [{ name: pdfFilename(paper.title, usedNames), path: storage.getPath(paper.id) }] : []);
     if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");

@@ -216,7 +216,9 @@ describe("HTTP application", () => {
     expect(page).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
     expect(page).toContain("Web resource");
     const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();
-    expect(editPage).toContain('data-web-resource href="https://doi.org/10.1000%2Fweb-resource"');
+    expect(editPage).toContain('data-web-resource-for="paper-form-');
+    expect(editPage).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
+    expect(editPage).toContain('data-source-url-go');
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
@@ -326,6 +328,25 @@ describe("HTTP application", () => {
     expect((await (await context.app.request("/api/papers?tag=selected")).json()).papers).toHaveLength(2);
     const deleteResponse = await context.app.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ all: true }) });
     expect(deleteResponse.status).toBe(200);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("filters untagged papers through the NaN group", async () => {
+    const context = testApp();
+    const untagged = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Untagged paper", metadataSource: "manual" }) });
+    expect(untagged.status).toBe(201);
+    const tagged = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Tagged paper", tags: ["Research"], metadataSource: "manual" }) });
+    expect(tagged.status).toBe(201);
+    const page = await context.app.request("/?untagged=1");
+    const html = await page.text();
+    expect(html).toContain('aria-pressed="true">NaN</a>');
+    expect(html).toContain("Untagged paper");
+    expect(html).not.toContain("Tagged paper");
+    expect((await (await context.app.request("/api/papers?untagged=1")).json()).papers).toHaveLength(1);
+    const tagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ untagged: true, name: "review", action: "add" }) });
+    expect(tagResponse.status).toBe(200);
+    expect((await (await context.app.request("/api/papers?tag=review")).json()).papers).toHaveLength(1);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
