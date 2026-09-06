@@ -207,6 +207,20 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("shows a web resource action on metadata pages without a stored PDF", async () => {
+    const context = testApp();
+    const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Web resource paper", doi: "10.1000/web-resource", sourceUrl: "https://publisher.example/web-resource", metadataSource: "mixed" }) });
+    expect(response.status).toBe(201);
+    const { paper } = await response.json();
+    const page = await (await context.app.request(`/papers/${paper.id}`)).text();
+    expect(page).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
+    expect(page).toContain("Web resource");
+    const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();
+    expect(editPage).toContain('data-web-resource href="https://doi.org/10.1000%2Fweb-resource"');
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("resolves arXiv DOI URLs through arXiv metadata", async () => {
     const context = testApp();
     const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "https://doi.org/10.48550/arXiv.2608.29530" }) });

@@ -90,7 +90,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=4" defer></script>
+  <script src="/app.js?v=6" defer></script>
 </body>
 </html>`;
 }
@@ -223,6 +223,12 @@ function paperSummary(paper: PaperRecord): string {
   return [paper.authors.length ? authorLine(paper.authors) : undefined, paperYear(paper)].filter(Boolean).join(" · ");
 }
 
+function paperWebResource(paper: Partial<PaperRecord & PaperMetadata>): string | undefined {
+  if (paper.arxivUrl) return paper.arxivUrl;
+  if (paper.doi) return `https://doi.org/${encodeURIComponent(paper.doi)}`;
+  return paper.sourceUrl;
+}
+
 function metadataRow(label: string, value: unknown, content = renderText(value)): string {
   if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return "";
   return `<dt>${escapeHtml(label)}</dt><dd>${content}</dd>`;
@@ -276,6 +282,8 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
   const openPdfButton = isEdit && data.r2Key ? `<a class="button button-secondary" href="/api/papers/${escapeHtml(data.id)}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open PDF</span></a>` : "";
+  const webResourceUrl = !data.r2Key ? paperWebResource(data) : undefined;
+  const webResourceButton = `<a class="button button-secondary" data-web-resource${webResourceUrl ? ` href="${escapeHtml(webResourceUrl)}"` : ""} target="_blank" rel="noreferrer"${webResourceUrl ? "" : " hidden"}>${openIcon()}<span>Open web resource</span></a>`;
   const fields = `${field("Title", "title", data.title, { placeholder: "Paper title" })}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
@@ -287,7 +295,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   return `<form class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <div class="form-grid">${fields}</div>
     <input type="hidden" name="stagingToken" value="">
-    <div class="form-actions"><div class="form-actions-left"><button class="button button-secondary" type="button" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button><a class="button button-secondary" data-web-resource target="_blank" rel="noreferrer" hidden>${openIcon()}<span>Open web resource</span></a>${openPdfButton}</div><span class="form-status" role="status"></span><div class="form-actions-right"><button class="button" type="submit">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button><a class="button button-secondary" href="${isEdit ? `/papers/${escapeHtml(data.id)}` : "/"}">${closeIcon()}<span>Cancel</span></a></div></div>
+    <div class="form-actions"><div class="form-actions-left"><button class="button button-secondary" type="button" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${webResourceButton}${openPdfButton}</div><span class="form-status" role="status"></span><div class="form-actions-right"><button class="button" type="submit">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button><a class="button button-secondary" href="${isEdit ? `/papers/${escapeHtml(data.id)}` : "/"}">${closeIcon()}<span>Cancel</span></a></div></div>
   </form>`;
 }
 
@@ -314,7 +322,8 @@ export function renderPaperPage(paper: PaperRecord): string {
     metadataRow("DOI", paper.doi),
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
   ].join("");
-  const body = `<section class="page-heading paper-heading"><div><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
+  const webResourceUrl = paperWebResource(paper);
+  const body = `<section class="page-heading paper-heading"><div><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : webResourceUrl ? `<a class="icon-button" href="${escapeHtml(webResourceUrl)}" target="_blank" rel="noreferrer" aria-label="Open web resource" title="Open web resource">${openIcon()}<span>Web resource</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
   <article class="panel paper-detail"><div class="detail-content"><div>${paper.abstract?.trim() ? `<h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p>` : ""}<section class="metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section></div>${paper.tags.length ? `<section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : ""}<section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
   return layout(paper.title, body);
 }

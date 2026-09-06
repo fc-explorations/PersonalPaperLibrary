@@ -110,7 +110,7 @@ Populate the form with the matched authors, publication date/year, venue or jour
 
 After metadata is found, try to obtain a PDF from the matched record's canonical arXiv PDF URL, open-access PDF URL, or publisher PDF link. Stage the first valid PDF locally and carry its staging token through the review form so that saving the metadata commits it with the paper. PDF retrieval is best-effort: an unavailable or invalid PDF must produce a warning while leaving the metadata result usable for manual upload.
 
-When automatic retrieval fails but the metadata includes a direct PDF URL, arXiv page, publisher page, or DOI resource, show an `Open web resource` action beside `Find metadata`. Prefer an arXiv or publisher/DOI landing page over a direct PDF candidate that has already failed. The action opens the highest-priority available resource in a new tab and does not alter the stored record.
+When automatic retrieval fails but the metadata includes a direct PDF URL, arXiv page, publisher page, or DOI resource, show an `Open web resource` action beside `Find metadata`. Prefer an arXiv page, then the DOI resolver, then a publisher landing page, over a direct PDF candidate that has already failed. The action opens the highest-priority available resource in a new tab and does not alter the stored record.
 
 ### Add from a local PDF
 

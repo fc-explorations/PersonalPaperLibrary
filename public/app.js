@@ -113,7 +113,7 @@ function updateWebResource(form, paper, pdf) {
   const link = form?.querySelector("[data-web-resource]");
   if (!link) return;
   const doiUrl = paper?.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "";
-  const url = paper?.arxivUrl || paper?.sourceUrl || doiUrl || paper?.pdfUrl || "";
+  const url = paper?.arxivUrl || doiUrl || paper?.sourceUrl || paper?.pdfUrl || "";
   const available = pdf?.status !== "staged" && /^https?:\/\//i.test(url);
   link.hidden = !available;
   if (available) link.href = url;
