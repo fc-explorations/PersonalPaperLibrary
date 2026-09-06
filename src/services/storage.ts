@@ -1,70 +1,99 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile, unlink, rename, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
+export interface StorageMove {
+  token: string;
+  paperId: string;
+}
 
 export class FileStorage {
   readonly root: string;
   readonly pdfDir: string;
   readonly stagingDir: string;
+  readonly trashDir: string;
 
   constructor(root = resolve("data")) {
     this.root = root;
     this.pdfDir = join(root, "pdfs");
     this.stagingDir = join(root, "staging");
+    this.trashDir = join(root, "trash");
     mkdirSync(this.pdfDir, { recursive: true });
     mkdirSync(this.stagingDir, { recursive: true });
+    mkdirSync(this.trashDir, { recursive: true });
   }
 
-  stage(bytes: Uint8Array): { token: string; sizeBytes: number; sha256: string } {
+  async stage(bytes: Uint8Array): Promise<{ token: string; sizeBytes: number; sha256: string }> {
     const token = randomUUID();
-    writeFileSync(this.stagedPath(token), bytes);
+    await writeFile(this.stagedPath(token), bytes);
     return { token, sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
 
-  promoteStagedFile(token: string, paperId: string): { key: string; sha256: string } {
+  async promoteStagedFile(token: string, paperId: string): Promise<{ key: string; sha256: string }> {
     this.assertToken(token);
     const source = this.stagedPath(token);
     if (!existsSync(source)) throw new Error("STAGED_FILE_NOT_FOUND");
-    const bytes = readFileSync(source);
+    const bytes = await readFile(source);
     const key = `papers/${paperId}.pdf`;
-    renameSync(source, this.pdfPath(paperId));
+    await rename(source, this.pdfPath(paperId));
     return { key, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
 
-  discardStagedFile(token: string): void {
+  async discardStagedFile(token: string): Promise<void> {
     const path = this.stagedPath(token);
-    if (existsSync(path)) unlinkSync(path);
+    if (existsSync(path)) await unlink(path);
   }
 
   getStagedPath(token: string): string {
     return this.stagedPath(token);
   }
 
-  put(paperId: string, bytes: Uint8Array): { key: string; sha256: string } {
+  async put(paperId: string, bytes: Uint8Array): Promise<{ key: string; sha256: string }> {
     const key = `papers/${paperId}.pdf`;
-    writeFileSync(this.pdfPath(paperId), bytes);
+    await writeFile(this.pdfPath(paperId), bytes);
     return { key, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
 
-  get(paperId: string): Buffer | null {
+  async get(paperId: string): Promise<Buffer | null> {
     const path = this.pdfPath(paperId);
-    return existsSync(path) ? readFileSync(path) : null;
+    return existsSync(path) ? readFile(path) : null;
   }
 
   getPath(paperId: string): string {
     return this.pdfPath(paperId);
   }
 
-  delete(paperId: string): void {
+  async delete(paperId: string): Promise<void> {
     const path = this.pdfPath(paperId);
-    if (existsSync(path)) unlinkSync(path);
+    if (existsSync(path)) await unlink(path);
   }
 
-  cleanupStaging(maxAgeMs = 24 * 60 * 60 * 1000): void {
+  async moveToTrash(paperId: string): Promise<StorageMove | null> {
+    const source = this.pdfPath(paperId);
+    if (!existsSync(source)) return null;
+    const token = randomUUID();
+    await rename(source, join(this.trashDir, `${token}.pdf`));
+    return { token, paperId };
+  }
+
+  async restoreFromTrash(move: StorageMove): Promise<void> {
+    const source = join(this.trashDir, `${move.token}.pdf`);
+    if (existsSync(source)) await rename(source, this.pdfPath(move.paperId));
+  }
+
+  async finalizeTrash(move: StorageMove): Promise<void> {
+    const path = join(this.trashDir, `${move.token}.pdf`);
+    if (existsSync(path)) await unlink(path);
+  }
+
+  async cleanupStaging(maxAgeMs = 24 * 60 * 60 * 1000): Promise<void> {
     const cutoff = Date.now() - maxAgeMs;
-    for (const file of readdirSync(this.stagingDir)) {
-      const path = join(this.stagingDir, file);
-      if (statSync(path).mtimeMs < cutoff) unlinkSync(path);
+    for (const directory of [this.stagingDir, this.trashDir]) {
+      for (const file of await readdir(directory)) {
+        const path = join(directory, file);
+        if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
+      }
     }
   }
 

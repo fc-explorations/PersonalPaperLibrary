@@ -46,11 +46,14 @@ describe("HTTP application", () => {
     const form = new FormData();
     form.append("files", new File([pdf], "first_paper.pdf", { type: "application/pdf" }));
     form.append("files", new File([pdf], "duplicate.pdf", { type: "application/pdf" }));
+    form.append("folderTag", "Research papers");
     const response = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.imported).toHaveLength(1);
     expect(result.skipped).toHaveLength(1);
+    expect(result.folderTag).toBe("Research papers");
+    expect((await (await context.app.request("/api/papers?tag=Research%20papers")).json()).papers).toHaveLength(1);
     const downloadResponse = await context.app.request("/api/export/pdfs?q=first");
     expect(downloadResponse.status).toBe(200);
     expect(Array.from(new Uint8Array(await downloadResponse.arrayBuffer()).slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
@@ -110,6 +113,33 @@ describe("HTTP application", () => {
     const response = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "flow", name: "selected", action: "add" }) });
     expect(response.status).toBe(200);
     expect((await (await context.app.request("/api/papers?tag=selected")).json()).papers).toHaveLength(1);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("falls back to a neutral title for an unresolved DOI and validates sort values", async () => {
+    const context = testApp();
+    const importResponse = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "https://doi.org/10.9999/not-found" }) });
+    expect(importResponse.status).toBe(200);
+    expect((await importResponse.json()).paper.title).toBe("Untitled paper");
+    const libraryResponse = await context.app.request("/?sort=not-a-sort");
+    expect(libraryResponse.status).toBe(200);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("removes stored PDFs when deleting a filtered group", async () => {
+    const context = testApp();
+    const form = new FormData();
+    form.append("files", new File([pdf], "grouped.pdf", { type: "application/pdf" }));
+    const uploadResponse = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
+    const uploaded = await uploadResponse.json();
+    const paperId = uploaded.imported[0].id;
+    const tagResponse = await context.app.request(`/api/papers/${paperId}/tags`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "temporary" }) });
+    expect(tagResponse.status).toBe(200);
+    const deleteResponse = await context.app.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: "temporary" }) });
+    expect(deleteResponse.status).toBe(200);
+    expect((await context.app.request(`/api/papers/${paperId}/pdf`)).status).toBe(404);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

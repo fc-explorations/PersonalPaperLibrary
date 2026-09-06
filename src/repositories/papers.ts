@@ -144,9 +144,17 @@ export class PaperRepository {
   }
 
   delete(id: string): void {
-    this.db.prepare("DELETE FROM papers WHERE id = ?").run(id);
-    this.db.prepare("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM paper_authors)").run();
-    this.db.prepare("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM paper_tags)").run();
+    this.deleteMany([id]);
+  }
+
+  deleteMany(ids: string[]): void {
+    if (!ids.length) return;
+    this.db.transaction(() => {
+      const placeholders = ids.map(() => "?").join(", ");
+      this.db.prepare(`DELETE FROM papers WHERE id IN (${placeholders})`).run(...ids);
+      this.db.prepare("DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM paper_authors)").run();
+      this.db.prepare("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM paper_tags)").run();
+    })();
   }
 
   list(options: { q?: string; tag?: string | string[]; sort?: SortOrder } = {}): PaperRecord[] {
@@ -165,9 +173,9 @@ export class PaperRepository {
       clauses.push(`EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`);
       params[parameter] = tag;
     });
-    const order = { newest: "p.created_at DESC", oldest: "p.created_at ASC", "year-desc": "p.year DESC NULLS LAST, p.title COLLATE NOCASE", "year-asc": "p.year ASC NULLS LAST, p.title COLLATE NOCASE", title: "p.title COLLATE NOCASE ASC" }[options.sort || "newest"];
+    const order = ({ newest: "p.created_at DESC", oldest: "p.created_at ASC", "year-desc": "p.year DESC NULLS LAST, p.title COLLATE NOCASE", "year-asc": "p.year ASC NULLS LAST, p.title COLLATE NOCASE", title: "p.title COLLATE NOCASE ASC" } as Record<string, string>)[options.sort || "newest"] || "p.created_at DESC";
     const rows = this.db.prepare(`SELECT p.* FROM papers p ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY ${order}`).all(params) as PaperRow[];
-    return rows.map((row) => this.hydrate(row));
+    return this.hydrateMany(rows);
   }
 
   exportData() {
@@ -178,5 +186,18 @@ export class PaperRepository {
     const authors = this.db.prepare("SELECT a.display_name FROM authors a JOIN paper_authors pa ON pa.author_id = a.id WHERE pa.paper_id = ? ORDER BY pa.author_order").all(row.id) as { display_name: string }[];
     const tags = this.db.prepare("SELECT t.name FROM tags t JOIN paper_tags pt ON pt.tag_id = t.id WHERE pt.paper_id = ? ORDER BY t.name COLLATE NOCASE").all(row.id) as { name: string }[];
     return rowToPaper(row, tags.map((tag) => tag.name), authors.map((author) => author.display_name));
+  }
+
+  private hydrateMany(rows: PaperRow[]): PaperRecord[] {
+    if (!rows.length) return [];
+    const ids = rows.map((row) => String(row.id));
+    const placeholders = ids.map(() => "?").join(", ");
+    const authors = this.db.prepare(`SELECT pa.paper_id, a.display_name FROM authors a JOIN paper_authors pa ON pa.author_id = a.id WHERE pa.paper_id IN (${placeholders}) ORDER BY pa.paper_id, pa.author_order`).all(...ids) as { paper_id: string; display_name: string }[];
+    const tags = this.db.prepare(`SELECT pt.paper_id, t.name FROM tags t JOIN paper_tags pt ON pt.tag_id = t.id WHERE pt.paper_id IN (${placeholders}) ORDER BY pt.paper_id, t.name COLLATE NOCASE`).all(...ids) as { paper_id: string; name: string }[];
+    const authorsByPaper = new Map<string, string[]>();
+    const tagsByPaper = new Map<string, string[]>();
+    for (const author of authors) authorsByPaper.set(author.paper_id, [...(authorsByPaper.get(author.paper_id) || []), author.display_name]);
+    for (const tag of tags) tagsByPaper.set(tag.paper_id, [...(tagsByPaper.get(tag.paper_id) || []), tag.name]);
+    return rows.map((row) => rowToPaper(row, tagsByPaper.get(String(row.id)) || [], authorsByPaper.get(String(row.id)) || []));
   }
 }

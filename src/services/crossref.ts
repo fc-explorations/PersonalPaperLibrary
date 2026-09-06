@@ -25,6 +25,14 @@ function titleKey(title: string): string {
   return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function titleSimilarity(left: string, right: string): number {
+  const leftWords = new Set(titleKey(left).split(/\s+/).filter(Boolean));
+  const rightWords = new Set(titleKey(right).split(/\s+/).filter(Boolean));
+  if (!leftWords.size || !rightWords.size) return 0;
+  const overlap = [...leftWords].filter((word) => rightWords.has(word)).length;
+  return overlap / new Set([...leftWords, ...rightWords]).size;
+}
+
 function normalizeDoi(input: string): string {
   return input.trim()
     .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
@@ -77,10 +85,14 @@ export async function lookupCrossref(input: { title?: string; doi?: string }, fe
   if (!input.title?.trim()) throw new Error("METADATA_LOOKUP_INPUT_REQUIRED");
   const works = await requestCrossref(`https://api.crossref.org/works?query.title=${encodeURIComponent(input.title.trim())}&rows=5`, fetcher);
   if (!Array.isArray(works)) throw new Error("CROSSREF_INVALID_RESPONSE");
-  const wanted = titleKey(input.title);
-  const match = works
-    .map((work) => ({ work, key: titleKey(cleanText(work.title?.[0]) || "") }))
-    .sort((left, right) => Number(right.key === wanted) - Number(left.key === wanted))[0];
-  if (!match || !match.key || (match.key !== wanted && !match.key.includes(wanted) && !wanted.includes(match.key))) throw new Error("CROSSREF_NO_MATCH");
-  return mapWork(match.work);
+  const matches = works
+    .map((work) => ({ work, score: titleSimilarity(input.title!, cleanText(work.title?.[0]) || "") }))
+    .sort((left, right) => right.score - left.score)[0];
+  if (!matches || matches.score < 0.55) throw new Error("CROSSREF_NO_MATCH");
+  const exact = titleKey(cleanText(matches.work.title?.[0]) || "") === titleKey(input.title!);
+  const runnerUp = works
+    .map((work) => titleSimilarity(input.title!, cleanText(work.title?.[0]) || ""))
+    .sort((left, right) => right - left)[1];
+  if (!exact && runnerUp !== undefined && matches.score - runnerUp < 0.05) throw new Error("CROSSREF_AMBIGUOUS");
+  return mapWork(matches.work);
 }

@@ -40,6 +40,21 @@ export class TagRepository {
     })();
   }
 
+  addToPapers(paperIds: string[], name: string): void {
+    this.db.transaction(() => {
+      for (const paperId of paperIds) this.attach(paperId, [name]);
+    })();
+  }
+
+  removeFromPapers(paperIds: string[], name: string): void {
+    this.db.transaction(() => {
+      for (const paperId of paperIds) {
+        this.db.prepare("DELETE FROM paper_tags WHERE paper_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ? COLLATE NOCASE)").run(paperId, name.trim());
+      }
+      this.deleteUnusedTags();
+    })();
+  }
+
   deleteUnused(name: string): boolean {
     const result = this.db.prepare("DELETE FROM tags WHERE name = ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)").run(name.trim());
     return result.changes > 0;

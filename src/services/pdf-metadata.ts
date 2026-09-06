@@ -9,6 +9,7 @@ export interface ExtractedPdfMetadata {
   year?: number;
   journalRef?: string;
   arxivId?: string;
+  warning?: string;
 }
 
 function cleanLine(value: string): string {
@@ -79,7 +80,8 @@ export async function extractPdfMetadata(filePath: string): Promise<ExtractedPdf
       journalRef: parseVenue(lines),
       arxivId,
     };
-  } catch {
-    return { authors: [] };
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    return { authors: [], warning: code === "ENOENT" ? "PDF text extraction is unavailable on this system." : "PDF metadata could not be extracted." };
   }
 }

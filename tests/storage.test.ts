@@ -13,16 +13,30 @@ afterEach(() => {
 });
 
 describe("file storage", () => {
-  it("stages, promotes, reads, and deletes PDFs", () => {
+  it("stages, promotes, reads, and deletes PDFs", async () => {
     const root = mkdtempSync(join(tmpdir(), "paper-library-"));
     temporary.push(root);
     const storage = new FileStorage(root);
-    const staged = storage.stage(pdf);
-    const promoted = storage.promoteStagedFile(staged.token, "paper-1");
+    const staged = await storage.stage(pdf);
+    const promoted = await storage.promoteStagedFile(staged.token, "paper-1");
     expect(promoted.key).toBe("papers/paper-1.pdf");
-    expect(new Uint8Array(storage.get("paper-1")!)).toEqual(pdf);
-    storage.delete("paper-1");
-    expect(storage.get("paper-1")).toBeNull();
+    const stored = await storage.get("paper-1");
+    expect(stored).not.toBeNull();
+    expect(new Uint8Array(stored!)).toEqual(pdf);
+    await storage.delete("paper-1");
+    expect(await storage.get("paper-1")).toBeNull();
+  });
+
+  it("can restore a PDF moved aside for a transactional update", async () => {
+    const root = mkdtempSync(join(tmpdir(), "paper-library-"));
+    temporary.push(root);
+    const storage = new FileStorage(root);
+    await storage.put("paper-1", pdf);
+    const move = await storage.moveToTrash("paper-1");
+    expect(move).not.toBeNull();
+    expect(await storage.get("paper-1")).toBeNull();
+    await storage.restoreFromTrash(move!);
+    expect(new Uint8Array((await storage.get("paper-1"))!)).toEqual(pdf);
   });
 });
 

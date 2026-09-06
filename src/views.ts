@@ -98,7 +98,7 @@ function copyIcon(): string {
 }
 
 function bibtexEscape(value: string): string {
-  return value.replace(/([\\&%_$#])/g, "\\$1");
+  return value.replace(/([\\{}&%_$#])/g, "\\$1");
 }
 
 function bibtexKey(paper: PaperRecord): string {
@@ -211,7 +211,7 @@ export function renderAddPage(): string {
   const body = `<section class="add-grid add-options">
     <div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form></div>
     <div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button" type="submit">${uploadIcon()}<span>Upload</span></button></div><p class="form-status" role="status"></p></form></div>
-    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title.</p><form data-bulk-upload-form><div class="inline-form"><input name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required><button class="button button-secondary" type="submit">${folderIcon()}<span>Import folder</span></button></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div>
+    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. The folder name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form"><input name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required><button class="button button-secondary" type="submit">${folderIcon()}<span>Import folder</span></button></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div>
   </section>
   <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><span class="pdf-status" data-pdf-status></span></div><div data-preview-form>${renderPaperForm(undefined, "add")}</div><div class="warnings" data-warnings></div></section>`;
   return layout("Add paper", body);

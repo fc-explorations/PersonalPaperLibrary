@@ -82,6 +82,10 @@ function setStatus(form, message, error = false) {
   }
 }
 
+function clientErrorMessage(error) {
+  return error instanceof Error ? error.message : "Request failed";
+}
+
 function value(form, name) {
   return form.elements.namedItem(name)?.value || "";
 }
@@ -136,13 +140,14 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
     const body = await jsonRequest("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) });
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
-      form.insertAdjacentHTML("beforeend", `<a class="inline-link" href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
+      form.querySelector("[data-existing-paper]")?.remove();
+      form.insertAdjacentHTML("beforeend", `<a class="inline-link" data-existing-paper href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
     } else {
       setStatus(form, "Review the details below.");
       renderPreview(body);
     }
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 });
 
@@ -155,7 +160,7 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
     setStatus(form, "PDF ready. Add its metadata below.");
     renderPreview({ paper: { title: form.querySelector("input[type=file]").files[0].name.replace(/\.pdf$/i, "") }, pdf: body.pdf }, body.pdf.stagingToken);
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 });
 
@@ -165,12 +170,16 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const files = form.querySelector("input[type=file]").files;
   setStatus(form, `Importing ${files.length} PDF${files.length === 1 ? "" : "s"}…`);
   try {
-    const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: new FormData(form) });
-    setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}.`);
+    const formData = new FormData(form);
+    const relativePath = files[0]?.webkitRelativePath || "";
+    const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
+    if (folderTag) formData.set("folderTag", folderTag);
+    const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
+    setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}${body.folderTag ? `; tagged as “${body.folderTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
-    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), `<a class="inline-link" href="/">View library →</a>`].join("");
+    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), `<a class="inline-link" href="/">View library →</a>`].join("");
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 });
 
@@ -189,7 +198,7 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
     const result = await jsonRequest(id ? `/api/papers/${encodeURIComponent(id)}` : "/api/papers", { method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 }));
 
@@ -211,7 +220,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
     setStatus(form, `Metadata found via ${result.provider}. Review it, then save.`);
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 }));
 
@@ -225,7 +234,7 @@ document.querySelector("[data-replace-upload]")?.addEventListener("submit", asyn
     setValue(paperForm, "stagingToken", body.pdf.stagingToken);
     setStatus(form, "Replacement staged. Save changes to apply it.");
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 });
 
@@ -257,7 +266,7 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
     window.location.href = "/";
   } catch (error) {
     button.disabled = false;
-    window.alert(error.message);
+    window.alert(clientErrorMessage(error));
   }
 });
 
@@ -274,7 +283,7 @@ document.querySelector("[data-delete-group]")?.addEventListener("click", async (
     window.location.href = "/";
   } catch (error) {
     button.disabled = false;
-    window.alert(error.message);
+    window.alert(clientErrorMessage(error));
   }
 });
 
@@ -325,7 +334,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
     await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, name, action }) });
     window.location.reload();
   } catch (error) {
-    setStatus(form, error.message, true);
+    setStatus(form, clientErrorMessage(error), true);
   }
 });
 
