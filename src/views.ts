@@ -24,7 +24,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=3" defer></script>
 </body>
 </html>`;
 }
@@ -35,6 +35,10 @@ function wordmark(): string {
 
 function addAction(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">add</span><span>Add</span>`;
+}
+
+function addIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">add</span>`;
 }
 
 function libraryIcon(): string {
@@ -123,6 +127,22 @@ function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
 
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder): string {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  tags.forEach((tag) => params.append("tag", tag));
+  params.set("sort", sort);
+  return params.toString();
+}
+
+function groupTagLinks(tags: string[], selected: string[], q: string | undefined, sort: SortOrder): string {
+  return tags.map((tag) => {
+    const isSelected = selected.some((value) => value.toLowerCase() === tag.toLowerCase());
+    const next = isSelected ? selected.filter((value) => value.toLowerCase() !== tag.toLowerCase()) : [...selected, tag];
+    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort)}" aria-pressed="${isSelected}">${escapeHtml(tag)}</a>`;
+  }).join(" ");
+}
+
 function authorLine(authors: string[]): string {
   if (authors.length === 0) return "Author unknown";
   if (authors.length <= 3) return authors.join(", ");
@@ -139,17 +159,27 @@ function paperCard(paper: PaperRecord): string {
   </article>`;
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string; sort?: SortOrder }): string {
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder }): string {
   const sort = query.sort || "newest";
+  const selectedFilters = query.tag || [];
+  const downloadQuery = libraryQuery(query.q, selectedFilters, sort);
+  const storedPdfCount = papers.filter((paper) => paper.r2Key).length;
+  const hasSelection = Boolean((query.q?.trim() || selectedFilters.length) && papers.length);
+  const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
+  const selectionLabel = query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
+  const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
+  const bulkButtons = storedPdfCount || hasSelection ? `<div class="bulk-actions">${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}${hasSelection ? `<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button><button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button>` : ""}</div>` : "";
+  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
-    <label class="search-label"><span class="sr-only">Search papers</span><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"></label>
-    ${query.tag ? `<input type="hidden" name="tag" value="${escapeHtml(query.tag)}">` : ""}
+    <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
+    ${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${!query.tag ? "tag-selected" : ""}" href="/?${query.q ? `q=${encodeURIComponent(query.q)}&` : ""}sort=${sort}">All</a> ${tagLinks(tags, query.tag)}</section>
-  <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span>${query.tag ? `<a class="muted" href="/">Clear filters</a>` : ""}</div>
-  <section class="paper-list">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
+  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${selectedFilters.length === 0 ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort)}" aria-pressed="${selectedFilters.length === 0}">All</a> ${groupTagLinks(tags, selectedFilters, query.q, sort)}</section>
+  <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${query.q || selectedFilters.length ? `<a class="button button-secondary" href="/">${closeIcon()}<span>Clear filters</span></a>` : ""}${bulkButtons}${bulkTagEditor}</div></div>
+  <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
   return layout("Library", body);
 }
 
@@ -189,12 +219,12 @@ export function renderAddPage(): string {
 
 export function renderPaperPage(paper: PaperRecord): string {
   const body = `<section class="page-heading paper-heading"><div><h1>${escapeHtml(paper.title)}</h1><p class="muted">${escapeHtml(authorLine(paper.authors))} · ${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "Year unknown")}</p></div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a><a class="icon-button" href="/api/papers/${paper.id}/pdf?download=1" aria-label="Download PDF" title="Download PDF">${downloadIcon()}<span>Download</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail"><div class="detail-content"><div><section class="metadata-panel" aria-label="Paper information"><dl class="metadata"><dt>Authors</dt><dd>${escapeHtml(paper.authors.join(", ") || "—")}</dd><dt>Year</dt><dd>${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "—")}</dd><dt>arXiv</dt><dd>${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a>` : "—"}</dd><dt>Categories</dt><dd>${escapeHtml(paper.categories.join(", ") || "—")}</dd><dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef || "—")}</dd><dt>DOI</dt><dd>${escapeHtml(paper.doi || "—")}</dd><dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd></dl></section><h2>Abstract</h2><p class="abstract">${escapeHtml(paper.abstract || "No abstract available.")}</p></div><section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div><p class="muted">Edit the paper to change its grouping tags.</p></section><section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary button-small" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="10" aria-label="BibTeX entry">${escapeHtml(bibtexEntry(paper))}</textarea></section></div></article>`;
+  <article class="panel paper-detail"><div class="detail-content"><div><section class="metadata-panel" aria-label="Paper information"><dl class="metadata"><dt>Authors</dt><dd>${escapeHtml(paper.authors.join(", ") || "—")}</dd><dt>Year</dt><dd>${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "—")}</dd><dt>arXiv</dt><dd>${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a>` : "—"}</dd><dt>Categories</dt><dd>${escapeHtml(paper.categories.join(", ") || "—")}</dd><dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef || "—")}</dd><dt>DOI</dt><dd>${escapeHtml(paper.doi || "—")}</dd><dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd></dl></section><h2>Abstract</h2><p class="abstract">${escapeHtml(paper.abstract || "No abstract available.")}</p></div><section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div><p class="muted">Edit the paper to change its grouping tags.</p></section><section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="10" aria-label="BibTeX entry">${escapeHtml(bibtexEntry(paper))}</textarea></section></div></article>`;
   return layout(paper.title, body);
 }
 
 export function renderEditPage(paper: PaperRecord): string {
-  return layout(`Edit ${paper.title}`, `<section class="page-heading"><div><p class="eyebrow">Edit metadata</p><h1>${escapeHtml(paper.title)}</h1></div></section><section class="panel">${renderPaperForm(paper, "edit")}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading"><div><p class="eyebrow">Edit metadata</p><h1>${escapeHtml(paper.title)}</h1></div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit")}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {
@@ -205,11 +235,16 @@ function customThemeOption(group: "accent" | "background", color: string): strin
   return `<label class="theme-option theme-option-custom"><input type="radio" name="${group}" value="custom" data-theme-setting="${group}"><input class="theme-picker" type="color" value="${color}" data-theme-picker="${group}" aria-label="Choose custom ${group} color"><span>Custom</span></label>`;
 }
 
+function widthOption(value: string): string {
+  return `<label class="width-option"><input type="radio" name="contentWidth" value="${value}" data-theme-setting="contentWidth"><span>${value}%</span></label>`;
+}
+
 export function renderSettingsPage(): string {
   const body = `<section class="page-heading"><div><h1>Settings</h1></div></section>
   <section class="settings-page">
     <div class="settings-group"><h2>Accent color</h2><div class="theme-options">${themeOption("accent", "forest", "Forest", "#315c52")}${themeOption("accent", "blue", "Blue", "#3d5a80")}${themeOption("accent", "terracotta", "Terracotta", "#9a4e36")}${themeOption("accent", "plum", "Plum", "#6b4c73")}${themeOption("accent", "slate", "Slate", "#58606a")}${customThemeOption("accent", "#315c52")}</div></div>
-    <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "amber", "Yellow-orange", "#fcf1cf")}${customThemeOption("background", "#f7f6f2")}</div></div>
+    <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "mint", "Mint", "#e5f1ea")}${customThemeOption("background", "#f7f6f2")}</div></div>
+    <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>
   </section>`;
   return layout("Settings", body);
 }

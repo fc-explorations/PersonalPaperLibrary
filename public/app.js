@@ -11,8 +11,9 @@ const backgroundThemes = {
   white: "#ffffff",
   "light-gray": "#eeeeec",
   warm: "#f3efe8",
-  amber: "#fcf1cf",
+  mint: "#e5f1ea",
 };
+const contentWidthOptions = ["60", "70", "80", "90", "100"];
 
 function loadTheme() {
   try {
@@ -31,14 +32,18 @@ function applyTheme(theme) {
   const backgroundKey = backgroundThemes[theme.background] ? theme.background : theme.background === "custom" ? "custom" : "paper";
   const selectedAccent = accentKey === "custom" ? { accent: customAccent, dark: `color-mix(in srgb, ${customAccent} 82%, black 18%)`, soft: `color-mix(in srgb, ${customAccent} 12%, white 88%)`, border: `color-mix(in srgb, ${customAccent} 48%, white 52%)` } : accent;
   const selectedBackground = backgroundKey === "custom" ? customBackground : background;
+  const contentWidth = contentWidthOptions.includes(String(theme.contentWidth)) ? String(theme.contentWidth) : "90";
   document.documentElement.style.setProperty("--accent", selectedAccent.accent);
   document.documentElement.style.setProperty("--accent-dark", selectedAccent.dark);
   document.documentElement.style.setProperty("--accent-soft", selectedAccent.soft);
   document.documentElement.style.setProperty("--accent-border", selectedAccent.border);
   document.documentElement.style.setProperty("--page-bg", selectedBackground);
   document.querySelectorAll("[data-theme-setting]").forEach((input) => {
-    input.checked = input.value === (input.dataset.themeSetting === "accent" ? accentKey : backgroundKey);
+    const setting = input.dataset.themeSetting;
+    const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : contentWidth;
+    input.checked = input.value === selected;
   });
+  document.documentElement.style.setProperty("--content-width", `${contentWidth}%`);
   document.querySelectorAll("[data-theme-picker]").forEach((input) => {
     input.value = input.dataset.themePicker === "accent" ? customAccent : customBackground;
   });
@@ -256,11 +261,83 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
   }
 });
 
+document.querySelector("[data-delete-group]")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const query = button.dataset.deleteQuery;
+  const tags = JSON.parse(button.dataset.deleteTags || "[]");
+  const count = button.dataset.deleteCount || "0";
+  const selection = tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
+  if ((!query && !tags.length) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
+  button.disabled = true;
+  try {
+    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags }) });
+    window.location.href = "/";
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
+});
+
+document.querySelector("[data-toggle-bulk-tags]")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const editor = document.querySelector("[data-bulk-tag-editor]");
+  if (!editor) return;
+  const open = editor.hidden;
+  editor.hidden = !open;
+  button.setAttribute("aria-expanded", String(open));
+  if (open) editor.querySelector("input")?.focus();
+});
+
+document.querySelector("[data-bulk-tag-select]")?.addEventListener("change", (event) => {
+  const select = event.currentTarget;
+  const form = select.closest("form");
+  const newTag = form?.querySelector("[data-new-tag]");
+  if (!newTag) return;
+  const isNew = select.value === "__new__";
+  newTag.hidden = !isNew;
+  newTag.required = isNew;
+  if (isNew) newTag.focus();
+});
+
+document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const action = event.submitter?.dataset.bulkTagAction;
+  const selectedTag = value(form, "tag");
+  const name = selectedTag === "__new__" ? value(form, "newTag") : selectedTag;
+  const tags = JSON.parse(form.dataset.selectionTags || "[]");
+  if (action === "remove" && selectedTag === "__new__") {
+    setStatus(form, "Choose an existing tag to remove.", true);
+    return;
+  }
+  setStatus(form, "Updating tags…");
+  try {
+    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, name, action }) });
+    window.location.reload();
+  } catch (error) {
+    setStatus(form, error.message, true);
+  }
+});
+
 function escapeText(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
 const libraryToolbar = document.querySelector(".toolbar");
+const searchInput = libraryToolbar?.querySelector("input[name=q]");
+const clearSearch = libraryToolbar?.querySelector("[data-clear-search]");
+const syncClearSearch = () => {
+  if (clearSearch) clearSearch.hidden = !searchInput?.value;
+};
+searchInput?.addEventListener("input", syncClearSearch);
+clearSearch?.addEventListener("click", () => {
+  if (!searchInput) return;
+  searchInput.value = "";
+  syncClearSearch();
+  searchInput.focus();
+  libraryToolbar?.requestSubmit();
+});
+syncClearSearch();
 libraryToolbar?.querySelector("select")?.addEventListener("change", () => {
   libraryToolbar.requestSubmit();
 });

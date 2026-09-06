@@ -51,6 +51,9 @@ describe("HTTP application", () => {
     const result = await response.json();
     expect(result.imported).toHaveLength(1);
     expect(result.skipped).toHaveLength(1);
+    const downloadResponse = await context.app.request("/api/export/pdfs?q=first");
+    expect(downloadResponse.status).toBe(200);
+    expect(Array.from(new Uint8Array(await downloadResponse.arrayBuffer()).slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
@@ -73,6 +76,40 @@ describe("HTTP application", () => {
     const result = await response.json();
     expect(result.paper.title).toBe("Test arXiv Paper");
     expect(result.paper.arxivId).toBe("2608.29530");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("updates and deletes a selected tag group", async () => {
+    const context = testApp();
+    for (const title of ["First grouped paper", "Second grouped paper"]) {
+      const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, tags: ["group"], metadataSource: "manual" }) });
+      expect(response.status).toBe(201);
+    }
+    const groupPage = await context.app.request("/?tag=group");
+    expect(await groupPage.text()).toContain('<option value="group">group</option>');
+    const addTagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: "group", name: "review", action: "add" }) });
+    expect(addTagResponse.status).toBe(200);
+    expect((await context.app.request("/api/papers?tag=review")).status).toBe(200);
+    const removeTagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: "group", name: "review", action: "remove" }) });
+    expect(removeTagResponse.status).toBe(200);
+    expect((await (await context.app.request("/api/tags")).json()).tags).not.toContain("review");
+    const deleteResponse = await context.app.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: "group" }) });
+    expect(deleteResponse.status).toBe(200);
+    expect((await (await context.app.request("/api/papers?tag=group")).json()).papers).toHaveLength(0);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("updates only the papers matching a search", async () => {
+    const context = testApp();
+    for (const title of ["Flow paper", "Unrelated paper"]) {
+      const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, metadataSource: "manual" }) });
+      expect(response.status).toBe(201);
+    }
+    const response = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "flow", name: "selected", action: "add" }) });
+    expect(response.status).toBe(200);
+    expect((await (await context.app.request("/api/papers?tag=selected")).json()).papers).toHaveLength(1);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

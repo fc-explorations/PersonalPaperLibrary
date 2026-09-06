@@ -25,8 +25,14 @@ describe("paper repository", () => {
     expect(repo.findDuplicate({ title: "duplicate", arxivId: "2401.12345" })?.id).toBe(paper.id);
     expect(repo.list({ q: "lovelace" })[0].id).toBe(paper.id);
     expect(repo.list({ tag: "vision" })[0].id).toBe(paper.id);
+    const secondPaper = repo.create({ title: "A Research Paper", tags: ["Research"], metadataSource: "manual" });
     repo.tags.replaceForPaper(paper.id, ["vision", "Research"]);
     expect(repo.findById(paper.id)?.tags).toEqual(["Research", "Vision"]);
+    expect(repo.list({ tag: ["vision", "Research"] }).map((item) => item.id)).toEqual([paper.id]);
+    expect(repo.list({ tag: ["Research"] }).map((item) => item.id)).toEqual(expect.arrayContaining([secondPaper.id, paper.id]));
+    expect(repo.list({ tag: ["Research"] })).toHaveLength(2);
+    repo.tags.remove(paper.id, "vision");
+    expect(repo.tags.list()).toEqual(["Research"]);
     db.close();
   });
 });

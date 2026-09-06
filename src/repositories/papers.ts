@@ -149,7 +149,7 @@ export class PaperRepository {
     this.db.prepare("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM paper_tags)").run();
   }
 
-  list(options: { q?: string; tag?: string; sort?: SortOrder } = {}): PaperRecord[] {
+  list(options: { q?: string; tag?: string | string[]; sort?: SortOrder } = {}): PaperRecord[] {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
     if (options.q?.trim()) {
@@ -159,10 +159,12 @@ export class PaperRepository {
         OR EXISTS (SELECT 1 FROM paper_tags ptq JOIN tags tq ON tq.id = ptq.tag_id WHERE ptq.paper_id = p.id AND lower(tq.name) LIKE lower(@q)))`);
       params.q = `%${options.q.trim()}%`;
     }
-    if (options.tag?.trim()) {
-      clauses.push("EXISTS (SELECT 1 FROM paper_tags ptf JOIN tags tf ON tf.id = ptf.tag_id WHERE ptf.paper_id = p.id AND tf.name = @tag COLLATE NOCASE)");
-      params.tag = options.tag.trim();
-    }
+    const tags = (Array.isArray(options.tag) ? options.tag : options.tag ? [options.tag] : []).map((tag) => tag.trim()).filter(Boolean);
+    tags.forEach((tag, index) => {
+      const parameter = `tag${index}`;
+      clauses.push(`EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`);
+      params[parameter] = tag;
+    });
     const order = { newest: "p.created_at DESC", oldest: "p.created_at ASC", "year-desc": "p.year DESC NULLS LAST, p.title COLLATE NOCASE", "year-asc": "p.year ASC NULLS LAST, p.title COLLATE NOCASE", title: "p.title COLLATE NOCASE ASC" }[options.sort || "newest"];
     const rows = this.db.prepare(`SELECT p.* FROM papers p ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY ${order}`).all(params) as PaperRow[];
     return rows.map((row) => this.hydrate(row));

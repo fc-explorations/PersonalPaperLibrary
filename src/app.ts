@@ -10,6 +10,7 @@ import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivP
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
 import { FileStorage } from "./services/storage.js";
+import { createZip } from "./services/zip.js";
 import { parseAuthors, parseTags, parseYear, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { renderAddPage, renderEditPage, renderLibrary, renderPaperPage, renderSettingsPage } from "./views.js";
 import type { PaperDraftInput, PaperMetadata, SortOrder } from "./types.js";
@@ -34,6 +35,18 @@ function categories(value: unknown): string[] {
   return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))].slice(0, 100);
 }
 
+function tagFilters(value: unknown, fallback?: unknown): string[] {
+  const values = Array.isArray(value) ? value : fallback !== undefined ? [fallback] : [];
+  return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function requestFilters(c: Context): { q?: string; tag?: string[] } {
+  const url = new URL(c.req.url);
+  const q = c.req.query("q")?.trim() || undefined;
+  const tags = tagFilters(url.searchParams.getAll("tag"));
+  return { q, tag: tags.length ? tags : undefined };
+}
+
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
   return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
@@ -41,6 +54,15 @@ function titleFromFilename(filename: string): string {
 
 function doiFromInput(input: string): string | undefined {
   return input.match(/10\.\d{4,9}\/[\-._;()/:A-Z0-9]+/i)?.[0];
+}
+
+function pdfFilename(title: string, used: Set<string>): string {
+  const base = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "paper";
+  let filename = `${base}.pdf`;
+  let suffix = 2;
+  while (used.has(filename.toLowerCase())) filename = `${base} (${suffix++}).pdf`;
+  used.add(filename.toLowerCase());
+  return filename;
 }
 
 function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
@@ -86,8 +108,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use("/app.js", serveStatic({ root: "./public" }));
 
   app.get("/", (c) => {
-    const q = c.req.query("q") || undefined;
-    const tag = c.req.query("tag") || undefined;
+    const { q, tag } = requestFilters(c);
     const sort = (c.req.query("sort") || "newest") as SortOrder;
     return c.html(renderLibrary(repo.list({ q, tag, sort }), repo.tags.list(), { q, tag, sort }));
   });
@@ -106,7 +127,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     return paper ? c.html(renderEditPage(paper)) : pageError(c, 404, "Paper not found", "That paper does not exist.");
   });
 
-  app.get("/api/papers", (c) => c.json({ papers: repo.list({ q: c.req.query("q"), tag: c.req.query("tag"), sort: (c.req.query("sort") || "newest") as SortOrder }), tags: repo.tags.list() }));
+  app.get("/api/papers", (c) => c.json({ papers: repo.list({ ...requestFilters(c), sort: (c.req.query("sort") || "newest") as SortOrder }), tags: repo.tags.list() }));
 
   const importPaper = async (c: Context) => {
     try {
@@ -279,6 +300,43 @@ export function createApp(dependencies: AppDependencies = {}) {
     return paper ? c.json({ paper }) : jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
   });
 
+  app.post("/api/papers/bulk-delete", async (c) => {
+    try {
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[] }>();
+      const q = body.q?.trim() || undefined;
+      const tags = tagFilters(body.tags, body.tag);
+      if (!q && !tags.length) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+      const papers = repo.list({ q, tag: tags });
+      for (const paper of papers) {
+        if (paper.r2Key) storage.delete(paper.id);
+        repo.delete(paper.id);
+      }
+      return c.json({ ok: true, deleted: papers.length });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The paper group could not be deleted.");
+    }
+  });
+
+  app.post("/api/papers/bulk-tags", async (c) => {
+    try {
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; name?: string; action?: string }>();
+      const q = body.q?.trim() || undefined;
+      const tags = tagFilters(body.tags, body.tag);
+      const name = body.name?.trim() || "";
+      if (!q && !tags.length) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
+      if (!name || name.includes(",")) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter one tag without commas.");
+      if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
+      const papers = repo.list({ q, tag: tags });
+      for (const paper of papers) {
+        if (body.action === "add") repo.tags.attach(paper.id, [name]);
+        else repo.tags.remove(paper.id, name);
+      }
+      return c.json({ ok: true, updated: papers.length, action: body.action, tag: name });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The paper tags could not be updated.");
+    }
+  });
+
   app.patch("/api/papers/:id", async (c) => {
     let promoted: { key: string; sha256: string } | undefined;
     try {
@@ -312,6 +370,17 @@ export function createApp(dependencies: AppDependencies = {}) {
     if (!file) return jsonError(c, 404, "PDF_NOT_FOUND", "This paper does not have a stored PDF.");
     const download = c.req.query("download") === "1";
     return c.body(new Uint8Array(file), 200, { "Content-Type": "application/pdf", "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${paper.id}.pdf"` });
+  });
+
+  app.get("/api/export/pdfs", (c) => {
+    const papers = repo.list({ ...requestFilters(c), sort: (c.req.query("sort") || "newest") as SortOrder });
+    const usedNames = new Set<string>();
+    const files = papers.flatMap((paper) => {
+      const file = storage.get(paper.id);
+      return file ? [{ name: pdfFilename(paper.title, usedNames), data: new Uint8Array(file) }] : [];
+    });
+    if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");
+    return c.body(new Uint8Array(createZip(files)), 200, { "Content-Type": "application/zip", "Content-Disposition": "attachment; filename=paper-library-pdfs.zip" });
   });
 
   app.get("/api/tags", (c) => c.json({ tags: repo.tags.list() }));

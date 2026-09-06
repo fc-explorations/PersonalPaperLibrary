@@ -29,15 +29,23 @@ export class TagRepository {
     this.db.transaction(() => {
       this.db.prepare("DELETE FROM paper_tags WHERE paper_id = ?").run(paperId);
       this.attach(paperId, names);
+      this.deleteUnusedTags();
     })();
   }
 
   remove(paperId: string, name: string): void {
-    this.db.prepare("DELETE FROM paper_tags WHERE paper_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ? COLLATE NOCASE)").run(paperId, name.trim());
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM paper_tags WHERE paper_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ? COLLATE NOCASE)").run(paperId, name.trim());
+      this.deleteUnusedTags();
+    })();
   }
 
   deleteUnused(name: string): boolean {
     const result = this.db.prepare("DELETE FROM tags WHERE name = ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)").run(name.trim());
     return result.changes > 0;
+  }
+
+  private deleteUnusedTags(): void {
+    this.db.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)").run();
   }
 }
