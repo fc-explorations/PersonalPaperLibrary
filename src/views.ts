@@ -9,6 +9,70 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+function updateMathState(segment: string, initialState: boolean): boolean {
+  let inMath = initialState;
+  for (let index = 0; index < segment.length; index += 1) {
+    if (segment.startsWith("$$", index)) {
+      inMath = !inMath;
+      index += 1;
+    } else if (segment.startsWith("\\(", index) || segment.startsWith("\\[", index)) {
+      inMath = true;
+      index += 1;
+    } else if (segment.startsWith("\\)", index) || segment.startsWith("\\]", index)) {
+      inMath = false;
+      index += 1;
+    } else if (segment[index] === "$" && segment[index - 1] !== "\\") {
+      inMath = !inMath;
+    }
+  }
+  return inMath;
+}
+
+function urlAnchor(url: string): string {
+  const trailing = url.match(/[.,;:!?)}\]]+$/)?.[0] || "";
+  const target = trailing ? url.slice(0, -trailing.length) : url;
+  return target ? `<a href="${target}" target="_blank" rel="noreferrer">${target}</a>${trailing}` : url;
+}
+
+function linkUrls(value: string): string {
+  const urls = /https?:\/\/[^\s<>"']+/gi;
+  let output = "";
+  let cursor = 0;
+  let inMath = false;
+  let match: RegExpExecArray | null;
+  while ((match = urls.exec(value))) {
+    const plain = value.slice(cursor, match.index);
+    output += plain;
+    inMath = updateMathState(plain, inMath);
+    output += inMath ? match[0] : urlAnchor(match[0]);
+    cursor = urls.lastIndex;
+  }
+  return output + value.slice(cursor);
+}
+
+function renderText(value: unknown, autoLink = true): string {
+  const escaped = escapeHtml(value);
+  const bareTex = /\\(textit|emph|textbf|texttt|url)\{([^{}]*)\}/g;
+  const fragments: string[] = [];
+  let output = "";
+  let cursor = 0;
+  let inMath = false;
+  let match: RegExpExecArray | null;
+  while ((match = bareTex.exec(escaped))) {
+    const plain = escaped.slice(cursor, match.index);
+    output += plain;
+    inMath = updateMathState(plain, inMath);
+    const fragment = inMath ? match[0] : match[1] === "url" && autoLink ? urlAnchor(match[2]) : `\\(\\${match[1]}{${match[2]}}\\)`;
+    const token = `\u0000${fragments.length}\u0000`;
+    fragments.push(fragment);
+    output += token;
+    cursor = bareTex.lastIndex;
+  }
+  output += escaped.slice(cursor);
+  const linked = autoLink ? linkUrls(output) : output;
+  return linked.replace(/\u0000(\d+)\u0000/g, (_, index: string) => fragments[Number(index)]);
+}
+
 function layout(title: string, body: string, showHeader = true): string {
   return `<!doctype html>
 <html lang="en">
@@ -20,6 +84,8 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
+  <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
+  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
@@ -144,17 +210,30 @@ function groupTagLinks(tags: string[], selected: string[], q: string | undefined
 }
 
 function authorLine(authors: string[]): string {
-  if (authors.length === 0) return "Author unknown";
   if (authors.length <= 3) return authors.join(", ");
   return `${authors.slice(0, 3).join(", ")} et al.`;
 }
 
+function paperYear(paper: PaperRecord): string | undefined {
+  return paper.year ? String(paper.year) : paper.publishedDate?.slice(0, 4) || undefined;
+}
+
+function paperSummary(paper: PaperRecord): string {
+  return [paper.authors.length ? authorLine(paper.authors) : undefined, paperYear(paper)].filter(Boolean).join(" · ");
+}
+
+function metadataRow(label: string, value: unknown, content = renderText(value)): string {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return "";
+  return `<dt>${escapeHtml(label)}</dt><dd>${content}</dd>`;
+}
+
 function paperCard(paper: PaperRecord): string {
+  const summary = paperSummary(paper);
   return `<article class="paper-card">
     ${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing">${pdfMissingIcon()}</span>`}
-    <div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2>
-    <p class="muted">${escapeHtml(authorLine(paper.authors))} · ${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "Year unknown")}</p>
-    <p class="paper-meta">${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : "Manual upload"}${paper.journalRef ? ` · ${escapeHtml(paper.journalRef)}` : ""}</p></div>
+    <div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${renderText(paper.title, false)}</a></h2>
+    ${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}
+    <p class="paper-meta">${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : "Manual upload"}${paper.journalRef ? ` · ${renderText(paper.journalRef)}` : ""}</p></div>
     ${paper.tags.length ? `<div class="paper-tags">${tagLinks(paper.tags)}</div>` : ""}
   </article>`;
 }
@@ -169,7 +248,7 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
   const selectionLabel = query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
-  const bulkButtons = storedPdfCount || hasSelection ? `<div class="bulk-actions" data-bulk-actions>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}${hasSelection ? `<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button><button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button>` : ""}</div>` : "";
+  const bulkButtons = storedPdfCount || hasSelection ? `<div class="bulk-actions" data-bulk-actions>${hasSelection ? `<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>` : ""}${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}${hasSelection ? `<button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button>` : ""}</div>` : "";
   const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
@@ -178,7 +257,7 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
   <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${selectedFilters.length === 0 ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort)}" aria-pressed="${selectedFilters.length === 0}">All</a> ${groupTagLinks(tags, selectedFilters, query.q, sort)}</section>
-  <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${query.q || selectedFilters.length ? `<a class="button button-secondary" href="/">${closeIcon()}<span>Clear filters</span></a>` : ""}${bulkButtons}${bulkTagEditor}</div></div>
+  <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
   return layout("Library", body);
 }
@@ -192,8 +271,10 @@ function field(label: string, name: string, value: unknown, options: { type?: st
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add"): string {
   const isEdit = mode === "edit";
   const data = paper || { title: "", authors: [], categories: [], tags: [] };
+  const authorCount = (data.authors || []).length;
+  const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
   const fields = `${field("Title", "title", data.title, { placeholder: "Paper title" })}
-    ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: 3, placeholder: "One author per line" })}
+    ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
     ${field("Abstract", "abstract", data.abstract, { rows: 6 })}
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
@@ -218,13 +299,25 @@ export function renderAddPage(): string {
 }
 
 export function renderPaperPage(paper: PaperRecord): string {
-  const body = `<section class="page-heading paper-heading"><div><h1>${escapeHtml(paper.title)}</h1><p class="muted">${escapeHtml(authorLine(paper.authors))} · ${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "Year unknown")}</p></div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a><a class="icon-button" href="/api/papers/${paper.id}/pdf?download=1" aria-label="Download PDF" title="Download PDF">${downloadIcon()}<span>Download</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail"><div class="detail-content"><div><section class="metadata-panel" aria-label="Paper information"><dl class="metadata"><dt>Authors</dt><dd>${escapeHtml(paper.authors.join(", ") || "—")}</dd><dt>Year</dt><dd>${escapeHtml(paper.year || paper.publishedDate?.slice(0, 4) || "—")}</dd><dt>arXiv</dt><dd>${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a>` : "—"}</dd><dt>Categories</dt><dd>${escapeHtml(paper.categories.join(", ") || "—")}</dd><dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef || "—")}</dd><dt>DOI</dt><dd>${escapeHtml(paper.doi || "—")}</dd><dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd></dl></section><h2>Abstract</h2><p class="abstract">${escapeHtml(paper.abstract || "No abstract available.")}</p></div><section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div><p class="muted">Edit the paper to change its grouping tags.</p></section><section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="10" aria-label="BibTeX entry">${escapeHtml(bibtexEntry(paper))}</textarea></section></div></article>`;
+  const summary = paperSummary(paper);
+  const bibtex = bibtexEntry(paper);
+  const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
+  const metadata = [
+    metadataRow("Authors", paper.authors.join(", ")),
+    metadataRow("Year", paperYear(paper)),
+    metadataRow("arXiv", paper.arxivId, paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a>` : ""),
+    metadataRow("Categories", paper.categories.join(", ")),
+    metadataRow("Journal reference", paper.journalRef),
+    metadataRow("DOI", paper.doi),
+    metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
+  ].join("");
+  const body = `<section class="page-heading paper-heading"><div><h1>${renderText(paper.title)}</h1>${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}</div><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a>${paper.r2Key ? `<a class="icon-button" href="/api/papers/${paper.id}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : `<span class="muted pdf-missing">PDF not stored</span>`}<button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
+  <article class="panel paper-detail"><div class="detail-content"><div>${paper.abstract?.trim() ? `<h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p>` : ""}<section class="metadata-panel" aria-label="Paper information"><dl class="metadata">${metadata}</dl></section></div>${paper.tags.length ? `<section class="detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : ""}<section class="bibtex-section"><div class="bibtex-heading"><h2>BibTeX</h2><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></section></div></article>`;
   return layout(paper.title, body);
 }
 
 export function renderEditPage(paper: PaperRecord): string {
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading"><div><p class="eyebrow">Edit metadata</p><h1>${escapeHtml(paper.title)}</h1></div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit")}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading"><div><p class="eyebrow">Edit metadata</p><h1>${renderText(paper.title)}</h1></div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit")}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {

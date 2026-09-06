@@ -90,14 +90,29 @@ function value(form, name) {
   return form.elements.namedItem(name)?.value || "";
 }
 
+function resizeAuthorsField(input) {
+  if (!(input instanceof HTMLTextAreaElement)) return;
+  const lineCount = Math.max(1, input.value.split(/\r?\n/).length);
+  input.rows = Math.max(3, Math.min(lineCount, 10));
+  input.style.overflowY = lineCount > 10 ? "auto" : "hidden";
+}
+
 function setValue(form, name, next) {
   const input = form.elements.namedItem(name);
-  if (input) input.value = next || "";
+  if (input) {
+    input.value = next || "";
+    if (name === "authors") resizeAuthorsField(input);
+  }
 }
 
 function commaValues(text) {
   return text.split(",").map((item) => item.trim()).filter(Boolean);
 }
+
+document.querySelectorAll("textarea[name=authors]").forEach((input) => {
+  resizeAuthorsField(input);
+  input.addEventListener("input", () => resizeAuthorsField(input));
+});
 
 function renderPreview(data, stagingToken = "") {
   const preview = document.querySelector("[data-preview]");

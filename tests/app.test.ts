@@ -55,6 +55,73 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("omits empty metadata rows and sections from paper details", async () => {
+    const context = testApp();
+    const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Title-only paper", metadataSource: "manual" }) });
+    expect(response.status).toBe(201);
+    const { paper } = await response.json();
+    const pageResponse = await context.app.request(`/papers/${paper.id}`);
+    expect(pageResponse.status).toBe(200);
+    const html = await pageResponse.text();
+    expect(html).toContain("<dt>Added</dt>");
+    expect(html).not.toContain("<dt>Authors</dt>");
+    expect(html).not.toContain("<dt>Year</dt>");
+    expect(html).not.toContain("<dt>arXiv</dt>");
+    expect(html).not.toContain("<dt>Categories</dt>");
+    expect(html).not.toContain("<dt>Journal reference</dt>");
+    expect(html).not.toContain("<dt>DOI</dt>");
+    expect(html).not.toContain(">Abstract</h2>");
+    expect(html).not.toContain('class="detail-tags"');
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("enables math rendering for paper text", async () => {
+    const context = testApp();
+    const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Math $x^2$ paper", abstract: "The model uses \\emph{AutoInt}. Code: https://example.com/docs. Repository: \\url{https://example.com/repo}.", metadataSource: "manual" }) });
+    expect(response.status).toBe(201);
+    const { paper } = await response.json();
+    const pageResponse = await context.app.request(`/papers/${paper.id}`);
+    const html = await pageResponse.text();
+    expect(html).toContain("Math $x^2$ paper");
+    expect(html).toContain("https://example.com/docs");
+    expect(html).toContain("\\(\\emph{AutoInt}\\)");
+    expect(html).toContain('emph: ["{\\\\mathit{#1}}", 1]');
+    expect(html).toContain('<a href="https://example.com/docs" target="_blank" rel="noreferrer">https://example.com/docs</a>.');
+    expect(html).toContain('<a href="https://example.com/repo" target="_blank" rel="noreferrer">https://example.com/repo</a>.');
+    expect(html).toContain('data-bibtex readonly rows="4"');
+    expect(html).toContain("https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("sizes the authors editor to ten lines and scrolls for longer lists", async () => {
+    const context = testApp();
+    const authors = Array.from({ length: 12 }, (_, index) => `Author ${index + 1}`);
+    const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Many authors", authors, metadataSource: "manual" }) });
+    expect(response.status).toBe(201);
+    const { paper } = await response.json();
+    const editPage = await context.app.request(`/papers/${paper.id}/edit`);
+    const html = await editPage.text();
+    expect(html).toContain('name="authors" rows="10"');
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("keeps URL-like paper titles linked to the paper page", async () => {
+    const context = testApp();
+    const title = "https://example.com/paper-title";
+    const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, metadataSource: "manual" }) });
+    expect(response.status).toBe(201);
+    const { paper } = await response.json();
+    const library = await context.app.request("/");
+    const html = await library.text();
+    expect(html).toContain(`<h2><a href="/papers/${paper.id}">${title}</a></h2>`);
+    expect(html).not.toContain(`<h2><a href="/papers/${paper.id}"><a href=`);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("bulk imports PDFs and skips exact duplicates", async () => {
     const context = testApp();
     const form = new FormData();
