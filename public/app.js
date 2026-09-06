@@ -1,3 +1,74 @@
+const themeStorageKey = "personal-paper-library-theme";
+const accentThemes = {
+  forest: { accent: "#315c52", dark: "#264b43", soft: "#eaf0ed", border: "#aabbb4" },
+  blue: { accent: "#3d5a80", dark: "#2d4665", soft: "#e8eef5", border: "#aab9cb" },
+  terracotta: { accent: "#9a4e36", dark: "#7d3d2b", soft: "#f5e9e4", border: "#d8b6aa" },
+  plum: { accent: "#6b4c73", dark: "#553b5c", soft: "#eee8f0", border: "#c4b5c8" },
+  slate: { accent: "#58606a", dark: "#434a52", soft: "#edf0f2", border: "#b7bec4" },
+};
+const backgroundThemes = {
+  paper: "#f7f6f2",
+  white: "#ffffff",
+  "light-gray": "#eeeeec",
+  warm: "#f3efe8",
+  amber: "#fcf1cf",
+};
+
+function loadTheme() {
+  try {
+    return JSON.parse(localStorage.getItem(themeStorageKey) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function applyTheme(theme) {
+  const accent = accentThemes[theme.accent] || accentThemes.forest;
+  const background = backgroundThemes[theme.background] || backgroundThemes.paper;
+  const customAccent = /^#[0-9a-f]{6}$/i.test(theme.customAccent || "") ? theme.customAccent : "#315c52";
+  const customBackground = /^#[0-9a-f]{6}$/i.test(theme.customBackground || "") ? theme.customBackground : "#f7f6f2";
+  const accentKey = accentThemes[theme.accent] ? theme.accent : theme.accent === "custom" ? "custom" : "forest";
+  const backgroundKey = backgroundThemes[theme.background] ? theme.background : theme.background === "custom" ? "custom" : "paper";
+  const selectedAccent = accentKey === "custom" ? { accent: customAccent, dark: `color-mix(in srgb, ${customAccent} 82%, black 18%)`, soft: `color-mix(in srgb, ${customAccent} 12%, white 88%)`, border: `color-mix(in srgb, ${customAccent} 48%, white 52%)` } : accent;
+  const selectedBackground = backgroundKey === "custom" ? customBackground : background;
+  document.documentElement.style.setProperty("--accent", selectedAccent.accent);
+  document.documentElement.style.setProperty("--accent-dark", selectedAccent.dark);
+  document.documentElement.style.setProperty("--accent-soft", selectedAccent.soft);
+  document.documentElement.style.setProperty("--accent-border", selectedAccent.border);
+  document.documentElement.style.setProperty("--page-bg", selectedBackground);
+  document.querySelectorAll("[data-theme-setting]").forEach((input) => {
+    input.checked = input.value === (input.dataset.themeSetting === "accent" ? accentKey : backgroundKey);
+  });
+  document.querySelectorAll("[data-theme-picker]").forEach((input) => {
+    input.value = input.dataset.themePicker === "accent" ? customAccent : customBackground;
+  });
+}
+
+let selectedTheme = loadTheme();
+applyTheme(selectedTheme);
+
+document.querySelectorAll("[data-theme-setting]").forEach((input) => input.addEventListener("change", () => {
+  selectedTheme = { ...selectedTheme, [input.dataset.themeSetting]: input.value };
+  try {
+    localStorage.setItem(themeStorageKey, JSON.stringify(selectedTheme));
+  } catch {
+    // The current page still updates even when storage is unavailable.
+  }
+  applyTheme(selectedTheme);
+}));
+
+document.querySelectorAll("[data-theme-picker]").forEach((input) => input.addEventListener("input", () => {
+  const group = input.dataset.themePicker;
+  const customKey = group === "accent" ? "customAccent" : "customBackground";
+  selectedTheme = { ...selectedTheme, [group]: "custom", [customKey]: input.value };
+  try {
+    localStorage.setItem(themeStorageKey, JSON.stringify(selectedTheme));
+  } catch {
+    // The current page still updates even when storage is unavailable.
+  }
+  applyTheme(selectedTheme);
+}));
+
 function setStatus(form, message, error = false) {
   const status = form.querySelector(".form-status");
   if (status) {
@@ -152,6 +223,25 @@ document.querySelector("[data-replace-upload]")?.addEventListener("submit", asyn
     setStatus(form, error.message, true);
   }
 });
+
+document.querySelectorAll("[data-copy-bibtex]").forEach((button) => button.addEventListener("click", async () => {
+  const field = button.closest(".bibtex-section")?.querySelector("[data-bibtex]");
+  if (!field) return;
+  const text = field.value || field.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    field.focus();
+    field.select();
+    document.execCommand("copy");
+  }
+  const label = button.querySelector("span:last-child");
+  if (label) {
+    const previous = label.textContent;
+    label.textContent = "Copied";
+    window.setTimeout(() => { label.textContent = previous; }, 1500);
+  }
+}));
 
 document.querySelector("[data-delete-paper]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;

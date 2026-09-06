@@ -25,6 +25,13 @@ function titleKey(title: string): string {
   return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function normalizeDoi(input: string): string {
+  return input.trim()
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "")
+    .replace(/[\])}>.,;]+$/, "");
+}
+
 function dateFromWork(work: CrossrefWork): string | undefined {
   const parts = work["published-print"]?.["date-parts"]?.[0] || work["published-online"]?.["date-parts"]?.[0] || work.published?.["date-parts"]?.[0] || work.issued?.["date-parts"]?.[0];
   return parts?.length ? parts.map(String).join("-") : undefined;
@@ -63,7 +70,7 @@ async function requestCrossref(url: string, fetcher: typeof fetch): Promise<Cros
 
 export async function lookupCrossref(input: { title?: string; doi?: string }, fetcher: typeof fetch = fetch): Promise<PaperMetadata> {
   if (input.doi?.trim()) {
-    const work = await requestCrossref(`https://api.crossref.org/works/${encodeURIComponent(input.doi.trim())}`, fetcher);
+    const work = await requestCrossref(`https://api.crossref.org/works/${encodeURIComponent(normalizeDoi(input.doi))}`, fetcher);
     if (Array.isArray(work)) throw new Error("CROSSREF_INVALID_RESPONSE");
     return mapWork(work);
   }

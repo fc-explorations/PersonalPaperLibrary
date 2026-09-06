@@ -6,12 +6,12 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openDatabase } from "./db/database.js";
 import { PaperRepository } from "./repositories/papers.js";
-import { normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
+import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
 import { FileStorage } from "./services/storage.js";
 import { parseAuthors, parseTags, parseYear, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
-import { renderAddPage, renderEditPage, renderLibrary, renderPaperPage } from "./views.js";
+import { renderAddPage, renderEditPage, renderLibrary, renderPaperPage, renderSettingsPage } from "./views.js";
 import type { PaperDraftInput, PaperMetadata, SortOrder } from "./types.js";
 
 export interface AppDependencies {
@@ -94,6 +94,8 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/add", (c) => c.html(renderAddPage()));
 
+  app.get("/settings", (c) => c.html(renderSettingsPage()));
+
   app.get("/papers/:id", (c) => {
     const paper = repo.findById(c.req.param("id"));
     return paper ? c.html(renderPaperPage(paper)) : pageError(c, 404, "Paper not found", "That paper does not exist.");
@@ -112,7 +114,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       const input = body.input?.trim() || "";
       if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter a paper title, DOI, URL, or identifier.");
 
-      const normalized = normalizeArxivInput(input);
+      const normalized = normalizeArxivInput(input) || normalizeArxivDoi(input);
       if (normalized) {
         const existing = repo.findDuplicate({ arxivId: normalized.id, title: "" });
         if (existing) return c.json({ existing, duplicate: true });
@@ -163,7 +165,9 @@ export function createApp(dependencies: AppDependencies = {}) {
         if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
         return c.json({ paper: await fetchArxivMetadata(normalized, fetcher), provider: "arxiv" });
       }
-      return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi }, fetcher), provider: "crossref" });
+      const arxivDoi = body.doi ? normalizeArxivDoi(body.doi) : null;
+      if (arxivDoi) return c.json({ paper: await fetchArxivMetadata(arxivDoi, fetcher), provider: "arxiv" });
+      return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher), provider: "crossref" });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
     }

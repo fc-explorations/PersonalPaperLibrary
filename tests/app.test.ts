@@ -65,4 +65,15 @@ describe("HTTP application", () => {
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
+
+  it("resolves arXiv DOI URLs through arXiv metadata", async () => {
+    const context = testApp();
+    const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "https://doi.org/10.48550/arXiv.2608.29530" }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.paper.title).toBe("Test arXiv Paper");
+    expect(result.paper.arxivId).toBe("2608.29530");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
 });

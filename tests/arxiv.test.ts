@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchArxivMetadata, normalizeArxivInput, parseArxivMetadata } from "../src/services/arxiv.js";
+import { fetchArxivMetadata, normalizeArxivDoi, normalizeArxivInput, parseArxivMetadata } from "../src/services/arxiv.js";
 
 const atom = `<?xml version="1.0"?><feed><entry>
   <title>  A &amp; Useful Paper  </title>
@@ -27,6 +27,10 @@ describe("arXiv input", () => {
     expect(normalizeArxivInput("https://arxiv.org/abs/2401.12345v2")?.baseId).toBe("2401.12345");
     expect(normalizeArxivInput("https://example.com/2401.12345")).toBeNull();
     expect(normalizeArxivInput("not an arxiv id")).toBeNull();
+  });
+
+  it("recognizes arXiv DOI URLs", () => {
+    expect(normalizeArxivDoi("https://doi.org/10.48550/arXiv.2608.29530")).toMatchObject({ id: "2608.29530", baseId: "2608.29530" });
   });
 });
 

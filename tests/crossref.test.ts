@@ -21,6 +21,15 @@ describe("Crossref lookup", () => {
     expect(result.abstract).toBe("A useful abstract.");
   });
 
+  it("normalizes DOI URLs before requesting Crossref", async () => {
+    const fetcher = async (input: RequestInfo | URL) => {
+      expect(String(input)).toContain("works/10.1007%2Fexample");
+      return new Response(JSON.stringify({ message: work }), { status: 200 });
+    };
+    const result = await lookupCrossref({ doi: "https://doi.org/10.1007/example" }, fetcher);
+    expect(result.doi).toBe("10.1007/example");
+  });
+
   it("looks up a corrected title", async () => {
     const fetcher = async () => new Response(JSON.stringify({ message: { items: [work] } }), { status: 200 });
     const result = await lookupCrossref({ title: work.title[0] }, fetcher);

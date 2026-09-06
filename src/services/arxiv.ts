@@ -63,6 +63,11 @@ export function normalizeArxivInput(input: string): NormalizedArxivInput | null 
   };
 }
 
+export function normalizeArxivDoi(input: string): NormalizedArxivInput | null {
+  const match = input.trim().match(/10\.48550\/arxiv\.(\d{4}\.\d{4,5}(?:v\d+)?)/i);
+  return match ? normalizeArxivInput(match[1]) : null;
+}
+
 export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput): PaperMetadata {
   const entryMatch = xml.match(/<entry[\s\S]*?<\/entry>/i);
   if (!entryMatch) throw new Error("ARXIV_NOT_FOUND");
