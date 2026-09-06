@@ -57,11 +57,11 @@ function tagFilters(value: unknown, fallback?: unknown): string[] {
   return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function requestFilters(c: Context): { q?: string; tag?: string[] } {
+function requestFilters(c: Context): { q?: string; tag?: string[]; all?: boolean } {
   const url = new URL(c.req.url);
   const q = c.req.query("q")?.trim() || undefined;
   const tags = tagFilters(url.searchParams.getAll("tag"));
-  return { q, tag: tags.length ? tags : undefined };
+  return { q, tag: tags.length ? tags : undefined, all: c.req.query("all") === "1" };
 }
 
 function titleFromFilename(filename: string): string {
@@ -101,6 +101,43 @@ function pdfFilename(title: string, used: Set<string>): string {
   while (used.has(filename.toLowerCase())) filename = `${base} (${suffix++}).pdf`;
   used.add(filename.toLowerCase());
   return filename;
+}
+
+type StagedPdfResult = { status: "not_found" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
+
+async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
+  const parsed = new URL(url);
+  if (!/^https?:$/i.test(parsed.protocol)) throw new Error("PDF_URL_INVALID");
+  const response = await fetcher(parsed, { headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
+  if (!response.ok) throw new Error(`PDF_HTTP_${response.status}`);
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > maxPdfBytes) throw new Error("PDF_TOO_LARGE");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  validatePdf(bytes, "paper.pdf", maxPdfBytes);
+  return bytes;
+}
+
+async function stageMetadataPdf(metadata: PaperMetadata, storage: FileStorage, maxPdfBytes: number, fetcher: typeof fetch): Promise<{ pdf: StagedPdfResult; warning?: string }> {
+  const arxivPdfUrl = metadata.arxivId ? normalizeArxivInput(metadata.arxivId)?.pdfUrl : undefined;
+  const candidates = [...new Set([metadata.pdfUrl, arxivPdfUrl].filter((url): url is string => Boolean(url)))];
+  if (!candidates.length) return { pdf: { status: "not_found" } };
+
+  let lastError: unknown;
+  for (const url of candidates) {
+    try {
+      const bytes = await fetchRemotePdf(url, maxPdfBytes, fetcher);
+      const staged = await storage.stage(bytes);
+      return { pdf: { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 } };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const message = errorMessage(lastError);
+  return {
+    pdf: { status: "not_found" },
+    warning: message === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "A PDF was not available for automatic download. You can upload it manually.",
+  };
 }
 
 function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
@@ -147,9 +184,9 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use("/app.js", serveStatic({ root: "./public" }));
 
   app.get("/", (c) => {
-    const { q, tag } = requestFilters(c);
+    const { q, tag, all } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
-    return c.html(renderLibrary(repo.list({ q, tag, sort }), repo.tags.list(), { q, tag, sort }));
+    return c.html(renderLibrary(repo.list({ q, tag, sort }), repo.tags.list(), { q, tag, sort, all }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));
@@ -166,7 +203,10 @@ export function createApp(dependencies: AppDependencies = {}) {
     return paper ? c.html(renderEditPage(paper)) : pageError(c, 404, "Paper not found", "That paper does not exist.");
   });
 
-  app.get("/api/papers", (c) => c.json({ papers: repo.list({ ...requestFilters(c), sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() }));
+  app.get("/api/papers", (c) => {
+    const { q, tag } = requestFilters(c);
+    return c.json({ papers: repo.list({ q, tag, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
+  });
 
   const importPaper = async (c: Context) => {
     try {
@@ -227,7 +267,9 @@ export function createApp(dependencies: AppDependencies = {}) {
         }
       }
       if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
-      return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings });
+      const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      if (downloaded.warning) warnings.push(downloaded.warning);
+      return c.json({ paper: metadata, pdf: downloaded.pdf, warnings });
     } catch (error) {
       return jsonError(c, 502, "IMPORT_FAILED", errorMessage(error));
     }
@@ -239,23 +281,36 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.post("/api/metadata/lookup", async (c) => {
     try {
       const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string }>();
+      let metadata: PaperMetadata;
+      let provider: string;
       if (body.arxivId) {
         const normalized = normalizeArxivInput(body.arxivId);
         if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
-        return c.json({ paper: await fetchArxivMetadata(normalized, fetcher), provider: "arxiv" });
-      }
-      const arxivDoi = body.doi ? normalizeArxivDoi(body.doi) : null;
-      if (arxivDoi) return c.json({ paper: await fetchArxivMetadata(arxivDoi, fetcher), provider: "arxiv" });
-      try {
-        return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher), provider: "crossref" });
-      } catch (error) {
-        if (body.doi || !body.title?.trim()) throw error;
-        try {
-          return c.json({ paper: await lookupOpenAlex(body.title || "", fetcher), provider: "openalex" });
-        } catch {
-          return c.json({ paper: await lookupSemanticScholar(body.title || "", fetcher), provider: "semantic-scholar" });
+        metadata = await fetchArxivMetadata(normalized, fetcher);
+        provider = "arxiv";
+      } else {
+        const arxivDoi = body.doi ? normalizeArxivDoi(body.doi) : null;
+        if (arxivDoi) {
+          metadata = await fetchArxivMetadata(arxivDoi, fetcher);
+          provider = "arxiv";
+        } else {
+          try {
+            metadata = await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher);
+            provider = "crossref";
+          } catch (error) {
+            if (body.doi || !body.title?.trim()) throw error;
+            try {
+              metadata = await lookupOpenAlex(body.title || "", fetcher);
+              provider = "openalex";
+            } catch {
+              metadata = await lookupSemanticScholar(body.title || "", fetcher);
+              provider = "semantic-scholar";
+            }
+          }
         }
       }
+      const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
     }
@@ -373,10 +428,10 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-delete", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[] }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
-      if (!q && !tags.length) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+      if (!q && !tags.length && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
       const papers = repo.list({ q, tag: tags });
       const moved: StorageMove[] = [];
       try {
@@ -400,11 +455,11 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-tags", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; name?: string; action?: string }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; name?: string; action?: string }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
       const name = body.name?.trim() || "";
-      if (!q && !tags.length) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
+      if (!q && !tags.length && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
       if (!name || name.includes(",")) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter one tag without commas.");
       if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
       const papers = repo.list({ q, tag: tags });
@@ -469,7 +524,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/export/pdfs", (c) => {
-    const papers = repo.list({ ...requestFilters(c), sort: parseSortOrder(c.req.query("sort")) });
+    const { q, tag } = requestFilters(c);
+    const papers = repo.list({ q, tag, sort: parseSortOrder(c.req.query("sort")) });
     const usedNames = new Set<string>();
     const files = papers.flatMap((paper) => existsSync(storage.getPath(paper.id)) ? [{ name: pdfFilename(paper.title, usedNames), path: storage.getPath(paper.id) }] : []);
     if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");

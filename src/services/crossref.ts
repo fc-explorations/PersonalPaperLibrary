@@ -1,10 +1,12 @@
 import type { PaperMetadata } from "../types.js";
+import { normalizeArxivDoi, normalizeArxivInput } from "./arxiv.js";
 
 interface CrossrefWork {
   title?: string[];
   author?: Array<{ given?: string; family?: string; name?: string }>;
   DOI?: string;
   URL?: string;
+  link?: Array<{ URL?: string; type?: string; "content-type"?: string }>;
   abstract?: string;
   "container-title"?: string[];
   volume?: string;
@@ -50,6 +52,8 @@ function mapWork(work: CrossrefWork): PaperMetadata {
   const publishedDate = dateFromWork(work);
   const container = cleanText(work["container-title"]?.[0]);
   const journalParts = [container, work.volume ? `vol. ${work.volume}` : undefined, work.issue ? `no. ${work.issue}` : undefined, work.page ? `pp. ${work.page}` : undefined].filter(Boolean);
+  const pdfUrl = work.link?.find((link) => /application\/pdf/i.test(link.type || link["content-type"] || ""))?.URL;
+  const arxiv = [work.DOI ? normalizeArxivDoi(work.DOI) : null, work.URL ? normalizeArxivInput(work.URL) : null].find(Boolean) || undefined;
   return {
     title,
     abstract: cleanText(work.abstract),
@@ -60,6 +64,9 @@ function mapWork(work: CrossrefWork): PaperMetadata {
     journalRef: journalParts.join(", ") || undefined,
     doi: work.DOI,
     sourceUrl: work.URL,
+    arxivId: arxiv?.id,
+    arxivUrl: arxiv?.abstractUrl,
+    pdfUrl: pdfUrl || arxiv?.pdfUrl,
     metadataSource: "mixed",
   };
 }

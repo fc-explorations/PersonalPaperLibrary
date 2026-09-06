@@ -93,6 +93,7 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
     journalRef: field(entry, "journal_ref"),
     doi: field(entry, "doi"),
     sourceUrl: normalized.abstractUrl,
+    pdfUrl: normalized.pdfUrl,
     arxivUrl: normalized.abstractUrl,
     metadataSource: "arxiv",
   };

@@ -14,6 +14,8 @@ export interface PaperMetadata {
   journalRef?: string;
   doi?: string;
   sourceUrl?: string;
+  /** A downloadable PDF URL used transiently during metadata lookup. */
+  pdfUrl?: string;
   arxivUrl?: string;
   metadataSource: MetadataSource;
 }

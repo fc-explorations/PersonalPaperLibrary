@@ -12,7 +12,7 @@ The main workflow is:
 
 PDFs can also be uploaded manually when a local copy is already available, either individually or as a folder of PDFs.
 
-Paper lookup accepts arXiv identifiers, arXiv URLs, DOIs, DOI URLs, and paper titles. Title metadata lookup tries Crossref first, then OpenAlex, then Semantic Scholar. A title import that cannot be resolved remains editable as a title-only record.
+Paper lookup accepts arXiv identifiers, arXiv URLs, DOIs, DOI URLs, and paper titles. Title metadata lookup tries Crossref first, then OpenAlex, then Semantic Scholar. When a matched record exposes an arXiv, open-access, or publisher PDF URL, the PDF is downloaded and staged automatically for saving with the reviewed metadata. A title import that cannot be resolved remains editable as a title-only record.
 
 ## Local development
 
@@ -65,7 +65,7 @@ This directory is intentionally ignored by Git. Back it up separately if you wan
 
 Version 1 focuses on arXiv and title/DOI imports, individual and bulk local PDF uploads, metadata editing, grouping tags, multi-tag AND filtering, bulk tag/delete actions, search, sorting, PDF viewing, bulk PDF ZIP export, BibTeX copying, and appearance settings. It does not include reading states, priorities, notes, annotations, nested collection folders, full-text search, or multiple users.
 
-Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar.
+Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv or publisher/DOI landing page over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
 
 The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. Cloudflare Workers, D1, R2, and Access are planned for a later deployment phase.
 

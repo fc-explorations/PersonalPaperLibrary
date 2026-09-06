@@ -193,11 +193,12 @@ function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
 
-function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder): string {
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   tags.forEach((tag) => params.append("tag", tag));
   params.set("sort", sort);
+  if (all) params.set("all", "1");
   return params.toString();
 }
 
@@ -238,25 +239,26 @@ function paperCard(paper: PaperRecord): string {
   </article>`;
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder }): string {
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean }): string {
   const sort = query.sort || "newest";
   const selectedFilters = query.tag || [];
-  const downloadQuery = libraryQuery(query.q, selectedFilters, sort);
+  const allSelected = Boolean(query.all);
+  const downloadQuery = libraryQuery(query.q, selectedFilters, sort, allSelected);
   const storedPdfCount = papers.filter((paper) => paper.r2Key).length;
-  const hasSelection = Boolean((query.q?.trim() || selectedFilters.length) && papers.length);
+  const hasSelection = Boolean(papers.length && (query.q?.trim() || selectedFilters.length || allSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
-  const selectionLabel = query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
+  const selectionLabel = allSelected ? "Delete all" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
-  const bulkButtons = storedPdfCount || hasSelection ? `<div class="bulk-actions" data-bulk-actions>${hasSelection ? `<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>` : ""}${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}${hasSelection ? `<button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button>` : ""}</div>` : "";
-  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
-    ${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
+    ${allSelected ? `<input type="hidden" name="all" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${selectedFilters.length === 0 ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort)}" aria-pressed="${selectedFilters.length === 0}">All</a> ${groupTagLinks(tags, selectedFilters, query.q, sort)}</section>
+  <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${allSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, !allSelected)}" aria-pressed="${allSelected}">All</a> ${groupTagLinks(tags, allSelected ? [] : selectedFilters, query.q, sort)}</section>
   <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
   return layout("Library", body);
@@ -273,6 +275,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const data = paper || { title: "", authors: [], categories: [], tags: [] };
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
+  const openPdfButton = isEdit && data.r2Key ? `<a class="button button-secondary" href="/api/papers/${escapeHtml(data.id)}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open PDF</span></a>` : "";
   const fields = `${field("Title", "title", data.title, { placeholder: "Paper title" })}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
@@ -284,7 +287,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   return `<form class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <div class="form-grid">${fields}</div>
     <input type="hidden" name="stagingToken" value="">
-    <div class="form-actions"><button class="button" type="submit">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button><button class="button button-secondary" type="button" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button><a class="button button-secondary" href="${isEdit ? `/papers/${escapeHtml(data.id)}` : "/"}">${closeIcon()}<span>Cancel</span></a><span class="form-status" role="status"></span></div>
+    <div class="form-actions"><div class="form-actions-left"><button class="button button-secondary" type="button" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button><a class="button button-secondary" data-web-resource target="_blank" rel="noreferrer" hidden>${openIcon()}<span>Open web resource</span></a>${openPdfButton}</div><span class="form-status" role="status"></span><div class="form-actions-right"><button class="button" type="submit">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button><a class="button button-secondary" href="${isEdit ? `/papers/${escapeHtml(data.id)}` : "/"}">${closeIcon()}<span>Cancel</span></a></div></div>
   </form>`;
 }
 
@@ -337,7 +340,7 @@ export function renderSettingsPage(): string {
   <section class="settings-page">
     <div class="settings-group"><h2>Accent color</h2><div class="theme-options">${themeOption("accent", "forest", "Forest", "#315c52")}${themeOption("accent", "blue", "Blue", "#3d5a80")}${themeOption("accent", "terracotta", "Terracotta", "#9a4e36")}${themeOption("accent", "plum", "Plum", "#6b4c73")}${themeOption("accent", "slate", "Slate", "#58606a")}${customThemeOption("accent", "#315c52")}</div></div>
     <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "mint", "Mint", "#e5f1ea")}${customThemeOption("background", "#f7f6f2")}</div></div>
-    <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>
+    <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("50")}${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>
   </section>`;
   return layout("Settings", body);
 }

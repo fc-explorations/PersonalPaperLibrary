@@ -37,6 +37,8 @@ describe("HTTP application", () => {
     const pdfResponse = await context.app.request(`/api/papers/${saved.paper.id}/pdf`);
     expect(pdfResponse.status).toBe(200);
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
+    const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
+    expect(await editPage.text()).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
@@ -154,6 +156,57 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("stages an available PDF after metadata lookup", async () => {
+    const title = "Metadata PDF Test";
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: [title], DOI: "10.1000/pdf-test", URL: "https://doi.org/10.1000/pdf-test", link: [{ URL: "https://publisher.example/pdf-test.pdf", "content-type": "application/pdf" }] }] } }), { status: 200 });
+      if (url === "https://publisher.example/pdf-test.pdf") return new Response(pdf, { status: 200, headers: { "content-type": "application/pdf" } });
+      return new Response("not found", { status: 404 });
+    };
+    const context = testApp(fetcher);
+    const lookupResponse = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+    expect(lookupResponse.status).toBe(200);
+    const lookup = await lookupResponse.json();
+    expect(lookup.pdf.status).toBe("staged");
+    const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...lookup.paper, stagingToken: lookup.pdf.stagingToken }) });
+    expect(saveResponse.status).toBe(201);
+    const saved = await saveResponse.json();
+    expect((await context.app.request(`/api/papers/${saved.paper.id}/pdf`)).status).toBe(200);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("stages the canonical arXiv PDF after arXiv metadata lookup", async () => {
+    const context = testApp();
+    const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ arxivId: "2401.12345" }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.provider).toBe("arxiv");
+    expect(result.pdf.status).toBe("staged");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("returns the best web resource when automatic PDF retrieval fails", async () => {
+    const title = "Metadata Web Resource Test";
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: [title], DOI: "10.1000/web-resource-test", URL: "https://publisher.example/web-resource-test", link: [{ URL: "https://publisher.example/web-resource-test.pdf", "content-type": "application/pdf" }] }] } }), { status: 200 });
+      return new Response("not found", { status: 404 });
+    };
+    const context = testApp(fetcher);
+    const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.pdf.status).toBe("not_found");
+    expect(result.paper.pdfUrl).toBe("https://publisher.example/web-resource-test.pdf");
+    expect(result.paper.sourceUrl).toBe("https://publisher.example/web-resource-test");
+    expect(result.warnings[0]).toContain("not available");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("resolves arXiv DOI URLs through arXiv metadata", async () => {
     const context = testApp();
     const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "https://doi.org/10.48550/arXiv.2608.29530" }) });
@@ -235,6 +288,30 @@ describe("HTTP application", () => {
     const response = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "flow", name: "selected", action: "add" }) });
     expect(response.status).toBe(200);
     expect((await (await context.app.request("/api/papers?tag=selected")).json()).papers).toHaveLength(1);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("treats All as an explicit selection without changing the default view", async () => {
+    const context = testApp();
+    for (const title of ["First paper", "Second paper"]) {
+      const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, metadataSource: "manual" }) });
+      expect(response.status).toBe(201);
+    }
+    const defaultPage = await context.app.request("/");
+    const defaultHtml = await defaultPage.text();
+    expect(defaultHtml).toContain('aria-pressed="false">All</a>');
+    expect(defaultHtml).not.toContain("data-delete-group");
+    const allPage = await context.app.request("/?all=1");
+    const allHtml = await allPage.text();
+    expect(allHtml).toContain('aria-pressed="true">All</a>');
+    expect(allHtml).toContain('data-delete-all="true"');
+    expect(allHtml).toContain('data-selection-all="true"');
+    const tagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ all: true, name: "selected", action: "add" }) });
+    expect(tagResponse.status).toBe(200);
+    expect((await (await context.app.request("/api/papers?tag=selected")).json()).papers).toHaveLength(2);
+    const deleteResponse = await context.app.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ all: true }) });
+    expect(deleteResponse.status).toBe(200);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

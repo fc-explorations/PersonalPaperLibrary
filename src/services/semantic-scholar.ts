@@ -50,6 +50,7 @@ function mapPaper(paper: SemanticScholarPaper): PaperMetadata {
     arxivId,
     arxivUrl: arxivId ? `https://arxiv.org/abs/${arxivId}` : undefined,
     sourceUrl: paper.url || paper.openAccessPdf?.url || undefined,
+    pdfUrl: paper.openAccessPdf?.url || undefined,
     metadataSource: "mixed",
   };
 }

@@ -1,4 +1,5 @@
 import type { PaperMetadata } from "../types.js";
+import { normalizeArxivDoi, normalizeArxivInput } from "./arxiv.js";
 
 interface OpenAlexWork {
   title?: string;
@@ -7,7 +8,8 @@ interface OpenAlexWork {
   authorships?: Array<{ author?: { display_name?: string } }>;
   abstract_inverted_index?: Record<string, number[]> | null;
   ids?: { doi?: string | null; arxiv?: string | null };
-  primary_location?: { landing_page_url?: string | null; source?: { display_name?: string | null } | null } | null;
+  primary_location?: { landing_page_url?: string | null; pdf_url?: string | null; source?: { display_name?: string | null } | null } | null;
+  best_oa_location?: { pdf_url?: string | null } | null;
   biblio?: { volume?: string | null; issue?: string | null; first_page?: string | null; last_page?: string | null };
   primary_topic?: { subfield?: { display_name?: string | null } | null } | null;
 }
@@ -41,7 +43,8 @@ function mapWork(work: OpenAlexWork): PaperMetadata {
   const biblio = work.biblio || {};
   const pages = biblio.first_page && biblio.last_page ? `${biblio.first_page}-${biblio.last_page}` : biblio.first_page;
   const journalRef = [source, biblio.volume ? `vol. ${biblio.volume}` : undefined, biblio.issue ? `no. ${biblio.issue}` : undefined, pages ? `pp. ${pages}` : undefined].filter(Boolean).join(", ") || undefined;
-  const arxivId = work.ids?.arxiv?.match(/arxiv\.org\/(?:abs|pdf)\/([^/?#]+?)(?:\.pdf)?$/i)?.[1];
+  const arxiv = [work.ids?.arxiv ? normalizeArxivInput(work.ids.arxiv) : null, work.ids?.doi ? normalizeArxivDoi(work.ids.doi) : null].find(Boolean) || undefined;
+  const arxivId = arxiv?.id;
   return {
     title: work.title || "Untitled paper",
     authors: (work.authorships || []).map((item) => item.author?.display_name || "").filter(Boolean),
@@ -53,8 +56,9 @@ function mapWork(work: OpenAlexWork): PaperMetadata {
     journalRef,
     doi: doiValue(work.ids?.doi),
     arxivId,
-    arxivUrl: arxivId ? `https://arxiv.org/abs/${arxivId}` : undefined,
+    arxivUrl: arxiv?.abstractUrl,
     sourceUrl: work.primary_location?.landing_page_url || undefined,
+    pdfUrl: work.best_oa_location?.pdf_url || work.primary_location?.pdf_url || arxiv?.pdfUrl,
     metadataSource: "mixed",
   };
 }

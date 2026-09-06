@@ -13,7 +13,7 @@ const backgroundThemes = {
   warm: "#f3efe8",
   mint: "#e5f1ea",
 };
-const contentWidthOptions = ["60", "70", "80", "90", "100"];
+const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
 
 function loadTheme() {
   try {
@@ -109,6 +109,16 @@ function commaValues(text) {
   return text.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function updateWebResource(form, paper, pdf) {
+  const link = form?.querySelector("[data-web-resource]");
+  if (!link) return;
+  const doiUrl = paper?.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "";
+  const url = paper?.arxivUrl || paper?.sourceUrl || doiUrl || paper?.pdfUrl || "";
+  const available = pdf?.status !== "staged" && /^https?:\/\//i.test(url);
+  link.hidden = !available;
+  if (available) link.href = url;
+}
+
 document.querySelectorAll("textarea[name=authors]").forEach((input) => {
   resizeAuthorsField(input);
   input.addEventListener("input", () => resizeAuthorsField(input));
@@ -133,6 +143,7 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue(form, "tags", (paper.tags || []).join(", "));
   setValue(form, "stagingToken", stagingToken || data.pdf?.stagingToken);
+  updateWebResource(form, paper, data.pdf);
   const pdfStatus = preview.querySelector("[data-pdf-status]");
   if (pdfStatus) pdfStatus.textContent = data.pdf?.status === "staged" ? "PDF ready" : "Metadata only";
   const warnings = preview.querySelector("[data-warnings]");
@@ -242,7 +253,11 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "doi", result.paper.doi);
     setValue(form, "arxivId", result.paper.arxivId);
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
-    setStatus(form, `Metadata found via ${result.provider}. Review it, then save.`);
+    if (result.pdf?.stagingToken) setValue(form, "stagingToken", result.pdf.stagingToken);
+    updateWebResource(form, result.paper, result.pdf);
+    const pdfMessage = result.pdf?.status === "staged" ? " PDF ready to store." : "";
+    const warningMessage = result.warnings?.length ? ` ${result.warnings.join(" ")}` : "";
+    setStatus(form, `Metadata found via ${result.provider}.${pdfMessage} Review it, then save.${warningMessage}`);
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
@@ -296,14 +311,15 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
 
 document.querySelector("[data-delete-group]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
+  const all = button.dataset.deleteAll === "true";
   const query = button.dataset.deleteQuery;
   const tags = JSON.parse(button.dataset.deleteTags || "[]");
   const count = button.dataset.deleteCount || "0";
-  const selection = tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
-  if ((!query && !tags.length) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
+  const selection = all ? "all papers" : tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
+  if ((!query && !tags.length && !all) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
   button.disabled = true;
   try {
-    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags }) });
+    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags, all }) });
     window.location.href = "/";
   } catch (error) {
     button.disabled = false;
@@ -348,6 +364,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
   const action = event.submitter?.dataset.bulkTagAction;
   const selectedTag = value(form, "tag");
   const name = selectedTag === "__new__" ? value(form, "newTag") : selectedTag;
+  const all = form.dataset.selectionAll === "true";
   const tags = JSON.parse(form.dataset.selectionTags || "[]");
   if (action === "remove" && selectedTag === "__new__") {
     setStatus(form, "Choose an existing tag to remove.", true);
@@ -355,7 +372,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
   }
   setStatus(form, "Updating tags…");
   try {
-    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, name, action }) });
+    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, all, name, action }) });
     window.location.reload();
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
