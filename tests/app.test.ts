@@ -30,6 +30,9 @@ describe("HTTP application", () => {
     const imported = await importResponse.json();
     expect(imported.paper.title).toBe("Test arXiv Paper");
     expect(imported.pdf.status).toBe("staged");
+    const stagedPdfResponse = await context.app.request(`/api/staging/${imported.pdf.stagingToken}/pdf`);
+    expect(stagedPdfResponse.status).toBe(200);
+    expect(new Uint8Array(await stagedPdfResponse.arrayBuffer())).toEqual(pdf);
     const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...imported.paper, stagingToken: imported.pdf.stagingToken, tags: ["AI"] }) });
     expect(saveResponse.status).toBe(201);
     const saved = await saveResponse.json();

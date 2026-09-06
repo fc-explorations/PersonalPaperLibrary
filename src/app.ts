@@ -634,6 +634,16 @@ export function createApp(dependencies: AppDependencies = {}) {
     return c.body(Readable.toWeb(createReadStream(path)) as ReadableStream, 200, { "Content-Type": "application/pdf", "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${paper.id}.pdf"` });
   });
 
+  app.get("/api/staging/:token/pdf", (c) => {
+    try {
+      const path = storage.getStagedPath(c.req.param("token"));
+      if (!existsSync(path)) return jsonError(c, 404, "STAGED_FILE_NOT_FOUND", "This staged PDF is no longer available.");
+      return c.body(Readable.toWeb(createReadStream(path)) as ReadableStream, 200, { "Content-Type": "application/pdf", "Content-Disposition": "inline" });
+    } catch (error) {
+      return jsonError(c, 404, errorMessage(error), "This staged PDF is no longer available.");
+    }
+  });
+
   app.get("/api/export/pdfs", (c) => {
     const { q, tag, untagged } = requestFilters(c);
     const papers = repo.list({ q, tag, untagged, sort: parseSortOrder(c.req.query("sort")) });

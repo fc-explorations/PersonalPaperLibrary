@@ -24,13 +24,18 @@ if (!/^(127\.0\.0\.1|localhost|::1)$/.test(hostname) && !process.env.APP_PASSWOR
 }
 
 const app = createApp({ db, storage });
-serve({ fetch: app.fetch, hostname, port: Number(process.env.PORT || 3000) }, (info) => {
+const server = serve({ fetch: app.fetch, hostname, port: Number(process.env.PORT || 3000) }, (info) => {
   console.log(`PersonalPaperLibrary running at http://${info.address}:${info.port}`);
 });
 
+let shuttingDown = false;
 const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   clearInterval(cleanupTimer);
-  db.close();
+  server.close(() => {
+    if (db.open) db.close();
+  });
 };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

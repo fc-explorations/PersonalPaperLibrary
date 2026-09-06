@@ -178,10 +178,16 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "arxivId", paper.arxivId);
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue(form, "tags", (paper.tags || []).join(", "));
-  setValue(form, "stagingToken", stagingToken || data.pdf?.stagingToken);
+  const activeStagingToken = stagingToken || data.pdf?.stagingToken || "";
+  setValue(form, "stagingToken", activeStagingToken);
   updateWebResource(form, paper, data.pdf);
+  const stagedPdfLink = preview.querySelector("[data-staged-pdf-link]");
+  if (stagedPdfLink) {
+    stagedPdfLink.hidden = !activeStagingToken;
+    if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
+  }
   const pdfStatus = preview.querySelector("[data-pdf-status]");
-  if (pdfStatus) pdfStatus.textContent = data.pdf?.status === "staged" ? "PDF ready" : "Metadata only";
+  if (pdfStatus) pdfStatus.textContent = activeStagingToken ? "" : "Metadata only";
   const warnings = preview.querySelector("[data-warnings]");
   if (warnings) warnings.textContent = (data.warnings || []).join(" ");
   preview.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -226,11 +232,14 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
   }
 });
 
+const singlePdfInput = document.querySelector("[data-single-pdf-input]");
+singlePdfInput?.addEventListener("change", () => {
+  if (singlePdfInput.files.length && singlePdfInput.form) singlePdfInput.form.requestSubmit();
+});
+
 const folderPdfInput = document.querySelector("[data-folder-pdf-input]");
-const folderPdfCount = document.querySelector("[data-folder-pdf-count]");
 folderPdfInput?.addEventListener("change", () => {
-  const pdfCount = [...folderPdfInput.files].filter((file) => /\.pdf$/i.test(file.name)).length;
-  if (folderPdfCount) folderPdfCount.textContent = pdfCount ? `${pdfCount} PDF file${pdfCount === 1 ? "" : "s"} selected` : "No PDF files selected";
+  if (folderPdfInput.files.length && folderPdfInput.form) folderPdfInput.form.requestSubmit();
 });
 
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
@@ -255,7 +264,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
     const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
     setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}${body.folderTag ? `; tagged as “${body.folderTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
-    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), `<a class="inline-link" href="/">View library →</a>`].join("");
+    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
@@ -296,7 +305,17 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "doi", result.paper.doi);
     setValue(form, "arxivId", result.paper.arxivId);
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
-    if (result.pdf?.stagingToken) setValue(form, "stagingToken", result.pdf.stagingToken);
+    if (result.pdf?.stagingToken) {
+      setValue(form, "stagingToken", result.pdf.stagingToken);
+      const preview = form.closest("[data-preview]");
+      const stagedPdfLink = preview?.querySelector("[data-staged-pdf-link]");
+      if (stagedPdfLink) {
+        stagedPdfLink.hidden = false;
+        stagedPdfLink.href = `/api/staging/${encodeURIComponent(result.pdf.stagingToken)}/pdf`;
+      }
+      const pdfStatus = preview?.querySelector("[data-pdf-status]");
+      if (pdfStatus) pdfStatus.textContent = "";
+    }
     updateWebResource(form, result.paper, result.pdf);
     const pdfMessage = result.pdf?.status === "staged" ? " PDF ready to store." : "";
     const warningMessage = result.warnings?.length ? ` ${result.warnings.join(" ")}` : "";

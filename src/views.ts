@@ -135,6 +135,10 @@ function openIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>`;
 }
 
+function goIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>`;
+}
+
 function downloadIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">download</span>`;
 }
@@ -286,7 +290,7 @@ function field(label: string, name: string, value: unknown, options: { type?: st
 function sourceUrlField(value: unknown): string {
   const url = typeof value === "string" ? value.trim() : "";
   const validUrl = /^https?:\/\//i.test(url);
-  return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>Go</a></div></label>`;
+  return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>${goIcon()}<span>Go</span></a></div></label>`;
 }
 
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
@@ -323,10 +327,10 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
 export function renderAddPage(): string {
   const body = `<section class="add-grid add-options">
     <div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form></div>
-    <div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button" type="submit">${uploadIcon()}<span>Upload</span></button></div><p class="form-status" role="status"></p></form></div>
-    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. The folder name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form"><div class="folder-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required class="sr-only" data-folder-pdf-input><span class="folder-file-count muted" data-folder-pdf-count aria-live="polite">No PDF files selected</span></div><button class="button button-secondary" type="submit">${folderIcon()}<span>Import folder</span></button></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div>
+    <div class="add-file-options"><div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="single-pdf-input">${uploadIcon()}<span>Choose file</span></label><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required class="sr-only" data-single-pdf-input></div></div><p class="form-status" role="status"></p></form></div>
+    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. The folder name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required class="sr-only" data-folder-pdf-input></div></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
-  <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><span class="pdf-status" data-pdf-status></span></div><div data-preview-form>${renderPaperForm(undefined, "add")}</div><div class="warnings" data-warnings></div></section>`;
+  <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" data-pdf-status></span><a class="button button-secondary button-small" data-staged-pdf-link target="_blank" rel="noreferrer" hidden>${openIcon()}<span>Open PDF</span></a></div></div><div data-preview-form>${renderPaperForm(undefined, "add")}</div><div class="warnings" data-warnings></div></section>`;
   return layout("Add paper", body);
 }
 
