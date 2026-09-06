@@ -4,6 +4,7 @@ set -euo pipefail
 PORT="${PORT:-3000}"
 URL="http://127.0.0.1:${PORT}"
 
+npm run build
 npm run start &
 SERVER_PID=$!
 

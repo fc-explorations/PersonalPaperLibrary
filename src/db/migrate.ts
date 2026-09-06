@@ -1,8 +1,11 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-export function runMigrations(databasePath = resolve("data/library.sqlite")) {
+const runtimeRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+export function runMigrations(databasePath = resolve(process.env.DATA_DIR || resolve(runtimeRoot, "data"), "library.sqlite")) {
   mkdirSync(join(databasePath, ".."), { recursive: true });
   const db = new Database(databasePath);
   db.pragma("foreign_keys = ON");
@@ -11,7 +14,7 @@ export function runMigrations(databasePath = resolve("data/library.sqlite")) {
     applied_at TEXT NOT NULL
   )`);
 
-  const migrationDir = resolve("migrations");
+  const migrationDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../migrations");
   if (existsSync(migrationDir)) {
     const applied = new Set(
       (db.prepare("SELECT name FROM schema_migrations").all() as { name: string }[]).map((row) => row.name),
@@ -28,7 +31,7 @@ export function runMigrations(databasePath = resolve("data/library.sqlite")) {
   return db;
 }
 
-if (process.argv[1]?.endsWith("migrate.ts")) {
+if (process.argv[1]?.endsWith("migrate.ts") || process.argv[1]?.endsWith("migrate.js")) {
   const db = runMigrations();
   db.close();
   console.log("Database migrations applied.");

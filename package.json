@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "node dist/src/index.js",
     "local": "./scripts/start-local.sh",
-    "build": "tsc --noEmit",
+    "build": "tsc && node scripts/copy-public.mjs",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx src/db/migrate.ts",

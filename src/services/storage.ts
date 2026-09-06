@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { readFile, writeFile, unlink, rename, readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface StorageMove {
   token: string;
@@ -14,7 +15,7 @@ export class FileStorage {
   readonly stagingDir: string;
   readonly trashDir: string;
 
-  constructor(root = resolve("data")) {
+  constructor(root = resolve(process.env.DATA_DIR || resolve(dirname(fileURLToPath(import.meta.url)), "../../data"))) {
     this.root = root;
     this.pdfDir = join(root, "pdfs");
     this.stagingDir = join(root, "staging");
@@ -64,6 +65,10 @@ export class FileStorage {
     return this.pdfPath(paperId);
   }
 
+  listPdfIds(): string[] {
+    return readdirSync(this.pdfDir).filter((file) => file.endsWith(".pdf")).map((file) => file.slice(0, -4));
+  }
+
   async delete(paperId: string): Promise<void> {
     const path = this.pdfPath(paperId);
     if (existsSync(path)) await unlink(path);
@@ -89,11 +94,9 @@ export class FileStorage {
 
   async cleanupStaging(maxAgeMs = 24 * 60 * 60 * 1000): Promise<void> {
     const cutoff = Date.now() - maxAgeMs;
-    for (const directory of [this.stagingDir, this.trashDir]) {
-      for (const file of await readdir(directory)) {
-        const path = join(directory, file);
-        if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
-      }
+    for (const file of await readdir(this.stagingDir)) {
+      const path = join(this.stagingDir, file);
+      if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
     }
   }
 

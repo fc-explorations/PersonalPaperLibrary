@@ -36,6 +36,8 @@ Or start the server and open the default browser automatically:
 npm run local
 ```
 
+`npm run local` builds the production bundle first, so it can be used from a fresh checkout. For a deployed or background process, use `npm run build` followed by `npm start`.
+
 Press `Ctrl-C` in the terminal to stop it.
 
 The local app binds to localhost and does not require authentication.
@@ -43,23 +45,23 @@ The local app binds to localhost and does not require authentication.
 ## Useful commands
 
 ```bash
-npm run dev          # Start the development server with reloads
-npm run build        # Type-check the project
-npm test             # Run automated tests
-npm run db:migrate   # Apply SQLite migrations
+npm run dev              # Start the development server with reloads
+npm run build            # Compile the server and copy static assets
+npm run verify           # Type-check and run automated tests
+npm run db:migrate       # Apply SQLite migrations
 npm run metadata:backfill # Reparse PDFs and refresh available arXiv/Crossref metadata
 ```
 
 ## Local data
 
-The application stores its local data under `data/`:
+The application stores its local data under `data/` (or under `DATA_DIR` when configured):
 
 - `data/library.sqlite` — paper metadata, authors, and tags
 - `data/pdfs/` — saved PDF files
 - `data/staging/` — temporary files awaiting confirmation
 - `data/trash/` — recoverable files moved aside during replacement or deletion
 
-This directory is intentionally ignored by Git. Back it up separately if you want to preserve the library.
+This directory is intentionally ignored by Git. The Settings page provides **Download backup** and **Restore backup** controls for a portable JSON backup containing metadata, tags, and stored PDFs. Restore preserves existing papers and skips matching records. Keep backup files private because they contain the PDFs themselves.
 
 ## Scope
 
@@ -74,6 +76,10 @@ The current runtime is local Node.js with Hono, SQLite, and filesystem PDF stora
 Optional environment variables:
 
 - `MAX_PDF_MB` — maximum PDF size; defaults to 50 MB.
+- `MAX_REQUEST_MB` — maximum request/backup size; defaults to 256 MB.
+- `HOST` — bind address; defaults to `127.0.0.1`.
+- `APP_PASSWORD` — enables the login gate. It is required when `HOST` is not loopback.
+- `PUBLIC_ORIGIN` — expected origin for state-changing requests when the app is exposed behind a proxy.
 - `CROSSREF_MAILTO` — contact address sent to Crossref when configured.
 - `SEMANTIC_SCHOLAR_API_KEY` — optional key for higher Semantic Scholar API limits.
 

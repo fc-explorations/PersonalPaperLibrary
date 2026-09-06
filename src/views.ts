@@ -193,13 +193,14 @@ function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
 
-function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false, untagged = false): string {
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false, untagged = false, page = 1): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   tags.forEach((tag) => params.append("tag", tag));
   params.set("sort", sort);
   if (all) params.set("all", "1");
   if (untagged) params.set("untagged", "1");
+  if (page > 1) params.set("page", String(page));
   return params.toString();
 }
 
@@ -246,20 +247,24 @@ function paperCard(paper: PaperRecord): string {
   </article>`;
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean; untagged?: boolean }): string {
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean; untagged?: boolean; page?: number; total?: number; storedPdfCount?: number }): string {
   const sort = query.sort || "newest";
+  const page = query.page || 1;
+  const total = query.total ?? papers.length;
   const selectedFilters = query.tag || [];
   const allSelected = Boolean(query.all);
   const untaggedSelected = Boolean(query.untagged);
   const downloadQuery = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected);
-  const storedPdfCount = papers.filter((paper) => paper.r2Key).length;
-  const hasSelection = Boolean(papers.length && (query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
+  const storedPdfCount = query.storedPdfCount ?? papers.filter((paper) => paper.r2Key).length;
+  const hasSelection = Boolean(total && (query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
   const selectionLabel = allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${papers.length}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${total}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
   const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
+  const pageCount = Math.ceil(total / 50);
+  const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="Paper pages">${page > 1 ? `<a class="button button-secondary button-small" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page - 1)}">Previous</a>` : ""}<span class="muted">Page ${page} of ${pageCount}</span>${page < pageCount ? `<a class="button button-secondary button-small" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page + 1)}">Next</a>` : ""}</nav>` : "";
   const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
     ${allSelected ? `<input type="hidden" name="all" value="1">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}
@@ -267,8 +272,8 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
   <section class="tag-bar"><span class="muted">Group by:</span> <a class="tag ${allSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, !allSelected)}" aria-pressed="${allSelected}">All</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected)}" aria-pressed="${untaggedSelected}">NaN</a> ${groupTagLinks(tags, allSelected || untaggedSelected ? [] : selectedFilters, query.q, sort)}</section>
-  <div class="results-heading"><span class="muted">${papers.length} paper${papers.length === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
-  <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>`;
+  <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
+  <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
   return layout("Library", body);
 }
 

@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { getCookie, setCookie } from "hono/cookie";
 import type { Database } from "better-sqlite3";
 import type { Context } from "hono";
@@ -35,6 +37,7 @@ export interface AppDependencies {
 const DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024;
 const SESSION_COOKIE = "ppl_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
+const LIBRARY_PAGE_SIZE = 50;
 
 function jsonError(c: Context, status: number, code: string, message: string) {
   return c.json({ error: { code, message } }, status as ContentfulStatusCode);
@@ -228,6 +231,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
   const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
+  const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
 
   app.use("*", async (c, next) => {
     await next();
@@ -255,8 +259,8 @@ export function createApp(dependencies: AppDependencies = {}) {
     return next();
   });
 
-  app.use("/styles.css", serveStatic({ root: "./public" }));
-  app.use("/app.js", serveStatic({ root: "./public" }));
+  app.use("/styles.css", serveStatic({ root: publicRoot }));
+  app.use("/app.js", serveStatic({ root: publicRoot }));
 
   app.get("/login", (c) => c.html(renderLoginPage()));
   app.post("/login", async (c) => {
@@ -273,7 +277,11 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.get("/", (c) => {
     const { q, tag, all, untagged } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
-    return c.html(renderLibrary(repo.list({ q, tag, untagged, sort }), repo.tags.list(), { q, tag, sort, all, untagged }));
+    const filters = { q, tag, untagged };
+    const total = repo.count(filters);
+    const requestedPage = Math.max(1, Number.parseInt(c.req.query("page") || "1", 10) || 1);
+    const page = total ? Math.min(requestedPage, Math.ceil(total / LIBRARY_PAGE_SIZE)) : 1;
+    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: LIBRARY_PAGE_SIZE, offset: (page - 1) * LIBRARY_PAGE_SIZE }), repo.tags.list(), { q, tag, sort, all, untagged, page, total, storedPdfCount: repo.countStored(filters) }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));
@@ -408,6 +416,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
       const file = uploadedFile(body.file);
       if (!file) return jsonError(c, 400, "PDF_REQUIRED", "Choose a PDF file to upload.");
+      if (file.size > maxPdfBytes) return jsonError(c, 413, "PDF_TOO_LARGE", "The PDF is larger than the configured upload limit.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       validatePdf(bytes, file.name, maxPdfBytes);
       const staged = await storage.stage(bytes);
@@ -430,6 +439,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
       if (!files.length) return c.json({ imported, skipped, failed, folderTag });
       if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
+      if (files.reduce((total, file) => total + file.size, 0) > maxRequestBytes) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The folder exceeds the configured request limit.");
       for (const file of files) {
         try {
           const bytes = new Uint8Array(await file.arrayBuffer());
@@ -675,7 +685,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           skipped++;
           continue;
         }
-        if (repo.findById(record.id) || repo.findDuplicate(record as PaperDraftInput, typeof record.pdfSha256 === "string" ? record.pdfSha256 : undefined)) {
+        if (repo.findById(record.id) || repo.findDuplicate(record as unknown as PaperDraftInput, typeof record.pdfSha256 === "string" ? record.pdfSha256 : undefined)) {
           skipped++;
           continue;
         }

@@ -5,6 +5,7 @@ import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { TagRepository } from "./tags.js";
 
 type PaperRow = Record<string, unknown>;
+type PaperListOptions = { q?: string; tag?: string | string[]; untagged?: boolean; sort?: SortOrder; limit?: number; offset?: number };
 
 function jsonArray(value: unknown): string[] {
   if (typeof value !== "string" || !value) return [];
@@ -157,9 +158,32 @@ export class PaperRepository {
     })();
   }
 
-  list(options: { q?: string; tag?: string | string[]; untagged?: boolean; sort?: SortOrder } = {}): PaperRecord[] {
+  list(options: PaperListOptions = {}): PaperRecord[] {
+    const { where, params } = this.filterQuery(options);
+    if (options.limit !== undefined) {
+      params.limit = Math.max(0, Math.floor(options.limit));
+      params.offset = Math.max(0, Math.floor(options.offset || 0));
+    }
+    const order = ({ newest: "p.created_at DESC, p.rowid DESC", oldest: "p.created_at ASC, p.rowid ASC", "year-desc": "p.year DESC NULLS LAST, p.title COLLATE NOCASE, p.rowid ASC", "year-asc": "p.year ASC NULLS LAST, p.title COLLATE NOCASE, p.rowid ASC", title: "p.title COLLATE NOCASE ASC, p.rowid ASC" } as Record<string, string>)[options.sort || "newest"] || "p.created_at DESC, p.rowid DESC";
+    const pagination = options.limit === undefined ? "" : " LIMIT @limit OFFSET @offset";
+    const rows = this.db.prepare(`SELECT p.* FROM papers p ${where} ORDER BY ${order}${pagination}`).all(params) as PaperRow[];
+    return this.hydrateMany(rows);
+  }
+
+  count(options: PaperListOptions = {}): number {
+    const { where, params } = this.filterQuery(options);
+    return Number((this.db.prepare(`SELECT COUNT(*) AS count FROM papers p ${where}`).get(params) as { count: number }).count);
+  }
+
+  countStored(options: PaperListOptions = {}): number {
+    const { where, params } = this.filterQuery(options);
+    const storedWhere = where ? `${where} AND p.r2_key IS NOT NULL` : "WHERE p.r2_key IS NOT NULL";
+    return Number((this.db.prepare(`SELECT COUNT(*) AS count FROM papers p ${storedWhere}`).get(params) as { count: number }).count);
+  }
+
+  private filterQuery(options: PaperListOptions): { where: string; params: Record<string, string | number> } {
     const clauses: string[] = [];
-    const params: Record<string, string> = {};
+    const params: Record<string, string | number> = {};
     if (options.q?.trim()) {
       clauses.push(`(lower(p.title) LIKE lower(@q) OR lower(COALESCE(p.abstract, '')) LIKE lower(@q)
         OR lower(COALESCE(p.arxiv_id, '')) LIKE lower(@q) OR lower(COALESCE(p.categories, '')) LIKE lower(@q)
@@ -174,9 +198,7 @@ export class PaperRepository {
       clauses.push(`EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`);
       params[parameter] = tag;
     });
-    const order = ({ newest: "p.created_at DESC", oldest: "p.created_at ASC", "year-desc": "p.year DESC NULLS LAST, p.title COLLATE NOCASE", "year-asc": "p.year ASC NULLS LAST, p.title COLLATE NOCASE", title: "p.title COLLATE NOCASE ASC" } as Record<string, string>)[options.sort || "newest"] || "p.created_at DESC";
-    const rows = this.db.prepare(`SELECT p.* FROM papers p ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY ${order}`).all(params) as PaperRow[];
-    return this.hydrateMany(rows);
+    return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
   }
 
   exportData() {

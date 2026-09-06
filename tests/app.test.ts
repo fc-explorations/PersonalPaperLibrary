@@ -9,7 +9,7 @@ import { FileStorage } from "../src/services/storage.js";
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
-function testApp(fetcherOverride?: typeof fetch) {
+function testApp(fetcherOverride?: typeof fetch, authPassword?: string) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
@@ -19,7 +19,7 @@ function testApp(fetcherOverride?: typeof fetch) {
     return new Response(url.includes("/pdf/") ? pdf : atom, { status: 200, headers: { "content-type": url.includes("/pdf/") ? "application/pdf" : "application/atom+xml" } });
   };
   const storage = new FileStorage(root);
-  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher }), db, root };
+  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher, authPassword }), db, root };
 }
 
 describe("HTTP application", () => {
@@ -374,6 +374,72 @@ describe("HTTP application", () => {
     const deleteResponse = await context.app.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: "temporary" }) });
     expect(deleteResponse.status).toBe(200);
     expect((await context.app.request(`/api/papers/${paperId}/pdf`)).status).toBe(404);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("exposes backup and restore controls in settings and restores a library", async () => {
+    const source = testApp();
+    const form = new FormData();
+    form.append("file", new File([pdf], "backup-paper.pdf", { type: "application/pdf" }));
+    const uploadResponse = await source.app.request("/api/uploads", { method: "POST", body: form });
+    const upload = await uploadResponse.json();
+    const saveResponse = await source.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Backup paper", authors: ["Backup Author"], tags: ["saved"], metadataSource: "manual", stagingToken: upload.pdf.stagingToken }) });
+    expect(saveResponse.status).toBe(201);
+    const settings = await source.app.request("/settings");
+    const settingsHtml = await settings.text();
+    expect(settingsHtml).toContain("Download backup");
+    expect(settingsHtml).toContain("data-restore-backup");
+    const backupResponse = await source.app.request("/api/export/backup");
+    expect(backupResponse.status).toBe(200);
+    const backup = await backupResponse.json();
+    expect(backup.version).toBe(1);
+    expect(backup.papers[0].pdfBase64).toBeTruthy();
+
+    const target = testApp();
+    const restoreForm = new FormData();
+    restoreForm.append("backup", new File([JSON.stringify(backup)], "library-backup.json", { type: "application/json" }));
+    const restoreResponse = await target.app.request("/api/import/backup", { method: "POST", body: restoreForm });
+    expect(restoreResponse.status).toBe(200);
+    expect((await restoreResponse.json()).restored).toBe(1);
+    const restored = (await (await target.app.request("/api/papers")).json()).papers[0];
+    expect(restored.title).toBe("Backup paper");
+    expect((await target.app.request(`/api/papers/${restored.id}/pdf`)).status).toBe(200);
+    source.db.close();
+    target.db.close();
+    rmSync(source.root, { recursive: true, force: true });
+    rmSync(target.root, { recursive: true, force: true });
+  });
+
+  it("requires the configured password before serving the library", async () => {
+    const context = testApp(undefined, "correct horse");
+    const redirect = await context.app.request("/");
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("/login");
+    expect((await context.app.request("/login")).status).toBe(200);
+    const wrong = await context.app.request("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "password=wrong" });
+    expect(wrong.status).toBe(401);
+    const login = await context.app.request("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "password=correct+horse" });
+    expect(login.status).toBe(302);
+    const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];
+    expect(cookie).toBeTruthy();
+    expect((await context.app.request("/", { headers: { cookie: cookie! } })).status).toBe(200);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("paginates the library without changing the total count", async () => {
+    const context = testApp();
+    for (let index = 0; index < 51; index += 1) {
+      const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: `Pagination paper ${index}`, metadataSource: "manual" }) });
+      expect(response.status).toBe(201);
+    }
+    const firstPage = await (await context.app.request("/")).text();
+    expect(firstPage).toContain("51 papers");
+    expect(firstPage).toContain("Page 1 of 2");
+    const secondPage = await (await context.app.request("/?page=2")).text();
+    expect(secondPage).toContain("Page 2 of 2");
+    expect(secondPage).toContain("Pagination paper");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
