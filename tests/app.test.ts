@@ -9,17 +9,17 @@ import { FileStorage } from "../src/services/storage.js";
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
-function testApp() {
+function testApp(fetcherOverride?: typeof fetch) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
-  const fetcher = async (input: RequestInfo | URL) => {
+  const defaultFetcher = async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: ["Test arXiv Paper"], author: [{ given: "Test", family: "Author" }], DOI: "10.1000/test", "container-title": ["Test Journal"], published: { "date-parts": [[2024]] } }] } }), { status: 200 });
     return new Response(url.includes("/pdf/") ? pdf : atom, { status: 200, headers: { "content-type": url.includes("/pdf/") ? "application/pdf" : "application/atom+xml" } });
   };
   const storage = new FileStorage(root);
-  return { app: createApp({ db, storage, fetcher }), db, root };
+  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher }), db, root };
 }
 
 describe("HTTP application", () => {
@@ -41,11 +41,26 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("stages a single uploaded PDF", async () => {
+    const context = testApp();
+    const form = new FormData();
+    form.append("file", new File([pdf], "single-upload.pdf", { type: "application/pdf" }));
+    const response = await context.app.request("/api/uploads", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.pdf.status).toBe("staged");
+    expect(result.pdf.stagingToken).toMatch(/[a-f0-9-]{36}/i);
+    expect(result.pdf.sizeBytes).toBe(pdf.byteLength);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("bulk imports PDFs and skips exact duplicates", async () => {
     const context = testApp();
     const form = new FormData();
     form.append("files", new File([pdf], "first_paper.pdf", { type: "application/pdf" }));
     form.append("files", new File([pdf], "duplicate.pdf", { type: "application/pdf" }));
+    form.append("files", new File(["not a PDF"], "notes.zip", { type: "application/zip" }));
     form.append("folderTag", "Research papers");
     const response = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
     expect(response.status).toBe(200);
@@ -79,6 +94,46 @@ describe("HTTP application", () => {
     const result = await response.json();
     expect(result.paper.title).toBe("Test arXiv Paper");
     expect(result.paper.arxivId).toBe("2608.29530");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("falls back to OpenAlex when Crossref cannot resolve a title", async () => {
+    const title = "Dropout: A Simple Way to Prevent Neural Networks from Overfitting";
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+      if (url.includes("api.openalex.org")) return new Response(JSON.stringify({ results: [{ title, publication_year: 2014, publication_date: "2014-01-01", authorships: [{ author: { display_name: "Nitish Srivastava" } }], ids: {}, primary_location: { landing_page_url: "https://jmlr.org/papers/v15/srivastava14a.html", source: { display_name: "Journal of Machine Learning Research" } }, biblio: { volume: "15", issue: "56", first_page: "1929", last_page: "1958" } }] }), { status: 200 });
+      return new Response(atom, { status: 200 });
+    };
+    const context = testApp(fetcher);
+    const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: title }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.paper.authors).toEqual(["Nitish Srivastava"]);
+    expect(result.paper.journalRef).toContain("Journal of Machine Learning Research");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("falls back to Semantic Scholar after OpenAlex cannot resolve a title", async () => {
+    const title = "A Semantic Scholar Fallback Test";
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+      if (url.includes("api.openalex.org")) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      if (url.includes("api.semanticscholar.org")) return new Response(JSON.stringify({ data: [{ title, authors: [{ name: "Fallback Author" }], year: 2020, publicationDate: "2020-01-02", venue: "Fallback Journal", url: "https://www.semanticscholar.org/paper/fallback" }] }), { status: 200 });
+      return new Response(atom, { status: 200 });
+    };
+    const context = testApp(fetcher);
+    const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: title }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.paper.authors).toEqual(["Fallback Author"]);
+    expect(result.paper.journalRef).toBe("Fallback Journal");
+    const lookupResponse = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+    expect(lookupResponse.status).toBe(200);
+    expect((await lookupResponse.json()).provider).toBe("semantic-scholar");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

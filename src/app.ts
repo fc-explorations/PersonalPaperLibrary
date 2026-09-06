@@ -11,6 +11,8 @@ import { PaperRepository } from "./repositories/papers.js";
 import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
+import { lookupOpenAlex } from "./services/openalex.js";
+import { lookupSemanticScholar } from "./services/semantic-scholar.js";
 import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
 import { createZipStream } from "./services/zip.js";
@@ -71,6 +73,21 @@ function folderTagFromInput(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const clean = value.replace(/[\r\n,]+/g, " ").replace(/\s+/g, " ").trim();
   return clean ? clean.slice(0, 100) : undefined;
+}
+
+function uploadedFile(value: unknown): File | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate !== "string" && Boolean(candidate) && "arrayBuffer" in (candidate as object) ? candidate as File : undefined;
+}
+
+function uploadErrorMessage(error: unknown): string {
+  switch (errorMessage(error)) {
+    case "PDF_REQUIRED": return "Choose a PDF file to upload.";
+    case "PDF_EXTENSION_REQUIRED": return "The selected file must have a .pdf extension.";
+    case "PDF_TOO_LARGE": return "The PDF is larger than the configured upload limit.";
+    case "NOT_A_PDF": return "The selected file does not appear to be a valid PDF.";
+    default: return "The PDF could not be uploaded. Please try again.";
+  }
 }
 
 function doiFromInput(input: string): string | undefined {
@@ -181,14 +198,33 @@ export function createApp(dependencies: AppDependencies = {}) {
       try {
         metadata = await lookupCrossref(doi ? { doi } : { title: input }, fetcher);
       } catch {
-        metadata = {
-          title: doi || /^https?:\/\//i.test(input) ? "Untitled paper" : input,
-          authors: [],
-          categories: [],
-          metadataSource: "manual",
-          sourceUrl: /^https?:\/\//i.test(input) ? input : undefined,
-        };
-        warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+        if (!doi) {
+          try {
+            metadata = await lookupOpenAlex(input, fetcher);
+          } catch {
+            try {
+              metadata = await lookupSemanticScholar(input, fetcher);
+            } catch {
+              metadata = {
+                title: /^https?:\/\//i.test(input) ? "Untitled paper" : input,
+                authors: [],
+                categories: [],
+                metadataSource: "manual",
+                sourceUrl: /^https?:\/\//i.test(input) ? input : undefined,
+              };
+              warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+            }
+          }
+        } else {
+          metadata = {
+            title: "Untitled paper",
+            authors: [],
+            categories: [],
+            metadataSource: "manual",
+            sourceUrl: /^https?:\/\//i.test(input) ? input : undefined,
+          };
+          warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+        }
       }
       if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
       return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings });
@@ -210,7 +246,16 @@ export function createApp(dependencies: AppDependencies = {}) {
       }
       const arxivDoi = body.doi ? normalizeArxivDoi(body.doi) : null;
       if (arxivDoi) return c.json({ paper: await fetchArxivMetadata(arxivDoi, fetcher), provider: "arxiv" });
-      return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher), provider: "crossref" });
+      try {
+        return c.json({ paper: await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher), provider: "crossref" });
+      } catch (error) {
+        if (body.doi || !body.title?.trim()) throw error;
+        try {
+          return c.json({ paper: await lookupOpenAlex(body.title || "", fetcher), provider: "openalex" });
+        } catch {
+          return c.json({ paper: await lookupSemanticScholar(body.title || "", fetcher), provider: "semantic-scholar" });
+        }
+      }
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
     }
@@ -218,14 +263,15 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/uploads", async (c) => {
     try {
-      const body = await c.req.parseBody();
-      const file = body.file;
-      if (!file || typeof file === "string" || !("arrayBuffer" in file)) return jsonError(c, 400, "PDF_REQUIRED", "Choose a PDF file to upload.");
+      const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
+      const file = uploadedFile(body.file);
+      if (!file) return jsonError(c, 400, "PDF_REQUIRED", "Choose a PDF file to upload.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       validatePdf(bytes, file.name, maxPdfBytes);
-      return c.json({ pdf: { status: "staged", ...(await storage.stage(bytes)) } });
+      const staged = await storage.stage(bytes);
+      return c.json({ pdf: { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 } });
     } catch (error) {
-      return jsonError(c, 400, errorMessage(error), "The PDF could not be uploaded.");
+      return jsonError(c, 400, errorMessage(error), uploadErrorMessage(error));
     }
   });
 
@@ -237,8 +283,10 @@ export function createApp(dependencies: AppDependencies = {}) {
       const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
       const folderTag = folderTagFromInput(body.folderTag);
       const rawFiles = body.files;
-      const files = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((file): file is File => typeof file !== "string" && Boolean(file) && "arrayBuffer" in file);
-      if (!files.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
+      const candidates = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((file): file is File => typeof file !== "string" && Boolean(file) && "arrayBuffer" in file);
+      const files = candidates.filter((file) => /\.pdf$/i.test(file.name || ""));
+      if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
+      if (!files.length) return c.json({ imported, skipped, failed, folderTag });
       if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
       for (const file of files) {
         try {

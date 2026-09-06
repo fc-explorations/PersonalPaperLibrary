@@ -167,11 +167,20 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const files = form.querySelector("input[type=file]").files;
-  setStatus(form, `Importing ${files.length} PDF${files.length === 1 ? "" : "s"}…`);
+  const files = [...form.querySelector("input[type=file]").files];
+  const pdfFiles = files.filter((file) => /\.pdf$/i.test(file.name));
+  if (!pdfFiles.length) {
+    setStatus(form, "No PDF files found in the selected folder.");
+    const results = form.querySelector("[data-bulk-results]");
+    if (results) results.textContent = "";
+    return;
+  }
+  setStatus(form, `Importing ${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"}…`);
   try {
     const formData = new FormData(form);
-    const relativePath = files[0]?.webkitRelativePath || "";
+    formData.delete("files");
+    pdfFiles.forEach((file) => formData.append("files", file, file.name));
+    const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
     if (folderTag) formData.set("folderTag", folderTag);
     const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
