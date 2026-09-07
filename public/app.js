@@ -467,7 +467,8 @@ const generateSummary = async (button) => {
     try {
       const body = await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/summary/progress`);
       const progress = body.progress;
-      if (progress.phase === "digesting" && progress.total) summaryStatus.textContent = `Digesting chunk ${progress.current || 0} of ${progress.total}…`;
+      const appendixNote = progress.appendixExcluded ? " (appendix excluded)" : "";
+      if (progress.phase === "digesting" && progress.total) summaryStatus.textContent = `Digesting chunk ${progress.current || 0} of ${progress.total}…${appendixNote}`;
       else if (progress.phase === "synthesizing") summaryStatus.textContent = "Synthesizing summary…";
     } catch {
       // The generation request remains the source of truth if progress polling fails.

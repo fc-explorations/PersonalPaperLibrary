@@ -4,11 +4,28 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-export const SUMMARY_PROMPT_VERSION = "summary-v1";
+export const SUMMARY_PROMPT_VERSION = "summary-v2";
 export const QUESTION_PROMPT_VERSION = "question-v1";
 export const SUMMARY_HEADINGS = ["Problem", "Core Idea", "Method", "Experimental Setup", "Main Findings", "Limitations", "Why It Matters"] as const;
 
 export type PdfTextExtractor = (path: string) => Promise<string>;
+
+const APPENDIX_HEADING = /^(?:appendix|appendices|supplementary\s+(?:material|appendix)|supplemental\s+(?:material|appendix)|supporting\s+(?:information|material))(?:\s+[A-Z0-9]+)?(?:\s*[:.\-]\s*.*)?$/i;
+
+export function excludeAppendixMaterial(text: string): { text: string; excluded: boolean } {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const minimumOffset = Math.max(2_000, Math.floor(text.length * 0.15));
+  let offset = 0;
+  for (const line of lines) {
+    const heading = line.replace(/\f/g, " ").trim();
+    if (offset >= minimumOffset && heading.length <= 180 && APPENDIX_HEADING.test(heading)) {
+      const mainText = text.slice(0, offset).trim();
+      return mainText ? { text: mainText, excluded: true } : { text, excluded: false };
+    }
+    offset += line.length + 1;
+  }
+  return { text, excluded: false };
+}
 
 export async function extractPdfText(path: string): Promise<string> {
   try {

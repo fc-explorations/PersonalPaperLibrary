@@ -23,7 +23,7 @@ import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
-import { extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
+import { excludeAppendixMaterial, extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
@@ -277,7 +277,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
   const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
-  const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number }>();
+  const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number; appendixExcluded?: boolean }>();
 
   function selectedLlm(settings: AiSettings, summaryModel?: string): { provider: LlmProvider; model: string; client: LlmClient } {
     if (settings.provider === "ollama") {
@@ -299,13 +299,14 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   async function completeSummary(paperId: string): Promise<import("./repositories/analysis.js").SummaryRecord> {
     const source = await paperText(paperId);
+    const summarySource = excludeAppendixMaterial(source.text);
     const selected = selectedLlm(analysis.getSettings(), SUMMARY_OPENAI_MODEL);
     const startedAt = Date.now();
     const messages = (content: string) => [{ role: "system" as const, content: "You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details." }, { role: "user" as const, content }];
     try {
-      const chunks = splitTextIntoChunks(source.text);
+      const chunks = splitTextIntoChunks(summarySource.text);
       if (!chunks.length) throw new Error("PDF_TEXT_EMPTY");
-      summaryProgress.set(paperId, { phase: "digesting", current: 0, total: chunks.length });
+      summaryProgress.set(paperId, { phase: "digesting", current: 0, total: chunks.length, appendixExcluded: summarySource.excluded });
       let completedChunks = 0;
       const digests = await mapWithConcurrency(chunks, SUMMARY_CHUNK_CONCURRENCY, async (chunk, index) => {
         const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Create a compact factual digest of chunk ${index + 1} of ${chunks.length}. Keep claims, methods, results, limitations, and section context. Do not omit information because it is inconvenient.\n\n${chunk}`) });
@@ -313,11 +314,11 @@ export function createApp(dependencies: AppDependencies = {}) {
         summaryProgress.set(paperId, { phase: "digesting", current: completedChunks, total: chunks.length });
         return digest;
       });
-      summaryProgress.set(paperId, { phase: "synthesizing" });
+      summaryProgress.set(paperId, { phase: "synthesizing", appendixExcluded: summarySource.excluded });
       let current = digests;
       let reductionRounds = 0;
       while (current.join("\n\n").length > 20_000) {
-        if (reductionRounds++ >= 8) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
+        if (reductionRounds++ >= 12) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
         const batches: string[][] = [];
         let batch: string[] = [];
         for (const digest of current) {
@@ -325,7 +326,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           batch.push(digest);
         }
         if (batch.length) batches.push(batch);
-        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Synthesize these paper digests into one complete, factual digest. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
+        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Compress these paper digests into one complete, factual digest of no more than 12,000 characters. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
       }
       const content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
       let finalContent = content;
