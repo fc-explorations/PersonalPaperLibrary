@@ -112,6 +112,8 @@ select { width: auto; min-width: 150px; }
 .paper-card h2 a:hover { color: var(--accent); }
 .paper-card p { margin: 0; }
 .paper-card .muted { color: var(--text); font-style: normal; line-height: 1.25; }
+.paper-card .muted a { color: var(--muted); }
+.paper-card .muted a:hover { color: var(--text); }
 .paper-meta { font-size: .88rem; line-height: 1.25; margin-top: 4px !important; }
 .paper-tags { display: flex; flex: 0 0 30%; max-width: 30%; flex-wrap: wrap; align-self: center; align-items: center; justify-content: flex-end; align-content: center; gap: 4px; text-align: right; }
 .paper-tags .tag { margin: 0; }
