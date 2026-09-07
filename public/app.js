@@ -712,12 +712,12 @@ async function generateOneQuestion(button) {
       status.textContent = "Saved.";
       status.classList.remove("status-error");
     }
-    return true;
+    return body.answer;
   } catch (error) {
     button.disabled = false;
     item?.querySelector("p.question-empty")?.remove();
     if (status) { status.textContent = clientErrorMessage(error); status.classList.add("status-error"); }
-    return false;
+    return null;
   }
 }
 document.querySelectorAll("[data-generate-question]").forEach((button) => button.addEventListener("click", () => generateOneQuestion(button)));
@@ -766,9 +766,23 @@ document.querySelector("[data-generate-all-questions]")?.addEventListener("click
   }
   let completed = 0;
   let failed = 0;
+  const durations = [];
+  const formatRemainingTime = (milliseconds) => {
+    const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m${remainingSeconds ? ` ${remainingSeconds}s` : ""}`;
+  };
   for (const questionButton of pendingButtons) {
-    if (status) status.textContent = `Generating answer ${completed + failed + 1} of ${pendingButtons.length}…`;
+    const finished = completed + failed;
+    const remaining = pendingButtons.length - finished;
+    const averageDuration = durations.length ? durations.reduce((total, duration) => total + duration, 0) / durations.length : 0;
+    const estimate = averageDuration ? ` ETA ~${formatRemainingTime(averageDuration * remaining)} remaining` : "";
+    if (status) status.textContent = `Generating answer ${finished + 1} of ${pendingButtons.length}…${estimate}`;
+    const startedAt = performance.now();
     if (await generateOneQuestion(questionButton)) completed += 1; else failed += 1;
+    durations.push(performance.now() - startedAt);
   }
   button.disabled = false;
   if (status) status.textContent = `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`;
