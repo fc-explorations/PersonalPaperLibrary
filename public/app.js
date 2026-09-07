@@ -522,6 +522,32 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   }
 }));
 
+document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.addEventListener("click", async () => {
+  const form = button.closest("[data-paper-form]");
+  if (!form) return;
+  const stagingToken = value(form, "stagingToken").trim();
+  const paperId = form.dataset.paperId || "";
+  if (!stagingToken && !paperId) {
+    setStatus(form, "Upload or save a PDF before extracting its abstract.", true);
+    return;
+  }
+  const label = button.querySelector("span:last-child");
+  const previousLabel = label?.textContent || "Extract from PDF";
+  button.disabled = true;
+  if (label) label.textContent = "Extracting…";
+  setStatus(form, "Extracting the abstract from the PDF…");
+  try {
+    const body = await jsonRequest("/api/abstract/extract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(stagingToken ? { stagingToken } : { paperId }) });
+    setValue(form, "abstract", body.abstract);
+    setStatus(form, "Abstract extracted from the PDF. Review it before saving.");
+  } catch (error) {
+    setStatus(form, clientErrorMessage(error), true);
+  } finally {
+    button.disabled = false;
+    if (label) label.textContent = previousLabel;
+  }
+}));
+
 document.querySelector("[data-replace-upload]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;

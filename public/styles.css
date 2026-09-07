@@ -177,6 +177,8 @@ select { width: auto; min-width: 150px; }
 .form-grid label { display: grid; gap: 5px; color: #5b574f; font-size: .9rem; font-weight: 700; }
 .field-with-action { display: flex; align-items: center; gap: 9px; }
 .field-with-action input { min-width: 0; flex: 1; }
+.abstract-field { align-items: flex-start; }
+.abstract-field textarea { min-width: 0; flex: 1; }
 .field-with-action .button { flex: 0 0 auto; }
 .field-with-action .button { gap: 6px; }
 .tag-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; }

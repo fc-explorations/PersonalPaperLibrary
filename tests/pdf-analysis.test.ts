@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { excludeAppendixMaterial } from "../src/services/pdf-analysis.js";
+import { excludeAppendixMaterial, extractAbstractFromPdfText } from "../src/services/pdf-analysis.js";
 
 describe("PDF analysis text preparation", () => {
+  it("extracts an abstract from the beginning of PDF text on request", async () => {
+    let prompt = "";
+    const abstract = await extractAbstractFromPdfText("Title\nAuthors\nAbstract\nA useful abstract.", {
+      complete: async ({ messages }) => {
+        prompt = messages.at(-1)?.content || "";
+        return "A useful abstract.";
+      },
+    }, "test-model");
+
+    expect(abstract).toBe("A useful abstract.");
+    expect(prompt).toContain("Return only the abstract as plain text");
+  });
+
   it("excludes a trailing appendix while keeping the main paper", () => {
     const text = [
       "Main paper content ".repeat(180),

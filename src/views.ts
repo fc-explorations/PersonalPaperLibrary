@@ -428,6 +428,10 @@ function sourceUrlField(value: unknown): string {
   return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>${goIcon()}<span>Go</span></a></div></label>`;
 }
 
+function abstractField(value: unknown): string {
+  return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small" type="button" data-extract-abstract>${analysisIcon()}<span>Extract from PDF</span></button></div></label>`;
+}
+
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
   const webResourceUrl = !data.r2Key ? paperWebResource(data) : undefined;
   const webResourceButton = `<a class="button button-secondary" data-web-resource data-web-resource-for="${escapeHtml(formId)}"${webResourceUrl ? ` href="${escapeHtml(webResourceUrl)}"` : ""} target="_blank" rel="noreferrer"${webResourceUrl ? "" : " hidden"}>${openIcon()}<span>Open web resource</span></a>`;
@@ -447,7 +451,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const fields = `${titleField}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
-    ${field("Abstract", "abstract", data.abstract, { rows: 6 })}
+    ${abstractField(data.abstract)}
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
     <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("Accepted venue", "acceptedVenue", data.acceptedVenue)}</div>
     <div class="form-row">${field("DOI", "doi", data.doi)}${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}</div>

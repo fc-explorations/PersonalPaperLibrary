@@ -56,7 +56,9 @@ describe("HTTP application", () => {
     expect(paperPage).toContain("data-copy-citation");
     expect(paperPage).not.toContain('aria-label="Open PDF"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
-    expect(await editPage.text()).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
+    const editHtml = await editPage.text();
+    expect(editHtml).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
+    expect(editHtml).toContain("data-extract-abstract");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
@@ -107,6 +109,24 @@ describe("HTTP application", () => {
     expect(result.pdf.status).toBe("staged");
     expect(result.pdf.stagingToken).toMatch(/[a-f0-9-]{36}/i);
     expect(result.pdf.sizeBytes).toBe(pdf.byteLength);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("extracts an abstract from a staged PDF only when requested", async () => {
+    let calls = 0;
+    const context = testApp(undefined, undefined, {
+      llmClient: { complete: async () => { calls += 1; return "Recovered abstract from the PDF."; } },
+      pdfTextExtractor: async () => "Paper title\nAbstract\nRecovered abstract source text.",
+    });
+    const form = new FormData();
+    form.append("file", new File([pdf], "abstract-paper.pdf", { type: "application/pdf" }));
+    const upload = await (await context.app.request("/api/uploads", { method: "POST", body: form })).json();
+
+    const response = await context.app.request("/api/abstract/extract", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stagingToken: upload.pdf.stagingToken }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).abstract).toBe("Recovered abstract from the PDF.");
+    expect(calls).toBe(1);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

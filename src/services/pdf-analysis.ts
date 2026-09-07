@@ -2,10 +2,12 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import type { LlmClient } from "./llm.js";
 
 const execFileAsync = promisify(execFile);
 export const SUMMARY_PROMPT_VERSION = "summary-v2";
 export const QUESTION_PROMPT_VERSION = "question-v1";
+export const ABSTRACT_PROMPT_VERSION = "abstract-v1";
 export const SUMMARY_HEADINGS = ["Problem", "Core Idea", "Method", "Experimental Setup", "Main Findings", "Limitations", "Why It Matters"] as const;
 
 export type PdfTextExtractor = (path: string) => Promise<string>;
@@ -37,6 +39,29 @@ export async function extractPdfText(path: string): Promise<string> {
     if (error instanceof Error && error.message === "PDF_TEXT_EMPTY") throw error;
     throw new Error("PDF_TEXT_EXTRACTION_FAILED");
   }
+}
+
+function cleanExtractedAbstract(value: string): string | undefined {
+  const clean = value.trim()
+    .replace(/^```(?:text|markdown)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  if (!clean || /^(?:not[_ -]?found|none|no abstract)$/i.test(clean)) return undefined;
+  return clean.replace(/^abstract\s*:\s*/i, "").trim() || undefined;
+}
+
+export async function extractAbstractFromPdfText(text: string, client: LlmClient, model: string): Promise<string | undefined> {
+  const source = text.replace(/\r\n/g, "\n").trim();
+  if (!source) return undefined;
+  const response = await client.complete({
+    model,
+    temperature: 0,
+    messages: [
+      { role: "system", content: "You extract paper abstracts exactly from PDF text. Do not summarize, rewrite, or invent text." },
+      { role: "user", content: `Extract the paper's abstract from the supplied PDF text. Return only the abstract as plain text, preserving paragraph breaks. Do not include the heading, title, authors, keywords, or any commentary. If the paper does not contain an abstract, return exactly NOT_FOUND. Use only the supplied text.\n\nPDF text (the beginning of the paper):\n${source.slice(0, 30_000)}` },
+    ],
+  });
+  return cleanExtractedAbstract(response);
 }
 
 export async function sha256File(path: string): Promise<string> {

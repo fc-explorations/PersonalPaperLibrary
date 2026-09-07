@@ -23,7 +23,7 @@ import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
-import { excludeAppendixMaterial, extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
+import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
@@ -659,6 +659,38 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ pdf: { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 } });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), uploadErrorMessage(error));
+    }
+  });
+
+  app.post("/api/abstract/extract", async (c) => {
+    try {
+      const body = await c.req.json<{ paperId?: string; stagingToken?: string }>();
+      let pdfPath: string;
+      if (body.stagingToken?.trim()) {
+        pdfPath = storage.getStagedPath(body.stagingToken.trim());
+      } else if (body.paperId?.trim()) {
+        if (!repo.findById(body.paperId.trim())) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+        pdfPath = storage.getPath(body.paperId.trim());
+      } else {
+        return jsonError(c, 409, "PDF_REQUIRED", "Upload or save a PDF before extracting its abstract.");
+      }
+      if (!existsSync(pdfPath)) return jsonError(c, 409, "PDF_NOT_FOUND", "This paper does not have an available PDF.");
+      const text = await pdfTextExtractor(pdfPath);
+      const selected = selectedLlm(analysis.getSettings());
+      const abstract = await extractAbstractFromPdfText(text, selected.client, selected.model);
+      if (!abstract) return jsonError(c, 422, "ABSTRACT_NOT_FOUND", "No abstract could be found in the PDF.");
+      return c.json({ abstract, provider: selected.provider, model: selected.model, promptVersion: ABSTRACT_PROMPT_VERSION });
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = message === "INVALID_STAGING_TOKEN" ? 400 : message === "OPENAI_KEY_NOT_CONFIGURED" || message === "OLLAMA_MODEL_REQUIRED" ? 409 : message === "PDF_TEXT_EXTRACTION_FAILED" || message === "PDF_TEXT_EMPTY" ? 422 : 502;
+      const detail = message === "OPENAI_KEY_NOT_CONFIGURED"
+        ? "An OpenAI API key is not configured. Check Settings and retry."
+        : message === "OLLAMA_MODEL_REQUIRED"
+          ? "Select an Ollama model in Settings and retry."
+          : message === "PDF_TEXT_EXTRACTION_FAILED" || message === "PDF_TEXT_EMPTY"
+            ? "The PDF text could not be extracted. Check that the PDF contains readable text."
+            : "The abstract could not be extracted from the PDF. Please retry.";
+      return jsonError(c, status, message, detail);
     }
   });
 
