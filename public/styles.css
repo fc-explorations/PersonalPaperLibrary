@@ -165,8 +165,10 @@ select { width: auto; min-width: 150px; }
 .ollama-model-picker select { min-width: 0; flex: 1; }
 .ollama-model-picker .icon-button { width: var(--control-height); min-width: var(--control-height); }
 .preview-panel { margin-bottom: 60px; }
-.preview-header { display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid var(--border); margin-bottom: 20px; padding-bottom: 13px; }
+.preview-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 20px; }
 .preview-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.preview-actions .form-actions { position: relative; width: auto; margin: 0; }
+.preview-actions .form-actions .form-status { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: min(70vw, 520px); text-align: right; }
 .pdf-status { color: var(--accent); font-size: .9rem; font-weight: 700; }
 .form-grid { display: grid; gap: 14px; }
 .form-grid label { display: grid; gap: 5px; color: #5b574f; font-size: .9rem; font-weight: 700; }
