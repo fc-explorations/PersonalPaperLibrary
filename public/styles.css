@@ -142,6 +142,15 @@ select { width: auto; min-width: 150px; }
 .theme-option-custom:has(input[type="radio"]:checked) .theme-picker { outline: 2px solid var(--accent); outline-offset: 3px; }
 .theme-option input:checked + .theme-swatch { outline: 2px solid var(--accent); outline-offset: 3px; }
 .theme-option input:focus-visible + .theme-swatch { outline: 2px solid var(--text); outline-offset: 3px; }
+.derived-color-preview { display: grid; gap: 5px; margin-top: 18px; border: 1px solid var(--section-border); border-radius: 8px; background: var(--section-surface); padding: 14px 16px; }
+.derived-color-preview-title { margin: 0; color: var(--section-color); font-weight: 700; }
+.derived-color-preview > .muted { margin: 0 0 6px; font-size: .88rem; }
+.derived-color-options { display: flex; flex-wrap: wrap; gap: 14px 24px; }
+.derived-color-option { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; min-width: 190px; align-items: center; }
+.derived-color-swatch { display: block; width: 36px; height: 36px; border: 1px solid var(--section-border); border-radius: 6px; background: var(--section-color); }
+.derived-color-option > span:last-child { display: grid; gap: 2px; }
+.derived-color-option strong { color: var(--section-color); font-size: .84rem; }
+.derived-color-option code { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .74rem; }
 .width-options { display: flex; flex-wrap: wrap; gap: 14px; }
 .width-option { position: relative; cursor: pointer; }
 .width-option input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; }

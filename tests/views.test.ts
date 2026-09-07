@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdown } from "../src/views.js";
+import { renderMarkdown, renderSettingsPage } from "../src/views.js";
+
+describe("theme settings rendering", () => {
+  it("shows the derived background colors preview", () => {
+    const html = renderSettingsPage();
+
+    expect(html).toContain("Derived section colors");
+    expect(html).toContain('data-derived-color-swatch="sectionColor"');
+    expect(html).toContain('data-derived-color-swatch="sectionSurface"');
+    expect(html).toContain('data-derived-color-swatch="sectionBorder"');
+  });
+});
 
 describe("analysis Markdown rendering", () => {
   it("preserves LaTeX math from Markdown emphasis parsing", () => {

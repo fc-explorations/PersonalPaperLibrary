@@ -70,6 +70,18 @@ function applyTheme(theme) {
   document.documentElement.style.setProperty("--section-surface", derivedColors.sectionSurface);
   document.documentElement.style.setProperty("--section-border", derivedColors.sectionBorder);
   document.documentElement.style.setProperty("--border", derivedColors.sectionBorder);
+  document.querySelectorAll("[data-derived-color-swatch]").forEach((swatch) => {
+    const color = derivedColors[swatch.dataset.derivedColorSwatch];
+    if (!color) return;
+    const isBorderSwatch = swatch.classList.contains("derived-color-swatch-border");
+    swatch.style.backgroundColor = isBorderSwatch ? selectedBackground : color;
+    swatch.style.borderColor = isBorderSwatch ? color : "var(--section-border)";
+    swatch.style.borderWidth = isBorderSwatch ? "3px" : "1px";
+  });
+  document.querySelectorAll("[data-derived-color-value]").forEach((value) => {
+    const color = derivedColors[value.dataset.derivedColorValue];
+    if (color) value.textContent = color;
+  });
   document.querySelectorAll("[data-theme-setting]").forEach((input) => {
     const setting = input.dataset.themeSetting;
     const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : setting === "contentWidth" ? contentWidth : pageSize;
