@@ -59,6 +59,8 @@ describe("HTTP application", () => {
     const editHtml = await editPage.text();
     expect(editHtml).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
     expect(editHtml).toContain("data-extract-abstract");
+    expect(editHtml).toContain(">From PDF</span>");
+    expect(editHtml).toContain(">Suggest</span>");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
