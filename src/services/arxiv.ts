@@ -35,8 +35,9 @@ function fields(xml: string, name: string): string[] {
   return [...xml.matchAll(pattern)].map((match) => decodeXml(match[1])).filter(Boolean);
 }
 
-function acceptedVenue(comment?: string): string | undefined {
-  const match = comment?.match(/\baccepted\s+(?:(?:for|to)\s+publication\s+)?(?:at|to|for|in)\s+(.+?)(?:[.;]|$)/i);
+export function parseAcceptedVenue(text?: string): string | undefined {
+  const match = text?.match(/\baccepted\s+(?:(?:for|to)\s+publication\s+)?(?:at|to|for|in)\s+(.+?)(?:[.;]|$)/i)
+    || text?.match(/\bpublished\s+as\s+(?:an?\s+)?conference\s+paper\s+at\s+(.+?)(?:[.;]|$)/i);
   return match?.[1]?.trim() || undefined;
 }
 
@@ -85,6 +86,7 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
   const authors = [...entry.matchAll(/<author\b[^>]*>([\s\S]*?)<\/author>/gi)]
     .map((match) => field(match[1], "name"))
     .filter((name): name is string => Boolean(name));
+  const journalRef = field(entry, "journal_ref");
   const metadata: PaperMetadata = {
     arxivId: normalized.id,
     arxivBaseId: normalized.baseId,
@@ -96,8 +98,8 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
     year: publishedDate ? Number(publishedDate.slice(0, 4)) : undefined,
     primaryCategory: field(entry, "primary_category") || categoryMatches[0],
     categories: [...new Set(categoryMatches)],
-    journalRef: field(entry, "journal_ref"),
-    acceptedVenue: acceptedVenue(field(entry, "comment")),
+    journalRef,
+    acceptedVenue: parseAcceptedVenue(field(entry, "comment")) || parseAcceptedVenue(journalRef),
     doi: field(entry, "doi"),
     sourceUrl: normalized.abstractUrl,
     pdfUrl: normalized.pdfUrl,

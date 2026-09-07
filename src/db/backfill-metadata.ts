@@ -2,7 +2,7 @@ import { openDatabase } from "./database.js";
 import { PaperRepository } from "../repositories/papers.js";
 import { FileStorage } from "../services/storage.js";
 import { extractPdfMetadata } from "../services/pdf-metadata.js";
-import { normalizeArxivInput, fetchArxivMetadata } from "../services/arxiv.js";
+import { normalizeArxivInput, fetchArxivMetadata, parseAcceptedVenue } from "../services/arxiv.js";
 import { lookupCrossref } from "../services/crossref.js";
 
 const db = openDatabase();
@@ -51,7 +51,7 @@ for (const paper of repo.list({ sort: "newest" })) {
     primaryCategory: arxivMetadata ? arxivMetadata.primaryCategory : paper.primaryCategory,
     categories: arxivMetadata ? arxivMetadata.categories : citationMetadata?.categories.length ? citationMetadata.categories : paper.categories,
     journalRef: arxivMetadata ? arxivMetadata.journalRef : citationMetadata?.journalRef || extracted.journalRef || paper.journalRef,
-    acceptedVenue: arxivMetadata?.acceptedVenue || paper.acceptedVenue,
+    acceptedVenue: arxivMetadata?.acceptedVenue || parseAcceptedVenue(citationMetadata?.journalRef) || parseAcceptedVenue(extracted.journalRef) || parseAcceptedVenue(paper.journalRef) || paper.acceptedVenue,
     doi: arxivMetadata ? arxivMetadata.doi : citationMetadata?.doi || paper.doi,
     arxivId: arxivMetadata ? arxivMetadata.arxivId : extracted.arxivId || paper.arxivId,
     arxivUrl: arxivMetadata ? arxivMetadata.arxivUrl : paper.arxivUrl,
@@ -60,7 +60,7 @@ for (const paper of repo.list({ sort: "newest" })) {
     metadataSource: arxivMetadata ? "arxiv" : "mixed",
   });
   updated++;
-  console.log(`${refreshed.title} — ${refreshed.authors.join(", ") || "authors not found"} — ${refreshed.year || "year not found"} — ${refreshed.journalRef || "venue not found"}`);
+  console.log(`${refreshed.title} — ${refreshed.authors.join(", ") || "authors not found"} — ${refreshed.year || "year not found"} — ${refreshed.acceptedVenue || refreshed.journalRef || "venue not found"}`);
 }
 
 db.close();

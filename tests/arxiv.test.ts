@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchArxivMetadata, normalizeArxivDoi, normalizeArxivInput, parseArxivMetadata } from "../src/services/arxiv.js";
+import { fetchArxivMetadata, normalizeArxivDoi, normalizeArxivInput, parseAcceptedVenue, parseArxivMetadata } from "../src/services/arxiv.js";
 
 const atom = `<?xml version="1.0"?><feed><entry>
   <title>  A &amp; Useful Paper  </title>
@@ -54,5 +54,14 @@ describe("arXiv metadata", () => {
     const result = await fetchArxivMetadata(normalizeArxivInput("2401.12345")!, fetcher);
     expect(result.title).toBe("A & Useful Paper");
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("id_list=2401.12345"), expect.anything());
+  });
+
+  it("recognizes published conference venues from the journal reference", () => {
+    const xml = atom.replace("<arxiv:comment>10 pages. Accepted at ICLR 2017.</arxiv:comment>", "<arxiv:comment>Published as a conference paper at ICLR 2023</arxiv:comment>").replace("<arxiv:journal_ref>Journal 1</arxiv:journal_ref>", "<arxiv:journal_ref>Published as a conference paper at ICLR 2023</arxiv:journal_ref>");
+    expect(parseArxivMetadata(xml, normalizeArxivInput("2401.12345")!).acceptedVenue).toBe("ICLR 2023");
+  });
+
+  it("recognizes accepted venue wording", () => {
+    expect(parseAcceptedVenue("Accepted for publication at NeurIPS 2025.")).toBe("NeurIPS 2025");
   });
 });
