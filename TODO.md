@@ -1,6 +1,6 @@
 # TODO: Free Cloudflare version
 
-Goal: deploy a safe, single-user or small-private-group version of PersonalPaperLibrary on Cloudflare’s free tiers, while keeping the local Node.js version working.
+Goal: deploy a safe, single-user personal version of PersonalPaperLibrary on Cloudflare’s free tiers, while keeping the local Node.js version working. The hosted deployment is for one owner only: me. Multi-user accounts, sharing, teams, and tenant isolation are out of scope.
 
 The current application is a local Node/Hono app using `better-sqlite3`, filesystem PDFs, `pdftotext`, and macOS Keychain. It cannot be deployed unchanged to Workers. The online version should share the domain model, validation, prompts, and views where practical, but use Cloudflare-native adapters.
 
@@ -18,10 +18,9 @@ The current application is a local Node/Hono app using `better-sqlite3`, filesys
 
 ## Authentication and privacy
 
-- [ ] Decide whether the first hosted version is single-user or supports multiple users.
-- [ ] Protect the Worker with Cloudflare Access before making it reachable from the public Internet.
-- [ ] Validate the Access JWT at the Worker boundary and derive a stable user/tenant ID from it.
-- [ ] Scope every D1 query and R2 key by user/tenant ID before multi-user access is enabled.
+- [ ] Protect the Worker with Cloudflare Access; the hosted application is private-by-default and limited to my identity.
+- [ ] Validate the Access JWT at the Worker boundary and reject missing, invalid, or unexpected identities.
+- [ ] Use one fixed personal library namespace in D1 and R2; do not introduce user accounts, sharing, or tenant columns.
 - [ ] Add explicit CSRF protection for cookie-authenticated state-changing requests, or use Access identity headers with a strict origin policy.
 - [ ] Add security headers and a production `PUBLIC_ORIGIN` configuration.
 - [ ] Add request size, upload type, and upload count limits at both Worker and application layers.
@@ -44,10 +43,8 @@ The current application is a local Node/Hono app using `better-sqlite3`, filesys
 ## AI providers
 
 - [ ] Keep provider-neutral `LlmClient` behavior and OpenAI/Ollama prompt normalization.
-- [ ] Decide how hosted OpenAI credentials are supplied:
-  - [ ] simplest private deployment: one Cloudflare Worker Secret managed with Wrangler;
-  - [ ] per-user credentials: encrypted storage with a separate Worker secret used only for encryption/decryption;
-  - [ ] never store plaintext keys in D1, R2, backups, logs, or client responses.
+- [ ] Store the owner’s hosted OpenAI credential as one Cloudflare Worker Secret managed with Wrangler; per-user credential storage is unnecessary.
+- [ ] Never store the plaintext key in D1, R2, backups, logs, or client responses.
 - [ ] Replace the local Keychain adapter with a Cloudflare secret/credential adapter.
 - [ ] Keep the Settings API secret-safe and make hosted key management explicit in the UI.
 - [ ] Keep OpenAI model selection and the faster summary model configurable.
@@ -64,7 +61,7 @@ The current application is a local Node/Hono app using `better-sqlite3`, filesys
 - [ ] Persist job state so reloads show `queued`, `running`, `complete`, `stale`, or `error`.
 - [ ] Keep chunk progress visible and resumable after transient failures.
 - [ ] Make “Generate all answers” skip complete answers and persist each answer immediately.
-- [ ] Ensure one user cannot start overlapping jobs for the same paper without an explicit regeneration action.
+- [ ] Prevent overlapping jobs for the same paper unless the owner explicitly regenerates them.
 - [ ] Add an idempotency key for upload, summary, and answer generation requests.
 
 ## Backup and restore
@@ -97,10 +94,10 @@ Validate these limits immediately before launch because Cloudflare changes plan 
 - [ ] Workers Free: daily request quota, CPU time per invocation, memory, subrequests, and request body size.
 - [ ] D1 Free: daily rows read/written and total storage.
 - [ ] R2 Free: storage and Class A/Class B operation allowances; confirm the bucket remains on Standard storage.
-- [ ] Access: current free-user and application limits for the intended audience.
+- [ ] Access: current free-user and application limits for one private owner.
 - [ ] OpenAI: budget, model limits, request limits, and billing alerts.
 - [ ] Add in-app warnings before approaching storage, request, analysis, or provider budgets.
-- [ ] Add an admin-only usage page or dashboard links for D1, R2, Workers, and AI spend.
+- [ ] Add an owner-only usage page or dashboard links for D1, R2, Workers, and AI spend.
 
 Current reference points from Cloudflare documentation include Workers Free’s 100,000 requests/day and 10ms CPU allowance, D1 Free’s 5 million rows read/day and 100,000 rows written/day, and R2 Standard’s 10 GB-month, 1 million Class A, and 10 million Class B monthly free allowance. Recheck before launch:
 
@@ -117,7 +114,7 @@ Current reference points from Cloudflare documentation include Workers Free’s 
 - [ ] Test D1 migrations from an empty database and from a representative local export.
 - [ ] Test R2 upload, replacement, missing-object, deletion, and stale-analysis paths.
 - [ ] Test PDFs at the maximum supported size and with malformed/encrypted/scanned content.
-- [ ] Test authentication isolation and missing/invalid Access identity.
+- [ ] Test missing, invalid, and unexpected Access identities.
 - [ ] Test provider failures, timeouts, retries, and partial generate-all progress.
 - [ ] Test that secrets never appear in HTML, JSON, logs, D1, R2, backups, or error messages.
 - [ ] Test mobile layout and accessibility for the hosted UI.
@@ -125,7 +122,7 @@ Current reference points from Cloudflare documentation include Workers Free’s 
 
 ## Launch checklist
 
-- [ ] Decide and document whether the hosted version is private-by-default.
+- [ ] Document that the hosted version is private-by-default and restricted to the owner.
 - [ ] Set a hard storage budget and an AI spending budget.
 - [ ] Complete a backup and restore drill.
 - [ ] Complete a PDF replacement and stale-analysis drill.
