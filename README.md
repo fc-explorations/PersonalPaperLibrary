@@ -78,6 +78,9 @@ The current runtime is local Node.js with Hono, SQLite, and filesystem PDF stora
 The repository includes a Worker entry point and Wrangler bindings for the
 `personal-paper-library` D1 database and R2 bucket. It exposes `/api/health`,
 paper listing/creation/deletion, tag creation, PDF staging, and PDF reads. The
+hosted API also persists AI settings, summaries, and custom questions in D1;
+summary/question generation remains disabled until a Worker-compatible PDF
+extractor and job runner are added. The
 hosted API requires Cloudflare Access when `ACCESS_REQUIRED=true` and verifies
 the Access JWT against the configured team domain and audience.
 
@@ -101,8 +104,10 @@ the equivalent dashboard variables):
 - `ACCESS_ALLOWED_EMAIL=<your owner email>`
 
 Create the Access application and allow only the owner identity before running
-`npm run cf:deploy`. The health endpoint remains available for deployment
-smoke checks; application API routes reject missing or invalid Access JWTs.
+`npm run cf:deploy`. The Access application protects the Worker hostname,
+including `/api/health`; smoke checks must therefore run through an Access
+session. After the edge check, application API routes also reject missing or
+invalid Access JWTs.
 
 ## Configuration
 

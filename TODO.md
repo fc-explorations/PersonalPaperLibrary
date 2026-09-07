@@ -13,7 +13,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, and a tested D1/R2 paper API slice are locally validated but not deployed; the full browser application and remaining adapters are still pending.
+- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, and a small hosted paper-library UI are deployed at `https://personal-paper-library.xfcosta.workers.dev`; the full browser application and remaining adapters are still pending.
 - Remote migration status: the cloud baseline has been applied to the remote D1 database after Wrangler authentication and verified with a read-only table query.
 
 ## Non-goals
@@ -27,7 +27,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 
 - [ ] Local `npm run verify` remains green and the local app still uses SQLite, filesystem storage, `pdftotext`, and Keychain as before.
 - [ ] A preview Worker can be deployed from a clean checkout with no committed secrets.
-- [ ] Cloudflare Access protects every hosted route except the minimum platform health/static bootstrap surface.
+- [ ] Cloudflare Access protects every hosted route except the minimum static bootstrap surface; the current Worker hostname is already protected by the owner-only Access application.
 - [ ] A representative local snapshot can be imported into D1/R2 and verified by paper count, PDF hashes, tags, summaries, and questions.
 - [ ] The hosted app can add, replace, view, search, analyze, back up, and restore papers within documented limits.
 - [ ] Worker, D1, R2, Access, and provider failures produce recoverable errors without leaking paper contents or secrets.
@@ -65,16 +65,17 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Validate the D1 baseline against an empty local D1 database and apply it to the remote database after Wrangler authentication.
 - [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
 - [x] Add an initial Worker API slice for D1 paper/tag operations and R2 PDF staging, reading, and deletion with focused tests.
+- [x] Add an initial hosted UI for search, PDF upload, metadata save, PDF viewing, and deletion.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
 - [x] Store PDFs in R2 under stable paper IDs for the hosted API slice; keep only object keys and SHA-256 hashes in D1.
-- [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, input hashes, definition hashes, and errors.
+- [x] Persist hosted AI settings, summaries, custom questions, and answer-compatible records in D1; generation remains disabled pending Worker extraction/jobs.
 - [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
 - [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
 - [ ] Add separate local, preview, and production bindings without committing secrets.
 
 ## Phase 3 — Access, authentication, and security
 
-- [ ] Protect the hosted application with Cloudflare Access and allow only the owner’s identity.
+- [x] Protect the current Worker hostname with Cloudflare Access and an owner-only policy for `xfcosta@gmail.com`.
 - [x] Add Worker-side Cloudflare Access JWT verification and an owner-email allowlist hook; configure the Access application and variables before deployment.
 - [ ] Validate the Access JWT at the Worker boundary: signature, issuer, audience, expiry, and expected identity.
 - [ ] Reject missing, invalid, expired, and unexpected identities before application routes execute.

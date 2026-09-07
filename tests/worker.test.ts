@@ -11,6 +11,7 @@ class MemoryD1 implements D1Database {
   constructor() {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0001_initial.sql", import.meta.url), "utf8"));
+    this.db.exec(readFileSync(new URL("../migrations/cloudflare/0002_analysis_jobs.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -124,6 +125,39 @@ describe("Cloudflare Worker API", () => {
     env.ACCESS_AUDIENCE = "audience";
     expect((await worker.request("/api/health", {}, env)).status).toBe(200);
     expect((await worker.request("/api/papers", {}, env)).status).toBe(401);
+    env.d1.db.close();
+  });
+
+  it("persists hosted AI settings and custom questions without enabling generation", async () => {
+    const env = bindings();
+    const create = await worker.request("/api/papers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Analysis metadata paper", metadataSource: "manual" }),
+    }, env);
+    const paper = (await create.json() as { paper: { id: string } }).paper;
+
+    const settings = await worker.request("/api/settings/llm", {}, env);
+    expect(settings.status).toBe(200);
+    expect((await settings.json() as { openaiConfigured: boolean }).openaiConfigured).toBe(false);
+
+    const updated = await worker.request("/api/settings/llm", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "openai", openaiModel: "gpt-5-mini" }),
+    }, env);
+    expect((await updated.json() as { openaiModel: string }).openaiModel).toBe("gpt-5-mini");
+
+    const question = await worker.request(`/api/papers/${paper.id}/questions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: "What is the main contribution?" }),
+    }, env);
+    expect(question.status).toBe(201);
+    expect((await question.json() as { question: { id: string }; generation: string }).generation).toBe("not_available");
+
+    const summary = await worker.request(`/api/papers/${paper.id}/summary`, {}, env);
+    expect((await summary.json() as { summary: null; generation: string }).generation).toBe("not_available");
     env.d1.db.close();
   });
 });

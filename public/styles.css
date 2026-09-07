@@ -4,6 +4,14 @@
 body { margin: 0; background: var(--page-bg); }
 a { color: var(--accent); }
 .shell { width: min(var(--content-width), calc(100% - 64px)); margin: 0 auto; }
+.cloud-library { padding-bottom: 80px; }
+.cloud-upload-panel { margin-bottom: 28px; }
+.cloud-form { display: grid; gap: 18px; }
+.cloud-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cloud-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: .9rem; font-weight: 700; }
+.cloud-form-grid input { min-width: 0; color: var(--text); font-weight: 400; }
+.cloud-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+@media (max-width: 720px) { .cloud-form-grid { grid-template-columns: 1fr; } }
 .site-header { background: transparent; }
 .site-header .shell { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .site-header .brand { font-size: clamp(2rem, 5vw, 3.3rem); line-height: 1.15; }

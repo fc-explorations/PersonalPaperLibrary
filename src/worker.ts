@@ -1,13 +1,30 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type RemoteJWKSet } from "jose";
 import { Hono } from "hono";
 import type { D1Database } from "./cloudflare/d1.js";
+import { D1AnalysisRepository } from "./repositories/d1-analysis.js";
+import { D1AnalysisJobRepository } from "./repositories/d1-analysis-jobs.js";
 import { D1PaperRepository, type D1TagFilterMode } from "./repositories/d1-papers.js";
 import { R2Storage, type R2BucketLike } from "./services/r2-storage.js";
 import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
+import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput } from "./types.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
+}
+
+interface AnalysisQueue {
+  send(message: { jobId: string }): Promise<void>;
+}
+
+interface QueueMessage {
+  body: { jobId: string };
+  ack(): void;
+  retry(): void;
+}
+
+interface QueueBatch {
+  messages: QueueMessage[];
 }
 
 export interface CloudflareBindings {
@@ -19,6 +36,8 @@ export interface CloudflareBindings {
   ACCESS_AUDIENCE?: string;
   ACCESS_ALLOWED_EMAIL?: string;
   MAX_PDF_BYTES?: string;
+  OPENAI_API_KEY?: string;
+  ANALYSIS_QUEUE?: AnalysisQueue;
 }
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -110,6 +129,34 @@ function listOptions(url: URL) {
   };
 }
 
+function analysisRepository(env: CloudflareBindings): D1AnalysisRepository {
+  // The built-in question catalog currently depends on the local YAML loader.
+  // Hosted custom questions remain available until the catalog is ported.
+  return new D1AnalysisRepository(env.DB, () => []);
+}
+
+function analysisJobs(env: CloudflareBindings): D1AnalysisJobRepository {
+  return new D1AnalysisJobRepository(env.DB);
+}
+
+function analysisSettingsInput(body: Record<string, unknown>): Partial<AiSettings> {
+  if (body.provider !== undefined && body.provider !== "openai" && body.provider !== "ollama") throw new Error("PROVIDER_INVALID");
+  const update: Partial<AiSettings> = {};
+  if (body.provider === "openai" || body.provider === "ollama") update.provider = body.provider;
+  for (const key of ["openaiModel", "openaiEmbeddingModel", "ollamaModel", "ollamaEmbeddingModel"] as const) {
+    if (body[key] !== undefined) {
+      if (typeof body[key] !== "string" || !body[key].trim()) throw new Error("MODEL_REQUIRED");
+      update[key] = body[key].trim();
+    }
+  }
+  if (body.ollamaBaseUrl !== undefined) {
+    if (typeof body.ollamaBaseUrl !== "string" || !/^https?:\/\//i.test(body.ollamaBaseUrl.trim())) throw new Error("OLLAMA_URL_INVALID");
+    update.ollamaBaseUrl = body.ollamaBaseUrl.trim().replace(/\/$/, "");
+  }
+  if (body.openaiApiKey !== undefined) throw new Error("OPENAI_SECRET_WRANGLER_ONLY");
+  return update;
+}
+
 app.use("/api/*", async (c, next) => {
   if (c.req.path === "/api/health") return next();
   const result = await verifyAccess(c.env, c.req.raw);
@@ -126,13 +173,28 @@ app.get("/", (c) => c.html(`<!doctype html>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="shell">
-      <section class="empty-state">
-        <h1>PersonalPaperLibrary</h1>
-        <p>The hosted Worker is running. The application API is available under <code>/api</code>.</p>
-        <p><a class="button" href="/api/health">Check Worker health</a></p>
+    <header class="site-header"><div class="shell"><a class="brand" href="/"><span class="wordmark">Personal</span><span class="wordmark wordmark-paper">Paper</span><span class="wordmark">Library</span></a></div></header>
+    <main class="shell cloud-library">
+      <section class="page-heading"><div><p class="eyebrow">Private hosted library</p><h1>Your papers</h1><p class="muted">Cloudflare D1 stores metadata and R2 stores the PDFs.</p></div></section>
+      <section class="panel cloud-upload-panel">
+        <div class="section-heading"><h2>Add a paper</h2><span id="upload-status" class="muted" role="status"></span></div>
+        <form id="paper-form" class="cloud-form">
+          <div class="cloud-form-grid">
+            <label>Title<input name="title" required maxlength="500" autocomplete="off"></label>
+            <label>Authors<input name="authors" placeholder="One author per line" autocomplete="off"></label>
+            <label>Tags<input name="tags" placeholder="Comma-separated tags" autocomplete="off"></label>
+            <label>PDF<input name="file" type="file" accept="application/pdf" required></label>
+          </div>
+          <div class="form-actions"><button class="button" type="submit">Upload and save</button></div>
+        </form>
+      </section>
+      <section class="cloud-library-section">
+        <div class="toolbar"><label class="search-label">Search<input id="search" type="search" placeholder="Title, author, tag, or abstract" autocomplete="off"></label><button id="refresh" class="button button-secondary" type="button">Refresh</button></div>
+        <p id="list-status" class="muted" role="status"></p>
+        <div id="paper-list" class="paper-list"></div>
       </section>
     </main>
+    <script type="module" src="/cloud.js"></script>
   </body>
 </html>`));
 
@@ -237,6 +299,114 @@ app.post("/api/tags", async (c) => {
   }
 });
 
+app.get("/api/settings/llm", async (c) => {
+  const settings = await analysisRepository(c.env).getSettings();
+  return c.json({ ...settings, openaiConfigured: Boolean(c.env.OPENAI_API_KEY), openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none", openaiKeyEditable: false });
+});
+
+app.put("/api/settings/llm", async (c) => {
+  try {
+    const update = analysisSettingsInput(await c.req.json<Record<string, unknown>>());
+    const settings = await analysisRepository(c.env).updateSettings(update);
+    return c.json({ ...settings, openaiConfigured: Boolean(c.env.OPENAI_API_KEY), openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none", openaiKeyEditable: false });
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The hosted AI settings could not be saved.");
+  }
+});
+
+app.get("/api/papers/:id/summary", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  return c.json({ summary: await analysisRepository(c.env).getSummary(paper.id), job: await analysisJobs(c.env).latestForPaper(paper.id, "summary"), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
+});
+
+app.get("/api/papers/:id/summary/progress", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  return c.json({ job: await analysisJobs(c.env).latestForPaper(paper.id, "summary"), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
+});
+
+app.post("/api/papers/:id/summary", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  if (!c.env.ANALYSIS_QUEUE) return jsonError(c, 501, "SUMMARY_GENERATION_UNAVAILABLE", "Hosted summary generation is not enabled until the analysis queue is configured.");
+  try {
+    const body = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }));
+    const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "summary", mode: body.mode === "full" ? "full" : "quick" });
+    try {
+      await c.env.ANALYSIS_QUEUE.send({ jobId: job.id });
+    } catch (error) {
+      await analysisJobs(c.env).fail(job.id, "QUEUE_SEND_FAILED", errorMessage(error));
+      throw error;
+    }
+    return c.json({ job, generation: "queued" }, 202);
+  } catch (error) {
+    return jsonError(c, 503, errorMessage(error), "The analysis job could not be queued.");
+  }
+});
+
+app.get("/api/papers/:id/questions", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  return c.json({ questions: await analysisRepository(c.env).listQuestions(paper.id), summary: await analysisRepository(c.env).getSummary(paper.id), generation: "not_available" });
+});
+
+app.post("/api/papers/:id/questions", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  try {
+    const body = await c.req.json<{ question?: string; label?: string; prompt?: string }>();
+    const label = body.question?.trim() || body.label?.trim() || "";
+    const prompt = body.prompt?.trim() || label;
+    const question = await analysisRepository(c.env).addQuestion(paper.id, label, prompt);
+    if (!c.env.ANALYSIS_QUEUE) return c.json({ question, generation: "not_available" }, 201);
+    const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "question", questionId: question.id });
+    await c.env.ANALYSIS_QUEUE.send({ jobId: job.id });
+    return c.json({ question, job, generation: "queued" }, 202);
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The hosted question could not be saved.");
+  }
+});
+
+app.post("/api/papers/:id/questions/:questionId", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  const question = (await analysisRepository(c.env).listQuestions(paper.id)).find((item) => item.id === c.req.param("questionId"));
+  if (!question) return jsonError(c, 404, "QUESTION_NOT_FOUND", "Question not found.");
+  if (!c.env.ANALYSIS_QUEUE) return jsonError(c, 501, "QUESTION_GENERATION_UNAVAILABLE", "Hosted question generation is not enabled until the analysis queue is configured.");
+  const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "question", questionId: question.id });
+  await c.env.ANALYSIS_QUEUE.send({ jobId: job.id });
+  return c.json({ job, generation: "queued" }, 202);
+});
+
+app.delete("/api/papers/:id/questions/:questionId", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  const removed = await analysisRepository(c.env).deleteQuestion(paper.id, c.req.param("questionId"));
+  return removed ? c.json({ ok: true }) : jsonError(c, 404, "CUSTOM_QUESTION_NOT_FOUND", "Only custom questions can be deleted.");
+});
+
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+const worker = {
+  fetch: app.fetch,
+  request: app.request.bind(app),
+  async queue(batch: QueueBatch, env: CloudflareBindings): Promise<void> {
+    const jobs = analysisJobs(env);
+    for (const message of batch.messages) {
+      try {
+        const claimed = await jobs.claim(message.body.jobId);
+        if (!claimed) {
+          message.ack();
+          continue;
+        }
+        await jobs.fail(claimed.id, "PDF_EXTRACTOR_UNAVAILABLE", "Analysis is queued, but a Worker-compatible PDF extractor has not been configured.");
+        message.ack();
+      } catch {
+        message.retry();
+      }
+    }
+  },
+};
+
+export default worker;

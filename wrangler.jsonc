@@ -4,7 +4,9 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-07",
   "vars": {
-    "ACCESS_REQUIRED": "true"
+    "ACCESS_REQUIRED": "true",
+    "ACCESS_TEAM_DOMAIN": "https://solitary-hill-9851.cloudflareaccess.com",
+    "ACCESS_AUDIENCE": "bb75838868b273ef73219c7d2aa79e8fc9bbbb948ad991a49459989a6e513b8c"
   },
   "assets": {
     "directory": "./public",
@@ -23,5 +25,20 @@
       "binding": "PAPER_PDFS",
       "bucket_name": "personal-paper-library"
     }
-  ]
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "ANALYSIS_QUEUE",
+        "queue": "personal-paper-library-analysis"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "personal-paper-library-analysis",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5
+      }
+    ]
+  }
 }
