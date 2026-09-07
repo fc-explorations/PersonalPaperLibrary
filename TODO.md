@@ -12,6 +12,8 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing analysis behavior: summaries, questions, embeddings, bounded concurrency, stale-analysis tracking, and provider selection.
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
+- Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
+- Current hosted status: Worker scaffold is configured and locally validated but not deployed; the hosted application routes and adapters are still pending.
 
 ## Non-goals
 
@@ -55,15 +57,15 @@ These spikes should happen before a large migration. Record the result of each d
 
 ## Phase 2 — Cloudflare runtime and data plane
 
-- [ ] Add a Worker entry point using the existing Hono routes and a separate Node entry point for local startup.
-- [ ] Serve compiled browser assets through Worker Static Assets.
-- [ ] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, R2 binding, and environment-specific configuration.
+- [x] Add a minimal Worker entry point with a health endpoint and a separate Node entry point for local startup. Port the existing Hono routes after the cloud adapters are ready.
+- [x] Serve compiled browser assets through Worker Static Assets.
+- [x] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, and R2 binding. Add environment-specific configuration later.
 - [ ] Port migrations `0001`–`0008` to D1-compatible migrations; validate from an empty database and a representative export.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
 - [ ] Store PDFs in R2 under stable paper IDs. Keep only object keys, sizes, content types, and SHA-256 hashes in D1.
 - [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, input hashes, definition hashes, and errors.
 - [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
-- [ ] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, `cf:tail`, and preview deployment.
+- [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
 - [ ] Add separate local, preview, and production bindings without committing secrets.
 
 ## Phase 3 — Access, authentication, and security
