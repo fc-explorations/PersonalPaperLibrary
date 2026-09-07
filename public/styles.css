@@ -21,7 +21,7 @@ a { color: var(--accent); }
 .library-controls .toolbar { flex: 1; margin: 0; }
 .settings-link { display: inline-flex; align-items: center; justify-content: center; padding: 5px; color: var(--muted); line-height: 1; text-decoration: none; transform: translateY(clamp(4px, .35vw, 6px)); }
 .settings-link:hover { color: var(--accent); }
-.settings-icon { width: 30px; height: 30px; }
+.settings-icon { width: 24px; height: 24px; }
 .wordmark { color: var(--text); display: inline-block; font-weight: inherit; letter-spacing: inherit; }
 .wordmark-paper { color: #fff; font-family: "Fraunces", Georgia, serif; font-weight: 600; letter-spacing: -.045em; -webkit-text-stroke: 4px var(--text); paint-order: stroke fill; }
 .add-paper-button { gap: 6px; min-width: 58px; }
