@@ -26,6 +26,7 @@ import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } fr
 import { excludeAppendixMaterial, extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
+import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
@@ -287,6 +288,20 @@ export function createApp(dependencies: AppDependencies = {}) {
     return { provider: "openai", model: summaryModel || settings.openaiModel.trim() || "gpt-5-nano", client: dependencies.llmClient || new OpenAiLlmClient({ fetcher, openaiApiKey: () => keychain.get() }) };
   }
 
+  async function parseCitationForLookup(input: string): Promise<ParsedCitationInput> {
+    try {
+      const selected = selectedLlm(analysis.getSettings());
+      return await parseCitationInput(input, selected.client, selected.model);
+    } catch {
+      return parseCitationInput(input);
+    }
+  }
+
+  function verifyCitationMatch(metadata: PaperMetadata, parsed: ParsedCitationInput): PaperMetadata {
+    if (!citationMatchesMetadata(parsed, metadata)) throw new Error("CITATION_METADATA_MISMATCH");
+    return metadata;
+  }
+
   async function paperText(paperId: string): Promise<{ text: string; sha256: string }> {
     const paper = repo.findById(paperId);
     if (!paper) throw new Error("PAPER_NOT_FOUND");
@@ -522,21 +537,24 @@ export function createApp(dependencies: AppDependencies = {}) {
         return c.json({ paper: metadata, pdf, warnings });
       }
 
+      const parsedCitation = await parseCitationForLookup(input);
+      const lookupTitle = parsedCitation.title || input;
       const doi = doiFromInput(input);
       let metadata: PaperMetadata;
       const warnings: string[] = [];
       try {
-        metadata = await lookupCrossref(doi ? { doi } : { title: input }, fetcher);
+        metadata = await lookupCrossref(doi ? { doi } : { title: lookupTitle }, fetcher);
+        metadata = verifyCitationMatch(metadata, parsedCitation);
       } catch {
         if (!doi) {
           try {
-            metadata = await lookupOpenAlex(input, fetcher);
+            metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
           } catch {
             try {
-              metadata = await lookupSemanticScholar(input, fetcher);
+              metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
             } catch {
               metadata = {
-                title: /^https?:\/\//i.test(input) ? "Untitled paper" : input,
+                title: /^https?:\/\//i.test(input) ? "Untitled paper" : lookupTitle,
                 authors: [],
                 categories: [],
                 metadataSource: "manual",
@@ -584,16 +602,20 @@ export function createApp(dependencies: AppDependencies = {}) {
           metadata = await fetchArxivMetadata(arxivDoi, fetcher);
           provider = "arxiv";
         } else {
+          const parsedCitation = await parseCitationForLookup(body.title || "");
+          const lookupTitle = parsedCitation.title || body.title || "";
           try {
-            metadata = await lookupCrossref({ title: body.title, doi: body.doi ? doiFromInput(body.doi) : undefined }, fetcher);
+            const doi = body.doi ? doiFromInput(body.doi) : undefined;
+            metadata = await lookupCrossref({ title: lookupTitle, doi }, fetcher);
+            metadata = verifyCitationMatch(metadata, parsedCitation);
             provider = "crossref";
           } catch (error) {
             if (body.doi || !body.title?.trim()) throw error;
             try {
-              metadata = await lookupOpenAlex(body.title || "", fetcher);
+              metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
               provider = "openalex";
             } catch {
-              metadata = await lookupSemanticScholar(body.title || "", fetcher);
+              metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
               provider = "semantic-scholar";
             }
           }

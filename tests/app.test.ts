@@ -49,6 +49,26 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("isolates a pasted citation before metadata lookup", async () => {
+    let titleQuery = "";
+    const citation = "Noe, F., Olsson, S., Köhler, J., and Wu, H. Boltzmann Generators: Sampling equilibrium states of many-body systems (2024)";
+    const context = testApp(async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://api.crossref.org/works?")) {
+        titleQuery = new URL(url).searchParams.get("query.title") || "";
+        return new Response(JSON.stringify({ message: { items: [{ title: ["Boltzmann Generators: Sampling equilibrium states of many-body systems"], author: [{ family: "Noe", given: "Frank" }], DOI: "10.1000/boltzmann", published: { "date-parts": [[2024]] } }] } }), { status: 200 });
+      }
+      return new Response(atom, { status: 200 });
+    }, undefined, { llmClient: { complete: async () => { throw new Error("parser unavailable"); } } });
+    const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: citation }) });
+
+    expect(response.status).toBe(200);
+    expect(titleQuery).toBe("Boltzmann Generators: Sampling equilibrium states of many-body systems");
+    expect((await response.json()).paper.title).toBe("Boltzmann Generators: Sampling equilibrium states of many-body systems");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("stages a single uploaded PDF", async () => {
     const context = testApp();
     const form = new FormData();
