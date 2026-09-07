@@ -192,6 +192,7 @@ select { width: auto; min-width: 150px; }
 .form-actions-left, .form-actions-right { display: flex; align-items: center; gap: 10px; }
 .form-actions .form-status { width: 100%; text-align: center; }
 .form-status { height: 1.4em; min-height: 1.4em; overflow: visible; color: var(--accent); font-size: .9rem; }
+.paper-form > .form-actions { margin-top: 0; margin-bottom: 22px; }
 .edit-actions-top .form-actions { position: relative; }
 .edit-actions-top .form-actions .form-status { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: min(70vw, 520px); text-align: right; }
 .status-error, .result-error { color: #9d493a; }

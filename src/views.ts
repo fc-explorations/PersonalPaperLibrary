@@ -401,9 +401,9 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
     ${tagsField}`;
   const actions = formActions(data, isEdit, formId);
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
-    <div class="form-grid">${fields}</div>
     <input type="hidden" name="stagingToken" value="">
     ${actionsOutside ? "" : actions}
+    <div class="form-grid">${fields}</div>
   </form>`;
 }
 
