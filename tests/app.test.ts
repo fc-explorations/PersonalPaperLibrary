@@ -9,7 +9,7 @@ import { FileStorage } from "../src/services/storage.js";
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
-function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "pdfTextExtractor" | "keychain"> = {}) {
+function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "embeddingClient" | "pdfTextExtractor" | "pdfExcerptTextExtractor" | "keychain"> = {}) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
@@ -19,10 +19,53 @@ function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: 
     return new Response(url.includes("/pdf/") ? pdf : atom, { status: 200, headers: { "content-type": url.includes("/pdf/") ? "application/pdf" : "application/atom+xml" } });
   };
   const storage = new FileStorage(root);
-  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher, authPassword, ...extras }), db, root };
+  return { app: createApp({ db, storage, fetcher: fetcherOverride || defaultFetcher, authPassword, ...extras }), db, root, storage };
 }
 
 describe("HTTP application", () => {
+  it("fills missing abstracts from stored PDFs during indexing", async () => {
+    const context = testApp(undefined, undefined, {
+      llmClient: { complete: async () => "Recovered abstract from the PDF." },
+      embeddingClient: { embed: async ({ texts }) => texts.map(() => [1, 0]) },
+      pdfExcerptTextExtractor: async () => "Title\nAbstract\nText from the beginning of the PDF.",
+    });
+    const staged = await context.storage.stage(pdf);
+    const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Paper missing an abstract", metadataSource: "manual", stagingToken: staged.token }) });
+    expect(saveResponse.status).toBe(201);
+    const saved = await saveResponse.json();
+
+    const indexResponse = await context.app.request("/api/library/search-index/continue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) });
+    expect(indexResponse.status).toBe(200);
+    const indexed = await indexResponse.json();
+    expect(indexed.abstracts.resolved).toBe(1);
+    expect(indexed.coverage.missingAbstractPapers).toBe(0);
+    expect(indexed.abstractFailures).toEqual([]);
+    expect((await (await context.app.request(`/api/papers/${saved.paper.id}`)).json()).paper.abstract).toBe("Recovered abstract from the PDF.");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("reports failed abstract extraction with a repairable paper entry", async () => {
+    const context = testApp(undefined, undefined, {
+      llmClient: { complete: async () => "NOT_FOUND" },
+      embeddingClient: { embed: async ({ texts }) => texts.map(() => [1, 0]) },
+      pdfExcerptTextExtractor: async () => "Title\nThe beginning of a PDF without a detectable abstract.",
+    });
+    const staged = await context.storage.stage(pdf);
+    const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Paper with an unresolved abstract", metadataSource: "manual", stagingToken: staged.token }) });
+    const saved = await saveResponse.json();
+
+    const indexResponse = await context.app.request("/api/library/search-index/continue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) });
+    const indexed = await indexResponse.json();
+    expect(indexed.abstracts.failed).toBe(1);
+    expect(indexed.abstractFailures).toEqual([expect.objectContaining({ paperId: saved.paper.id, title: "Paper with an unresolved abstract", errorMessage: "ABSTRACT_NOT_FOUND" })]);
+    const askPage = await (await context.app.request("/ask")).text();
+    expect(askPage).toContain("data-library-abstract-failures");
+    expect(askPage).toContain("data-library-abstract-failure-list");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("imports an arXiv paper through preview and save", async () => {
     const context = testApp();
     const importResponse = await context.app.request("/api/import/arxiv", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "2401.12345" }) });
@@ -48,6 +91,26 @@ describe("HTTP application", () => {
     expect(paperPage).toContain('data-question-overview-dot=');
     const libraryPage = await (await context.app.request("/")).text();
     expect(libraryPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
+    expect(libraryPage).toContain('class="button add-paper-button add-paper-square"');
+    expect(libraryPage).toContain('href="/ask"');
+    expect(libraryPage).toContain("Ask the library");
+    const askPage = await (await context.app.request("/ask")).text();
+    expect(askPage).toContain('data-library-query');
+    expect(askPage).toContain('data-library-query-submit');
+    expect(askPage).toContain('form="library-query-form"');
+    expect(askPage).toContain("<h1>Indexing</h1>");
+    expect(askPage).not.toContain("Ask a question about your library");
+    expect(askPage).not.toContain("Describe a topic, method, or comparison in your own words.");
+    expect(askPage).not.toContain("About privacy");
+    const indexProgress = await (await context.app.request("/api/library/search-index/progress")).json();
+    expect(indexProgress.coverage.totalPapers).toBe(1);
+    expect(indexProgress.coverage.pendingPapers).toBe(1);
+    const selectedLibrary = await (await context.app.request(`/?selected=${encodeURIComponent(saved.paper.id)}`)).text();
+    expect(selectedLibrary).not.toContain("selected paper");
+    expect(selectedLibrary).toContain("data-delete-selected-ids");
+    const selectedTagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: [saved.paper.id], name: "Selected", action: "add" }) });
+    expect(selectedTagResponse.status).toBe(200);
+    expect((await (await context.app.request(`/api/papers/${saved.paper.id}`)).json()).paper.tags).toContain("Selected");
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
     expect(paperPage).toContain('<summary>Paper information</summary>');
     expect(paperPage.indexOf(">Tags</h2>")).toBeLessThan(paperPage.indexOf("<summary>Paper information</summary>"));
@@ -591,7 +654,7 @@ describe("HTTP application", () => {
     expect(generatedSummary.durationMs).toBeTypeOf("number");
     expect(calls).toBe(2);
     const questions = await (await context.app.request(`/api/papers/${paperId}/questions`)).json();
-    expect(questions.questions).toHaveLength(16);
+    expect(questions.questions).toHaveLength(13);
     expect(questions.questions.map((question: { groupTitle: string }) => question.groupTitle)).toContain("Evaluate");
     const addQuestion = await context.app.request(`/api/papers/${paperId}/questions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: "What is one extra concern?", prompt: "Answer from the paper." }) });
     expect(addQuestion.status).toBe(201);

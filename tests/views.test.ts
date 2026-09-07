@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderMarkdown, renderSettingsPage } from "../src/views.js";
+import { APP_VERSION } from "../src/version.js";
 
 describe("theme settings rendering", () => {
   it("shows the derived background colors preview", () => {
@@ -9,6 +10,15 @@ describe("theme settings rendering", () => {
     expect(html).toContain('data-derived-color-swatch="sectionColor"');
     expect(html).toContain('data-derived-color-swatch="sectionSurface"');
     expect(html).toContain('data-derived-color-swatch="sectionBorder"');
+  });
+
+  it("shows credits and the current application version", () => {
+    const html = renderSettingsPage();
+
+    expect(html).toContain("Credits");
+    expect(html).toContain("Ideation:");
+    expect(html).toContain("Fabrizio Costa");
+    expect(html).toContain(`Version:</strong> ${APP_VERSION}`);
   });
 });
 

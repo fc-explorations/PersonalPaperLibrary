@@ -5,7 +5,8 @@ import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { TagRepository } from "./tags.js";
 
 type PaperRow = Record<string, unknown>;
-type PaperListOptions = { q?: string; tag?: string | string[]; untagged?: boolean; sort?: SortOrder; limit?: number; offset?: number };
+export type TagFilterMode = "and" | "or";
+type PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: TagFilterMode; untagged?: boolean; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
 
 function jsonArray(value: unknown): string[] {
   if (typeof value !== "string" || !value) return [];
@@ -172,6 +173,12 @@ export class PaperRepository {
     return this.findById(id)!;
   }
 
+  updateAbstract(id: string, abstract: string): PaperRecord {
+    const result = this.db.prepare("UPDATE papers SET abstract = ?, updated_at = ? WHERE id = ?").run(abstract.trim() || null, new Date().toISOString(), id);
+    if (!result.changes) throw new Error("PAPER_NOT_FOUND");
+    return this.findById(id)!;
+  }
+
   delete(id: string): void {
     this.deleteMany([id]);
   }
@@ -220,12 +227,18 @@ export class PaperRepository {
       params.q = `%${options.q.trim()}%`;
     }
     const tags = (Array.isArray(options.tag) ? options.tag : options.tag ? [options.tag] : []).map((tag) => tag.trim()).filter(Boolean);
+    const ids = [...new Set((options.ids || []).map((id) => id.trim()).filter(Boolean))];
+    if (ids.length) {
+      clauses.push(`p.id IN (${ids.map((_, index) => `@selectedId${index}`).join(",")})`);
+      ids.forEach((id, index) => { params[`selectedId${index}`] = id; });
+    }
     if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu WHERE ptu.paper_id = p.id)");
-    tags.forEach((tag, index) => {
+    const tagClauses = tags.map((tag, index) => {
       const parameter = `tag${index}`;
-      clauses.push(`EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`);
       params[parameter] = tag;
+      return `EXISTS (SELECT 1 FROM paper_tags ptf${index} JOIN tags tf${index} ON tf${index}.id = ptf${index}.tag_id WHERE ptf${index}.paper_id = p.id AND tf${index}.name = @${parameter} COLLATE NOCASE)`;
     });
+    if (tagClauses.length) clauses.push(options.tagMode === "or" ? `(${tagClauses.join(" OR ")})` : tagClauses.join(" AND "));
     return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
   }
 

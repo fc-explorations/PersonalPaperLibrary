@@ -1,5 +1,7 @@
 import type { PaperRecord, PaperMetadata, SortOrder } from "./types.js";
+import type { TagFilterMode } from "./repositories/papers.js";
 import type { SummaryRecord, StoredQuestion } from "./repositories/analysis.js";
+import { APP_VERSION } from "./version.js";
 
 export function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -126,14 +128,14 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=26">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=13" defer></script>
+  <script src="/app.js?v=28" defer></script>
 </body>
 </html>`;
 }
@@ -148,10 +150,6 @@ function addAction(): string {
 
 function addIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">add</span>`;
-}
-
-function libraryIcon(): string {
-  return `<span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>`;
 }
 
 function settingsIcon(): string {
@@ -308,15 +306,23 @@ function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
 
-function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all = false, untagged = false, page = 1, pageSize = 50): string {
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all: boolean | "none" = false, untagged = false, page = 1, pageSize = 50, tagMode: TagFilterMode = "or", noTags = false): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   tags.forEach((tag) => params.append("tag", tag));
   params.set("sort", sort);
-  if (all) params.set("all", "1");
+  if (all === true) params.set("all", "1");
+  else if (all === "none" || noTags) params.set("all", "0");
   if (untagged) params.set("untagged", "1");
+  params.set("tagMode", tagMode);
   if (pageSize !== 50) params.set("pageSize", String(pageSize));
   if (page > 1) params.set("page", String(page));
+  return params.toString();
+}
+
+function librarySelectionQuery(ids: string[]): string {
+  const params = new URLSearchParams();
+  ids.forEach((id) => params.append("selected", id));
   return params.toString();
 }
 
@@ -332,11 +338,11 @@ function paginationPages(page: number, pageCount: number): Array<number | "ellip
   return result;
 }
 
-function groupTagLinks(tags: string[], selected: string[], q: string | undefined, sort: SortOrder, pageSize = 50): string {
+function groupTagLinks(tags: string[], selected: string[], q: string | undefined, sort: SortOrder, tagMode: TagFilterMode, pageSize = 50): string {
   return tags.map((tag) => {
     const isSelected = selected.some((value) => value.toLowerCase() === tag.toLowerCase());
     const next = isSelected ? selected.filter((value) => value.toLowerCase() !== tag.toLowerCase()) : [...selected, tag];
-    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize)}" aria-pressed="${isSelected}">${escapeHtml(tag)}</a>`;
+    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${isSelected}">${escapeHtml(tag)}</a>`;
   }).join(" ");
 }
 
@@ -376,41 +382,57 @@ function paperCard(paper: PaperRecord): string {
   </article>`;
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; sort?: SortOrder; all?: boolean; untagged?: boolean; page?: number; pageSize?: number; total?: number; storedPdfCount?: number }): string {
+export function renderAskLibraryPage(tags: string[]): string {
+  const tagOptions = tags.map((tag) => `<button class="tag ask-tag-button" type="button" data-library-tag="${escapeHtml(tag)}" aria-pressed="false">${escapeHtml(tag)}</button>`).join("");
+  const body = `<section class="page-heading ask-heading"><h1>Ask the library</h1></section>
+  <section class="panel ask-library-page" data-library-ask>
+    <form id="library-query-form" data-library-query class="ask-query-form"><div class="ask-query-input-row"><textarea id="library-query-input" name="query" rows="3" maxlength="1000" required placeholder="Which papers study uncertainty calibration without using ensembles?"></textarea></div><div class="ask-query-toolbar"><div class="ask-tag-filter"><span class="ask-control-label">Search within</span><div class="ask-tag-selection"><div class="tag-mode-switch" role="group" aria-label="Tag matching mode"><span class="tag-mode-label">Match:</span><button class="tag tag-mode-button" type="button" data-library-tag-mode="and" aria-pressed="false">AND</button><button class="tag tag-mode-button tag-selected" type="button" data-library-tag-mode="or" aria-pressed="true">OR</button></div><div class="ask-tag-row"><span class="tag-mode-label">Tags:</span><div class="ask-tag-options"><button class="tag tag-selected ask-tag-button" type="button" data-library-tag-all aria-pressed="true">All</button>${tagOptions || `<span class="muted">No tags yet</span>`}</div></div></div></div></div><div class="ask-submit-row"><button class="button button-secondary button-small ask-submit" type="submit" form="library-query-form" data-library-query-submit>${analysisIcon()}<span>Ask</span></button></div><p class="form-status" data-library-query-status role="status"></p></form>
+    <section class="ask-results" data-library-query-results hidden aria-live="polite"></section>
+  </section>
+  <section class="page-heading indexing-heading"><h1>Indexing</h1></section>
+  <div class="panel ask-indexing-panel" data-library-indexing><div class="ask-indexing-row"><span class="muted ask-indexing-status" data-library-index-status>Checking index coverage…</span><div class="ask-indexing-actions"><button class="button button-secondary button-small ask-index-button" type="button" data-library-index-continue data-index-limit="20">${refreshIcon()}<span data-library-index-label>Index papers</span></button><button class="button button-secondary button-small ask-index-button" type="button" data-library-index-continue data-index-limit="80">${refreshIcon()}<span data-library-index-label>Index more</span></button><button class="button button-secondary button-small ask-index-button" type="button" data-library-index-continue data-index-limit="150">${refreshIcon()}<span data-library-index-label>Index many</span></button></div></div><p class="form-status ask-indexing-message" data-library-index-status-message role="status"></p><section class="ask-indexing-failures" data-library-abstract-failures hidden><h2>Abstracts needing attention</h2><ul class="ask-abstract-failure-list" data-library-abstract-failure-list></ul></section></div>`;
+  return layout("Ask the library", body);
+}
+
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; tagMode?: TagFilterMode; selected?: string[]; sort?: SortOrder; all?: boolean; noTags?: boolean; untagged?: boolean; page?: number; pageSize?: number; total?: number; storedPdfCount?: number }): string {
   const sort = query.sort || "newest";
   const page = query.page || 1;
   const pageSize = query.pageSize || 50;
   const total = query.total ?? papers.length;
   const selectedFilters = query.tag || [];
+  const tagMode = query.tagMode || "or";
+  const selectedIds = query.selected || [];
   const allSelected = Boolean(query.all);
   const untaggedSelected = Boolean(query.untagged);
-  const downloadQuery = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize);
+  const allTagsSelected = allSelected;
+  const downloadQuery = selectedIds.length ? librarySelectionQuery(selectedIds) : libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
   const storedPdfCount = query.storedPdfCount ?? papers.filter((paper) => paper.r2Key).length;
-  const hasSelection = Boolean(total && (query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
+  const hasSelection = Boolean(total && (selectedIds.length || query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
-  const selectionLabel = allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
+  const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-count="${total}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
-  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
+  const selectionIds = escapeHtml(JSON.stringify(selectedIds));
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${total}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}" data-selection-tag-mode="${tagMode}" data-selection-ids="${selectionIds}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const pageCount = Math.ceil(total / pageSize);
   const pageLinks = paginationPages(page, pageCount).map((pageNumber) => pageNumber === "ellipsis"
     ? `<span class="pagination-ellipsis" aria-hidden="true">…</span>`
     : pageNumber === page
       ? `<span class="button button-secondary button-small page-number" aria-current="page">${pageNumber}</span>`
-      : `<a class="button button-secondary button-small page-number" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageNumber, pageSize)}">${pageNumber}</a>`).join("");
-  const firstPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize);
-  const previousPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page - 1, pageSize);
-  const nextPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page + 1, pageSize);
-  const lastPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageCount, pageSize);
+      : `<a class="button button-secondary button-small page-number" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageNumber, pageSize, tagMode, query.noTags)}">${pageNumber}</a>`).join("");
+  const firstPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
+  const previousPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page - 1, pageSize, tagMode, query.noTags);
+  const nextPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page + 1, pageSize, tagMode, query.noTags);
+  const lastPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageCount, pageSize, tagMode, query.noTags);
   const pagination = pageCount > 1 ? `<div class="pagination-footer"><span class="muted pagination-summary">Page ${page} of ${pageCount}</span><nav class="pagination" aria-label="Paper pages">${page > 1 ? `<a class="button button-secondary button-small" href="/?${firstPage}">First</a><a class="button button-secondary button-small" href="/?${previousPage}">Previous</a>` : `<span class="button button-secondary button-small pagination-disabled" aria-disabled="true">First</span><span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Previous</span>`}<span class="pagination-pages">${pageLinks}</span>${page < pageCount ? `<a class="button button-secondary button-small" href="/?${nextPage}">Next</a><a class="button button-secondary button-small" href="/?${lastPage}">Last</a>` : `<span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Next</span><span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Last</span>`}</nav></div>` : "";
-  const body = `<div class="library-controls"><a class="button add-paper-button" href="/add" aria-label="Add paper" title="Add paper">${addAction()}</a><form class="toolbar" method="get" action="/">
+  const body = `<div class="library-controls"><div class="library-primary-actions"><a class="button add-paper-button add-paper-square" href="/add" aria-label="Add paper" title="Add paper">${addIcon()}</a><a class="button button-secondary ask-library-button" href="/ask">${analysisIcon()}<span>Ask the library</span></a></div><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
-    ${allSelected ? `<input type="hidden" name="all" value="1">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}<input type="hidden" name="pageSize" value="${pageSize}">
+    ${allSelected ? `<input type="hidden" name="all" value="1">` : query.noTags ? `<input type="hidden" name="all" value="0">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}<input type="hidden" name="tagMode" value="${tagMode}"><input type="hidden" name="pageSize" value="${pageSize}">
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="muted">Group by:</span> <a class="tag ${allSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, !allSelected, false, 1, pageSize)}" aria-pressed="${allSelected}">All</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize)}" aria-pressed="${untaggedSelected}">NaN</a> ${groupTagLinks(tags, allSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, pageSize)}</section>
+  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allTagsSelected ? "none" : true, false, 1, pageSize, tagMode)}" aria-pressed="${allTagsSelected}">All</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode)}" aria-pressed="${untaggedSelected}">NaN</a> ${groupTagLinks(tags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize)}</section>
   <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}${papers.length ? "" : " empty-paper-list"}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
   return layout("Library", body);
@@ -496,7 +518,7 @@ function renderQuestionsSection(questions: StoredQuestion[]): string {
   const groupSections = [...groups.entries()].map(([groupId, items]) => {
     const answered = items.filter((question) => question.answer?.status === "complete").length;
     const progress = items.map((question) => `<span class="question-progress-dot${question.answer?.status === "complete" ? " is-answered" : ""}" aria-hidden="true"></span>`).join("");
-    return `<details class="question-group" data-question-group="${escapeHtml(groupId)}"><summary><span class="question-group-label">${escapeHtml(items[0].groupTitle)}</span><span class="question-progress" aria-label="${answered} of ${items.length} questions answered" title="${answered} of ${items.length} questions answered">${progress}</span></summary><div class="question-group-body"><p class="muted">${escapeHtml(items[0].groupDescription)}</p>${items.map((question) => `<article class="question-item" data-question-id="${escapeHtml(question.id)}"><h3>${escapeHtml(question.label)}</h3>${question.answer?.status === "complete" ? `<div class="analysis-content question-answer">${renderMarkdown(question.answer.content)}</div>${analysisMeta(question.answer.provider, question.answer.model, question.answer.generatedAt, question.answer.durationMs, "analysis-meta question-answer-meta")}` : question.answer?.status === "error" ? `<p class="status-error">Answer generation failed: ${escapeHtml(question.answer.errorMessage || "Unknown error")}</p>` : question.answer?.status === "stale" ? `<p class="status-warning">This answer is stale because the PDF changed.</p>` : `<p class="muted question-empty">Not answered yet.</p>`}<div class="question-actions"><button class="button button-secondary button-small" type="button" data-generate-question="${escapeHtml(question.id)}">${question.answer ? refreshIcon() : analysisIcon()}<span>${question.answer ? "Regenerate answer" : "Generate answer"}</span></button>${question.isCustom ? `<button class="button button-danger button-small" type="button" data-delete-question="${escapeHtml(question.id)}">${deleteIcon()}<span>Delete</span></button>` : ""}<span class="form-status" data-question-status role="status"></span></div></article>`).join("")}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse ${escapeHtml(items[0].groupTitle)} questions" title="Collapse ${escapeHtml(items[0].groupTitle)} questions">${collapseIcon()}</button></div></details>`;
+    return `<details class="question-group" data-question-group="${escapeHtml(groupId)}"><summary><span class="question-group-label">${escapeHtml(items[0].groupTitle)}</span><span class="question-progress" aria-label="${answered} of ${items.length} questions answered" title="${answered} of ${items.length} questions answered">${progress}</span></summary><div class="question-group-body"><p class="muted">${escapeHtml(items[0].groupDescription)}</p>${items.map((question) => `<article class="question-item" data-question-id="${escapeHtml(question.id)}"><h3>${escapeHtml(question.label)}</h3>${question.answer?.status === "complete" ? `<div class="analysis-content question-answer">${renderMarkdown(question.answer.content)}</div>${analysisMeta(question.answer.provider, question.answer.model, question.answer.generatedAt, question.answer.durationMs, "analysis-meta question-answer-meta")}` : question.answer?.status === "error" ? `<p class="status-error">Answer generation failed: ${escapeHtml(question.answer.errorMessage || "Unknown error")}</p>` : question.answer?.status === "stale" ? `<p class="status-warning">This answer is stale because the paper or question definition changed.</p>` : `<p class="muted question-empty">Not answered yet.</p>`}<div class="question-actions"><button class="button button-secondary button-small" type="button" data-generate-question="${escapeHtml(question.id)}">${question.answer ? refreshIcon() : analysisIcon()}<span>${question.answer ? "Regenerate answer" : "Generate answer"}</span></button>${question.isCustom ? `<button class="button button-danger button-small" type="button" data-delete-question="${escapeHtml(question.id)}">${deleteIcon()}<span>Delete</span></button>` : ""}<span class="form-status" data-question-status role="status"></span></div></article>`).join("")}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse ${escapeHtml(items[0].groupTitle)} questions" title="Collapse ${escapeHtml(items[0].groupTitle)} questions">${collapseIcon()}</button></div></details>`;
   }).join("");
   const addQuestion = `<details class="add-question-form"><summary>Add new question</summary><div class="add-question-body"><p class="muted">Ask an additional open question about this paper. It will be saved for this paper.</p><form data-add-question><label>Question<textarea name="question" required maxlength="5000" rows="3" placeholder="What else would you like to know?"></textarea></label><button class="button button-secondary" type="submit">${analysisIcon()}<span>Add question</span></button><p class="form-status" role="status"></p></form><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse add new question" title="Collapse add new question">${collapseIcon()}</button></div></div></details>`;
   const overviewDots = questions.map((question) => `<span class="question-progress-dot${question.answer?.status === "complete" ? " is-answered" : ""}" data-question-overview-dot="${escapeHtml(question.id)}" aria-hidden="true"></span>`).join("");
@@ -559,8 +581,9 @@ export function renderSettingsPage(): string {
     <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "mint", "Mint", "#f6fdfa")}${customThemeOption("background", "#f7f6f2")}</div>${derivedColorPreview()}</div>
     <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("50")}${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>
     <div class="settings-group"><h2>Entries per page</h2><p class="muted">Choose how many papers appear on each library page.</p><div class="width-options">${pageSizeOption("10")}${pageSizeOption("25")}${pageSizeOption("50")}${pageSizeOption("100")}</div></div>
-    <div class="settings-group"><h2>AI providers</h2><p class="muted">Choose the provider used for on-demand paper summaries and questions.</p><form data-ai-settings><section class="settings-subsection active-provider-settings"><h3>Active provider</h3><label>Provider<select name="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama</option></select></label></section><div class="ai-provider-columns"><section class="settings-subsection"><h3>OpenAI</h3><label>Model<select name="openaiModel"><option>gpt-5-nano</option><option>gpt-5.4-nano</option><option>gpt-5.4-mini</option><option>gpt-5.4</option><option>gpt-5.5</option><option>gpt-4.1-mini</option><option>gpt-4.1</option><option>gpt-4.1-nano</option><option>gpt-4o-mini</option><option>gpt-4o</option></select></label><label>API key<input name="openaiApiKey" type="password" autocomplete="new-password" placeholder="Enter a replacement key"><span class="muted" data-openai-key-status>Checking key status…</span></label></section><section class="settings-subsection"><h3>Ollama</h3><label>Base URL<input name="ollamaBaseUrl" type="url" placeholder="http://localhost:11434"></label><label>Model<div class="field-with-action ollama-model-picker"><select name="ollamaModel" aria-label="Ollama model"><option value="">Choose an available model…</option></select><button class="icon-button" type="button" data-load-ollama-models aria-label="Refresh Ollama models" title="Refresh Ollama models">${refreshIcon()}</button></div><span class="muted" data-ollama-model-status>Select an Ollama URL to load available models.</span></label></section></div><div class="ai-key-actions"><button class="button button-secondary" type="submit">Save AI settings</button><button class="button button-secondary" type="button" data-clear-openai-key>Clear OpenAI key</button></div><p class="form-status" data-ai-settings-status role="status"></p></form></div>
+    <div class="settings-group"><h2>AI providers</h2><p class="muted">Choose the provider used for on-demand paper summaries, questions, and semantic library search.</p><form data-ai-settings><section class="settings-subsection active-provider-settings"><h3>Active provider</h3><label>Provider<select name="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama</option></select></label></section><div class="ai-provider-columns"><section class="settings-subsection"><h3>OpenAI</h3><label>Model<select name="openaiModel"><option>gpt-5-nano</option><option>gpt-5.4-nano</option><option>gpt-5.4-mini</option><option>gpt-5.4</option><option>gpt-5.5</option><option>gpt-4.1-mini</option><option>gpt-4.1</option><option>gpt-4.1-nano</option><option>gpt-4o-mini</option><option>gpt-4o</option></select></label><label>Embedding model<input name="openaiEmbeddingModel" type="text" placeholder="text-embedding-3-small"></label><label>API key<input name="openaiApiKey" type="password" autocomplete="new-password" placeholder="Enter a replacement key"><span class="muted" data-openai-key-status>Checking key status…</span></label></section><section class="settings-subsection"><h3>Ollama</h3><label>Base URL<input name="ollamaBaseUrl" type="url" placeholder="http://localhost:11434"></label><label>Model<div class="field-with-action ollama-model-picker"><select name="ollamaModel" aria-label="Ollama model"><option value="">Choose an available model…</option></select><button class="icon-button" type="button" data-load-ollama-models aria-label="Refresh Ollama models" title="Refresh Ollama models">${refreshIcon()}</button></div><span class="muted" data-ollama-model-status>Select an Ollama URL to load available models.</span></label><label>Embedding model<input name="ollamaEmbeddingModel" type="text" placeholder="nomic-embed-text"></label></section></div><div class="ai-key-actions"><button class="button button-secondary" type="submit">Save AI settings</button><button class="button button-secondary" type="button" data-clear-openai-key>Clear OpenAI key</button></div><p class="form-status" data-ai-settings-status role="status"></p></form></div>
     <div class="settings-group"><h2>Backup and restore</h2><p class="muted">Download your metadata and PDFs as one backup file, or restore a backup into this library. Existing papers are preserved.</p><div class="backup-actions"><a class="button button-secondary" href="/api/export/backup">Download backup</a><form data-restore-backup><input class="sr-only" name="backup" type="file" accept="application/json,.json" required data-restore-backup-input><button class="button button-secondary" type="button" data-restore-backup-trigger>Restore backup</button><p class="form-status" role="status"></p></form></div></div>
+    <div class="settings-group credits-group"><div class="settings-subsection credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION}</p></div></div>
   </section>`;
   return layout("Settings", body);
 }

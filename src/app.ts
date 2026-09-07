@@ -12,7 +12,7 @@ import type { Database } from "better-sqlite3";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openDatabase } from "./db/database.js";
-import { PaperRepository } from "./repositories/papers.js";
+import { PaperRepository, type TagFilterMode } from "./repositories/papers.js";
 import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
@@ -21,15 +21,18 @@ import { lookupSemanticScholar } from "./services/semantic-scholar.js";
 import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
+import { LibrarySearchRepository } from "./repositories/library-search.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
+import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } from "./services/embeddings.js";
 import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
+import { groupLibraryResults } from "./services/library-query.js";
 import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
-import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
+import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 
@@ -41,6 +44,7 @@ export interface AppDependencies {
   maxRequestBytes?: number;
   authPassword?: string;
   llmClient?: LlmClient;
+  embeddingClient?: EmbeddingClient;
   pdfTextExtractor?: PdfTextExtractor;
   pdfExcerptTextExtractor?: PdfTextExtractor;
   keychain?: KeychainAdapter;
@@ -103,11 +107,21 @@ function tagFilters(value: unknown, fallback?: unknown): string[] {
   return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function requestFilters(c: Context): { q?: string; tag?: string[]; all?: boolean; untagged?: boolean } {
+function tagFilterMode(value: unknown): TagFilterMode {
+  return value === "and" ? "and" : "or";
+}
+
+function paperIdFilters(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [];
+  return [...new Set(values.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean))].slice(0, 200);
+}
+
+function requestFilters(c: Context): { q?: string; tag?: string[]; tagMode: TagFilterMode; all?: boolean; noTags?: boolean; untagged?: boolean; selected?: string[] } {
   const url = new URL(c.req.url);
   const q = c.req.query("q")?.trim() || undefined;
   const tags = tagFilters(url.searchParams.getAll("tag"));
-  return { q, tag: tags.length ? tags : undefined, all: c.req.query("all") === "1", untagged: c.req.query("untagged") === "1" };
+  const selected = paperIdFilters(url.searchParams.getAll("selected"));
+  return { q, tag: tags.length ? tags : undefined, tagMode: tagFilterMode(c.req.query("tagMode")), all: c.req.query("all") === "1", noTags: c.req.query("all") === "0", untagged: c.req.query("untagged") === "1", selected: selected.length ? selected : undefined };
 }
 
 function titleFromFilename(filename: string): string {
@@ -273,6 +287,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const storage = dependencies.storage || new FileStorage();
   const repo = new PaperRepository(db);
   const analysis = new AnalysisRepository(db);
+  const librarySearch = new LibrarySearchRepository(db, (paperId) => analysis.getSummary(paperId));
   const keychain = dependencies.keychain || createKeychainAdapter();
   const pdfTextExtractor = dependencies.pdfTextExtractor || extractPdfText;
   const pdfExcerptTextExtractor = dependencies.pdfExcerptTextExtractor || (dependencies.pdfTextExtractor
@@ -285,6 +300,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const app = new Hono();
   const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
   const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number; appendixExcluded?: boolean }>();
+  let libraryIndexProgress: { active: boolean; phase?: "abstracts" | "embeddings"; requested: number; processed: number; total: number; startedAt?: string; etaSeconds?: number; error?: string } = { active: false, requested: 0, processed: 0, total: 0 };
 
   function selectedLlm(settings: AiSettings, summaryModel?: string): { provider: LlmProvider; model: string; client: LlmClient } {
     if (settings.provider === "ollama") {
@@ -292,6 +308,11 @@ export function createApp(dependencies: AppDependencies = {}) {
       return { provider: "ollama", model: settings.ollamaModel.trim(), client: dependencies.llmClient || new OllamaLlmClient({ fetcher, ollamaBaseUrl: settings.ollamaBaseUrl }) };
     }
     return { provider: "openai", model: summaryModel || settings.openaiModel.trim() || "gpt-5-nano", client: dependencies.llmClient || new OpenAiLlmClient({ fetcher, openaiApiKey: () => keychain.get() }) };
+  }
+
+  function selectedEmbedding(settings: AiSettings): { provider: LlmProvider; model: string; client?: EmbeddingClient } {
+    if (settings.provider === "ollama") return { provider: "ollama", model: settings.ollamaEmbeddingModel.trim(), client: dependencies.embeddingClient || new OllamaEmbeddingClient({ fetcher, baseUrl: settings.ollamaBaseUrl }) };
+    return { provider: "openai", model: settings.openaiEmbeddingModel.trim(), client: dependencies.embeddingClient || new OpenAiEmbeddingClient({ fetcher, openaiApiKey: () => keychain.get() }) };
   }
 
   async function parseCitationForLookup(input: string): Promise<ParsedCitationInput> {
@@ -316,6 +337,52 @@ export function createApp(dependencies: AppDependencies = {}) {
     const text = await (scope === "excerpt" ? pdfExcerptTextExtractor : pdfTextExtractor)(path);
     if (!text.trim()) throw new Error("PDF_TEXT_EMPTY");
     return { text, sha256: paper.pdfSha256 || await sha256File(path) };
+  }
+
+  async function extractMissingAbstracts(limit: number): Promise<{ attempted: number; resolved: number; failed: number }> {
+    const candidates = repo.list({ sort: "oldest" })
+      .filter((paper) => !paper.abstract?.trim())
+      .slice(0, limit);
+    if (!candidates.length) return { attempted: 0, resolved: 0, failed: 0 };
+    const pdfCandidates = candidates.filter((paper) => existsSync(storage.getPath(paper.id)));
+    let failed = candidates.length - pdfCandidates.length;
+    candidates.filter((paper) => !existsSync(storage.getPath(paper.id))).forEach((paper) => librarySearch.recordAbstractExtractionFailure(paper.id, "PDF_NOT_FOUND"));
+    const updateProgress = (processed: number) => {
+      libraryIndexProgress.processed = processed;
+      const elapsedSeconds = Math.max(0.001, (Date.now() - Date.parse(libraryIndexProgress.startedAt || new Date().toISOString())) / 1000);
+      libraryIndexProgress.etaSeconds = processed ? Math.max(0, Math.ceil((candidates.length - processed) * elapsedSeconds / processed)) : undefined;
+    };
+    updateProgress(candidates.length - pdfCandidates.length);
+    if (!pdfCandidates.length) return { attempted: candidates.length, resolved: 0, failed };
+    let selected: { client: LlmClient; model: string };
+    try {
+      selected = selectedLlm(analysis.getSettings());
+    } catch (error) {
+      const message = errorMessage(error);
+      pdfCandidates.forEach((paper) => librarySearch.recordAbstractExtractionFailure(paper.id, message));
+      updateProgress(candidates.length);
+      return { attempted: candidates.length, resolved: 0, failed: candidates.length };
+    }
+    let resolved = 0;
+    for (const [index, paper] of pdfCandidates.entries()) {
+      try {
+        const text = await pdfExcerptTextExtractor(storage.getPath(paper.id));
+        const abstract = await extractAbstractFromPdfText(text, selected.client, selected.model);
+        if (!abstract) {
+          librarySearch.recordAbstractExtractionFailure(paper.id, "ABSTRACT_NOT_FOUND");
+          failed += 1;
+          continue;
+        }
+        repo.updateAbstract(paper.id, abstract);
+        librarySearch.clearAbstractExtractionFailure(paper.id);
+        resolved += 1;
+      } catch (error) {
+        librarySearch.recordAbstractExtractionFailure(paper.id, errorMessage(error));
+        failed += 1;
+      }
+      updateProgress(candidates.length - pdfCandidates.length + index + 1);
+    }
+    return { attempted: candidates.length, resolved, failed };
   }
 
   async function completeSummary(paperId: string, mode: "quick" | "full" = "quick"): Promise<import("./repositories/analysis.js").SummaryRecord> {
@@ -386,11 +453,11 @@ export function createApp(dependencies: AppDependencies = {}) {
     try {
       const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
       const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: "Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence." }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
-      const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, status: "complete" as const };
+      const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" as const };
       analysis.saveAnswer(paperId, questionId, record);
       return record;
     } catch (error) {
-      const record = { content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, status: "error" as const, errorMessage: errorMessage(error) };
+      const record = { content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "error" as const, errorMessage: errorMessage(error) };
       analysis.saveAnswer(paperId, questionId, record);
       throw error;
     }
@@ -439,17 +506,19 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/", (c) => {
-    const { q, tag, all, untagged } = requestFilters(c);
+    const { q, tag, tagMode, all, noTags, untagged, selected } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
-    const filters = { q, tag, untagged };
-    const pageSize = parsePageSize(c.req.query("pageSize"));
+    const filters = selected?.length ? { ids: selected } : { q, tag, tagMode, untagged };
+    const pageSize = selected?.length ? selected.length : parsePageSize(c.req.query("pageSize"));
     const total = repo.count(filters);
     const requestedPage = Math.max(1, Number.parseInt(c.req.query("page") || "1", 10) || 1);
     const page = total ? Math.min(requestedPage, Math.ceil(total / pageSize)) : 1;
-    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: pageSize, offset: (page - 1) * pageSize }), repo.tags.list(), { q, tag, sort, all, untagged, page, pageSize, total, storedPdfCount: repo.countStored(filters) }));
+    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: pageSize, offset: (page - 1) * pageSize }), repo.tags.list(), { q, tag, tagMode, sort, all, noTags, untagged, selected, page, pageSize, total, storedPdfCount: repo.countStored(filters) }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));
+
+  app.get("/ask", (c) => c.html(renderAskLibraryPage(repo.tags.list())));
 
   app.get("/settings", (c) => c.html(renderSettingsPage()));
 
@@ -480,7 +549,9 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (body.provider !== undefined && body.provider !== "openai" && body.provider !== "ollama") return jsonError(c, 400, "PROVIDER_INVALID", "Choose OpenAI or Ollama.");
       const provider = body.provider === "ollama" ? "ollama" : body.provider === "openai" ? "openai" : undefined;
       const openaiModel = typeof body.openaiModel === "string" && body.openaiModel.trim() ? body.openaiModel.trim() : undefined;
+      const openaiEmbeddingModel = typeof body.openaiEmbeddingModel === "string" && body.openaiEmbeddingModel.trim() ? body.openaiEmbeddingModel.trim() : undefined;
       const ollamaModel = typeof body.ollamaModel === "string" ? body.ollamaModel.trim() : undefined;
+      const ollamaEmbeddingModel = typeof body.ollamaEmbeddingModel === "string" && body.ollamaEmbeddingModel.trim() ? body.ollamaEmbeddingModel.trim() : undefined;
       const ollamaBaseUrl = typeof body.ollamaBaseUrl === "string" && /^https?:\/\//i.test(body.ollamaBaseUrl.trim()) ? body.ollamaBaseUrl.trim().replace(/\/$/, "") : undefined;
       if (body.ollamaBaseUrl !== undefined && !ollamaBaseUrl) return jsonError(c, 400, "OLLAMA_URL_INVALID", "Enter a valid Ollama HTTP URL.");
       if (body.openaiApiKey !== undefined) {
@@ -490,7 +561,9 @@ export function createApp(dependencies: AppDependencies = {}) {
       const update: Partial<AiSettings> = {};
       if (provider) update.provider = provider;
       if (openaiModel) update.openaiModel = openaiModel;
+      if (openaiEmbeddingModel) update.openaiEmbeddingModel = openaiEmbeddingModel;
       if (ollamaModel !== undefined) update.ollamaModel = ollamaModel;
+      if (ollamaEmbeddingModel) update.ollamaEmbeddingModel = ollamaEmbeddingModel;
       if (ollamaBaseUrl) update.ollamaBaseUrl = ollamaBaseUrl;
       const settings = analysis.updateSettings(update);
       const key = await keychain.get();
@@ -521,8 +594,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/papers", (c) => {
-    const { q, tag, untagged } = requestFilters(c);
-    return c.json({ papers: repo.list({ q, tag, untagged, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
+    const { q, tag, tagMode, untagged } = requestFilters(c);
+    return c.json({ papers: repo.list({ q, tag, tagMode, untagged, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
   });
 
   const importPaper = async (c: Context) => {
@@ -802,6 +875,90 @@ export function createApp(dependencies: AppDependencies = {}) {
     return paper ? c.json({ paper }) : jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
   });
 
+  app.post("/api/library/query", async (c) => {
+    try {
+      const body = await c.req.json<{ query?: unknown; tags?: unknown; tagMode?: unknown; group?: unknown; limit?: unknown }>();
+      const query = typeof body.query === "string" ? body.query.trim() : "";
+      if (!query) return jsonError(c, 400, "LIBRARY_QUERY_REQUIRED", "Enter a question or search idea.");
+      if (query.length > 1000) return jsonError(c, 400, "LIBRARY_QUERY_TOO_LONG", "Keep the library query under 1,000 characters.");
+      const tags = tagFilters(body.tags);
+      const tagMode = tagFilterMode(body.tagMode);
+      const requestedLimit = Number(body.limit);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.floor(requestedLimit))) : 20;
+      const result = await librarySearch.query(query, tags, tagMode, limit, selectedEmbedding(analysis.getSettings()));
+      const warnings = [...result.warnings];
+      let groups: Awaited<ReturnType<typeof groupLibraryResults>> = [];
+      if (result.hits.length) {
+        try {
+          const selected = selectedLlm(analysis.getSettings());
+          groups = await groupLibraryResults(result.hits, query, selected.client, selected.model, (paperId) => analysis.getSummary(paperId));
+        } catch {
+          warnings.push("The papers were found, but thematic grouping was unavailable.");
+        }
+      }
+      return c.json({ query, tags, tagMode, hits: result.hits.map((hit) => ({ ...hit, paperUrl: `/papers/${encodeURIComponent(hit.paper.id)}` })), groups, coverage: result.coverage, warnings });
+    } catch (error) {
+      return jsonError(c, 502, errorMessage(error), "The library query could not be completed. Please retry.");
+    }
+  });
+
+  app.post("/api/library/search-index/continue", async (c) => {
+    if (libraryIndexProgress.active) return jsonError(c, 409, "LIBRARY_INDEX_BUSY", "Library indexing is already in progress.");
+    const body = await c.req.json<{ limit?: unknown }>().catch(() => ({ limit: undefined }));
+    const requestedLimit = Number(body.limit);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(500, Math.max(1, Math.floor(requestedLimit))) : 20;
+    libraryIndexProgress = { active: true, requested: limit, processed: 0, total: limit, startedAt: new Date().toISOString() };
+    const embedder = selectedEmbedding(analysis.getSettings());
+    librarySearch.syncDocuments();
+    const abstractResult = await extractMissingAbstracts(limit);
+    librarySearch.syncDocuments();
+    librarySearch.prepareForEmbedding(embedder.provider, embedder.model);
+    const initialCoverage = librarySearch.coverage();
+    const requested = Math.min(limit, initialCoverage.pendingPapers);
+    libraryIndexProgress.phase = requested > 0 ? "embeddings" : undefined;
+    libraryIndexProgress.startedAt = new Date().toISOString();
+    libraryIndexProgress.processed = 0;
+    libraryIndexProgress.etaSeconds = undefined;
+    libraryIndexProgress.requested = requested;
+    libraryIndexProgress.total = requested;
+    libraryIndexProgress.active = requested > 0;
+    if (!requested) return c.json({ coverage: initialCoverage, progress: libraryIndexProgress, abstracts: abstractResult, abstractFailures: librarySearch.abstractFailures() });
+    try {
+      while (libraryIndexProgress.processed < requested) {
+        const before = librarySearch.coverage();
+        await librarySearch.indexPending(embedder, Math.min(20, requested - libraryIndexProgress.processed));
+        const after = librarySearch.coverage();
+        const processed = Math.max(0, before.pendingPapers - after.pendingPapers);
+        libraryIndexProgress.processed = Math.min(requested, libraryIndexProgress.processed + processed);
+        const elapsedSeconds = Math.max(0.001, (Date.now() - Date.parse(libraryIndexProgress.startedAt || new Date().toISOString())) / 1000);
+        libraryIndexProgress.etaSeconds = libraryIndexProgress.processed ? Math.max(0, Math.ceil((requested - libraryIndexProgress.processed) * elapsedSeconds / libraryIndexProgress.processed)) : undefined;
+        if (!processed) break;
+      }
+      libraryIndexProgress.active = false;
+      libraryIndexProgress.etaSeconds = 0;
+      return c.json({ coverage: librarySearch.coverage(), progress: libraryIndexProgress, abstracts: abstractResult, abstractFailures: librarySearch.abstractFailures() });
+    } catch (error) {
+      libraryIndexProgress.active = false;
+      libraryIndexProgress.error = errorMessage(error);
+      return jsonError(c, 502, libraryIndexProgress.error, "The search index could not be updated.");
+    }
+  });
+
+  app.get("/api/library/search-index/progress", (c) => {
+    librarySearch.syncDocuments();
+    return c.json({ coverage: librarySearch.coverage(), progress: libraryIndexProgress, abstractFailures: librarySearch.abstractFailures() });
+  });
+
+  app.get("/api/library/search-index/coverage", (c) => {
+    librarySearch.syncDocuments();
+    return c.json({ coverage: librarySearch.coverage(), abstractFailures: librarySearch.abstractFailures() });
+  });
+
+  app.post("/api/library/search-index/rebuild", (c) => {
+    librarySearch.rebuild();
+    return c.json({ coverage: librarySearch.coverage() });
+  });
+
   app.get("/api/papers/:id/summary", (c) => {
     if (!repo.findById(c.req.param("id"))) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
     return c.json({ summary: analysis.getSummary(c.req.param("id")) });
@@ -887,11 +1044,13 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-delete", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; untagged?: boolean }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; tagMode?: unknown; selectedIds?: string[]; all?: boolean; untagged?: boolean }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
-      if (!q && !tags.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
-      const papers = repo.list({ q, tag: tags, untagged: body.untagged });
+      const tagMode = tagFilterMode(body.tagMode);
+      const selectedIds = paperIdFilters(body.selectedIds);
+      if (!q && !tags.length && !selectedIds.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+      const papers = selectedIds.length ? repo.list({ ids: selectedIds }) : repo.list({ q, tag: tags, tagMode, untagged: body.untagged });
       const moved: StorageMove[] = [];
       try {
         for (const paper of papers) {
@@ -914,14 +1073,16 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/papers/bulk-tags", async (c) => {
     try {
-      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; all?: boolean; untagged?: boolean; name?: string; action?: string }>();
+      const body = await c.req.json<{ q?: string; tag?: string; tags?: string[]; tagMode?: unknown; selectedIds?: string[]; all?: boolean; untagged?: boolean; name?: string; action?: string }>();
       const q = body.q?.trim() || undefined;
       const tags = tagFilters(body.tags, body.tag);
+      const tagMode = tagFilterMode(body.tagMode);
+      const selectedIds = paperIdFilters(body.selectedIds);
       const name = body.name?.trim() || "";
-      if (!q && !tags.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
+      if (!q && !tags.length && !selectedIds.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
       if (!name || name.includes(",")) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter one tag without commas.");
       if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
-      const papers = repo.list({ q, tag: tags, untagged: body.untagged });
+      const papers = selectedIds.length ? repo.list({ ids: selectedIds }) : repo.list({ q, tag: tags, tagMode, untagged: body.untagged });
       if (body.action === "add") repo.tags.addToPapers(papers.map((paper) => paper.id), name);
       else repo.tags.removeFromPapers(papers.map((paper) => paper.id), name);
       return c.json({ ok: true, updated: papers.length, action: body.action, tag: name });
@@ -994,8 +1155,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/export/pdfs", (c) => {
-    const { q, tag, untagged } = requestFilters(c);
-    const papers = repo.list({ q, tag, untagged, sort: parseSortOrder(c.req.query("sort")) });
+    const { q, tag, tagMode, untagged, selected } = requestFilters(c);
+    const papers = repo.list(selected?.length ? { ids: selected, sort: parseSortOrder(c.req.query("sort")) } : { q, tag, tagMode, untagged, sort: parseSortOrder(c.req.query("sort")) });
     const usedNames = new Set<string>();
     const files = papers.flatMap((paper) => existsSync(storage.getPath(paper.id)) ? [{ name: pdfFilename(paper.title, usedNames), path: storage.getPath(paper.id) }] : []);
     if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");
@@ -1079,11 +1240,11 @@ export function createApp(dependencies: AppDependencies = {}) {
             analysis.ensureQuestions(record.id);
             for (const question of backup.analysis.questions || []) {
               if (question.paperId !== record.id || typeof question.questionId !== "string" || typeof question.groupId !== "string" || typeof question.groupTitle !== "string" || typeof question.groupDescription !== "string" || typeof question.label !== "string" || typeof question.prompt !== "string" || typeof question.definitionHash !== "string") continue;
-              analysis.saveQuestion(record.id, { id: question.questionId, groupId: question.groupId, groupTitle: question.groupTitle, groupDescription: question.groupDescription, label: question.label, prompt: question.prompt, order: Number(question.order) || 0, definitionHash: question.definitionHash, isCustom: Boolean(question.isCustom) });
+              analysis.saveQuestion(record.id, { id: question.questionId, groupId: question.groupId, groupTitle: question.groupTitle, groupDescription: question.groupDescription, label: question.label, prompt: question.prompt, order: Number(question.order) || 0, definitionHash: question.definitionHash, isCustom: Boolean(question.isCustom), isActive: question.isActive === false ? false : true });
             }
             for (const answer of backup.analysis.answers || []) {
               if (answer.paperId !== record.id || typeof answer.questionId !== "string" || typeof answer.content !== "string" || typeof answer.provider !== "string" || typeof answer.model !== "string" || typeof answer.generatedAt !== "string" || typeof answer.promptVersion !== "string") continue;
-              analysis.saveAnswer(record.id, answer.questionId, { content: answer.content, provider: answer.provider, model: answer.model, generatedAt: answer.generatedAt, durationMs: typeof answer.durationMs === "number" ? answer.durationMs : undefined, sourcePdfSha256: typeof answer.sourcePdfSha256 === "string" ? answer.sourcePdfSha256 : undefined, promptVersion: answer.promptVersion, status: answer.status === "stale" || answer.status === "error" ? answer.status : "complete", errorMessage: typeof answer.errorMessage === "string" ? answer.errorMessage : undefined });
+              analysis.saveAnswer(record.id, answer.questionId, { content: answer.content, provider: answer.provider, model: answer.model, generatedAt: answer.generatedAt, durationMs: typeof answer.durationMs === "number" ? answer.durationMs : undefined, sourcePdfSha256: typeof answer.sourcePdfSha256 === "string" ? answer.sourcePdfSha256 : undefined, promptVersion: answer.promptVersion, questionDefinitionHash: typeof answer.questionDefinitionHash === "string" ? answer.questionDefinitionHash : undefined, status: answer.status === "stale" || answer.status === "error" ? answer.status : "complete", errorMessage: typeof answer.errorMessage === "string" ? answer.errorMessage : undefined });
             }
           }
           restored++;

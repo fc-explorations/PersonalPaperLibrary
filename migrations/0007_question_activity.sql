@@ -1,0 +1,1 @@
+ALTER TABLE paper_questions ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;

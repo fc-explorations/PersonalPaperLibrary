@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { runMigrations } from "../src/db/migrate.js";
 import { PaperRepository } from "../src/repositories/papers.js";
+import { AnalysisRepository } from "../src/repositories/analysis.js";
 
 function database() {
   const db = new Database(":memory:");
@@ -31,10 +32,56 @@ describe("paper repository", () => {
     repo.tags.replaceForPaper(paper.id, ["vision", "Research"]);
     expect(repo.findById(paper.id)?.tags).toEqual(["Research", "Vision"]);
     expect(repo.list({ tag: ["vision", "Research"] }).map((item) => item.id)).toEqual([paper.id]);
+    expect(repo.list({ tag: ["vision", "Research"], tagMode: "or" }).map((item) => item.id)).toEqual(expect.arrayContaining([paper.id, secondPaper.id]));
     expect(repo.list({ tag: ["Research"] }).map((item) => item.id)).toEqual(expect.arrayContaining([secondPaper.id, paper.id]));
     expect(repo.list({ tag: ["Research"] })).toHaveLength(2);
     repo.tags.remove(paper.id, "vision");
     expect(repo.tags.list()).toEqual(["Research"]);
+    db.close();
+  });
+});
+
+describe("analysis repository", () => {
+  it("marks answers stale when the question definition changes or provenance is missing", () => {
+    const db = database();
+    const papers = new PaperRepository(db);
+    const analysis = new AnalysisRepository(db);
+    const paper = papers.create({ title: "Analysis paper", metadataSource: "manual" });
+    const question = analysis.listQuestions(paper.id)[0];
+
+    analysis.saveAnswer(paper.id, question.id, {
+      content: "Old answer",
+      provider: "test",
+      model: "test",
+      generatedAt: new Date().toISOString(),
+      promptVersion: "question-v1",
+      status: "complete",
+      questionDefinitionHash: "old-definition",
+    });
+    expect(analysis.listQuestions(paper.id).find((item) => item.id === question.id)?.answer?.status).toBe("stale");
+
+    analysis.saveAnswer(paper.id, question.id, {
+      content: "Fresh answer",
+      provider: "test",
+      model: "test",
+      generatedAt: new Date().toISOString(),
+      promptVersion: "question-v1",
+      status: "complete",
+      questionDefinitionHash: question.definitionHash,
+    });
+    expect(analysis.listQuestions(paper.id).find((item) => item.id === question.id)?.answer?.status).toBe("complete");
+    db.close();
+  });
+
+  it("archives built-in questions removed from the catalog without deleting their records", () => {
+    const db = database();
+    const papers = new PaperRepository(db);
+    const analysis = new AnalysisRepository(db);
+    const paper = papers.create({ title: "Archived question paper", metadataSource: "manual" });
+    db.prepare("INSERT INTO paper_questions (paper_id, question_id, group_id, group_title, group_description, question_order, label, prompt, definition_hash, is_custom, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)").run(paper.id, "retired-built-in", "evaluate", "Evaluate", "Legacy", 999, "Retired", "Retired", "retired-hash", new Date().toISOString());
+
+    expect(analysis.listQuestions(paper.id).some((item) => item.id === "retired-built-in")).toBe(false);
+    expect(analysis.listQuestions(paper.id, true).some((item) => item.id === "retired-built-in" && !item.isActive)).toBe(true);
     db.close();
   });
 });
