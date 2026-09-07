@@ -48,6 +48,7 @@ describe("HTTP application", () => {
     expect(libraryPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
     expect(paperPage).toContain('<summary>Paper information</summary>');
+    expect(paperPage.indexOf(">Tags</h2>")).toBeLessThan(paperPage.indexOf("<summary>Paper information</summary>"));
     expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS</dd>");
     expect(paperPage).toContain("booktitle = {NeurIPS}");
     expect(paperPage).toContain("data-copy-citation");
