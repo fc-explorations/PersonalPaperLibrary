@@ -276,7 +276,7 @@ select { width: auto; min-width: 150px; }
 .detail-tags .paper-tags { flex: none; max-width: none; align-items: flex-start; justify-content: flex-start; text-align: left; }
 .abstract-section > h2, .detail-tags > h2, .detail-subheading { color: var(--section-color); font-size: var(--type-kicker); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .bibtex-section { margin: 0; }
-.bibtex-section > summary { color: var(--text); font-size: var(--type-section); font-weight: 700; }
+.bibtex-section > summary { color: var(--section-color); font-size: var(--type-kicker); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .bibtex-body { padding-top: 22px; }
 .bibtex-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
 .bibtex-heading .eyebrow { margin: 0; }
