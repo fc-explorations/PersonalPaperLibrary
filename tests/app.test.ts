@@ -284,6 +284,23 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("can import a folder without applying its name as a tag", async () => {
+    const context = testApp();
+    const form = new FormData();
+    form.append("files", new File([pdf], "first_paper.pdf", { type: "application/pdf" }));
+    form.append("folderTag", "Research papers");
+    form.append("useFolderAsTag", "false");
+    const response = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.folderTag).toBeUndefined();
+    const papers = (await (await context.app.request("/api/papers")).json()).papers;
+    expect(papers).toHaveLength(1);
+    expect(papers[0].tags).toEqual([]);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("provides citation metadata lookup", async () => {
     const context = testApp();
     const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Test arXiv Paper" }) });

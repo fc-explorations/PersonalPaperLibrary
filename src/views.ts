@@ -128,14 +128,14 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=27">
+  <link rel="stylesheet" href="/styles.css?v=28">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=28" defer></script>
+  <script src="/app.js?v=29" defer></script>
 </body>
 </html>`;
 }
@@ -491,7 +491,7 @@ export function renderAddPage(): string {
   const body = `<section class="add-grid add-options">
     <div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form></div>
     <div class="add-file-options"><div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="single-pdf-input">${uploadIcon()}<span>Choose file</span></label><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required class="sr-only" data-single-pdf-input></div></div><p class="form-status" role="status"></p></form></div>
-    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. The folder name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required class="sr-only" data-folder-pdf-input></div></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div></div>
+    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. Choose whether the folder name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple required class="sr-only" data-folder-pdf-input></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
   <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" data-pdf-status></span>${formActions({}, false, "paper-form-new")}</div></div><div data-preview-form>${renderPaperForm(undefined, "add", true)}</div><div class="warnings" data-warnings></div></section>`;
   return layout("Add paper", body);

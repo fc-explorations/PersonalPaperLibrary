@@ -578,6 +578,11 @@ document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => bu
   setStatus(form, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
 }));
 
+document.querySelectorAll("[data-folder-tag-toggle]").forEach((toggle) => toggle.addEventListener("change", () => {
+  const valueLabel = toggle.closest("[data-bulk-upload-form]")?.querySelector("[data-folder-tag-value]");
+  if (valueLabel) valueLabel.textContent = String(toggle.checked);
+}));
+
 document.querySelector("[data-import-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -641,6 +646,8 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
     if (folderTag) formData.set("folderTag", folderTag);
+    const useFolderAsTag = form.querySelector("[data-folder-tag-toggle]");
+    formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
     const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
     setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}${body.folderTag ? `; tagged as “${body.folderTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");

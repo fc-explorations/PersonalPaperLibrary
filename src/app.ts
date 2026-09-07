@@ -136,6 +136,15 @@ function folderTagFromInput(value: unknown): string | undefined {
   return clean ? normalizeTagName(clean).slice(0, 100) : undefined;
 }
 
+function booleanInput(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return fallback;
+  const clean = value.trim();
+  if (/^(false|0|off|no)$/i.test(clean)) return false;
+  if (/^(true|1|on|yes)$/i.test(clean)) return true;
+  return fallback;
+}
+
 function uploadedFile(value: unknown): File | undefined {
   const candidate = Array.isArray(value) ? value[0] : value;
   return typeof candidate !== "string" && Boolean(candidate) && "arrayBuffer" in (candidate as object) ? candidate as File : undefined;
@@ -784,7 +793,8 @@ export function createApp(dependencies: AppDependencies = {}) {
     const failed: Array<{ filename: string; reason: string }> = [];
     try {
       const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
-      const folderTag = folderTagFromInput(body.folderTag);
+      const useFolderAsTag = booleanInput(body.useFolderAsTag, true);
+      const folderTag = useFolderAsTag ? folderTagFromInput(body.folderTag) : undefined;
       const rawFiles = body.files;
       const candidates = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((file): file is File => typeof file !== "string" && Boolean(file) && "arrayBuffer" in file);
       const files = candidates.filter((file) => /\.pdf$/i.test(file.name || ""));

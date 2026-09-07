@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdown, renderSettingsPage } from "../src/views.js";
+import { renderAddPage, renderMarkdown, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -37,5 +37,15 @@ describe("analysis Markdown rendering", () => {
 
     expect(html).toContain("<code>p_\\theta(x)</code>");
     expect(html).not.toContain("\\(p_\\theta(x)\\)");
+  });
+});
+
+describe("add page rendering", () => {
+  it("shows the folder-tag switch enabled by default", () => {
+    const html = renderAddPage();
+
+    expect(html).toContain('data-folder-tag-toggle checked');
+    expect(html).toContain('data-folder-tag-value>True</span>');
+    expect(html).toContain("Use folder as tag");
   });
 });
