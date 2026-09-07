@@ -216,12 +216,11 @@ restoreBackupInput?.addEventListener("change", () => {
 restoreBackupForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  if (!window.confirm("Restore this backup? Existing papers will be preserved and matching records will be skipped.")) return;
-  setStatus(form, "Restoring backup…");
+  if (!window.confirm("Restore this snapshot? It will replace the current library. Restart the app after staging completes.")) return;
+  setStatus(form, "Staging snapshot…");
   try {
     const body = await jsonRequest("/api/import/backup", { method: "POST", body: new FormData(form) });
-    setStatus(form, `Restored ${body.restored} paper${body.restored === 1 ? "" : "s"}; skipped ${body.skipped}. Reloading…`);
-    window.setTimeout(() => window.location.reload(), 400);
+    setStatus(form, body.restartRequired ? "Snapshot staged. Restart the app to replace the current library." : "Snapshot restored.");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
@@ -627,25 +626,36 @@ folderPdfInput?.addEventListener("change", () => {
   if (folderPdfInput.files.length && folderPdfInput.form) folderPdfInput.form.requestSubmit();
 });
 
+const folderZipInput = document.querySelector("[data-folder-zip-input]");
+folderZipInput?.addEventListener("change", () => {
+  if (folderZipInput.files.length && folderZipInput.form) folderZipInput.form.requestSubmit();
+});
+
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const files = [...form.querySelector("input[type=file]").files];
+  const files = [...form.querySelectorAll("input[type=file]")].flatMap((input) => [...input.files]);
   const pdfFiles = files.filter((file) => /\.pdf$/i.test(file.name));
-  if (!pdfFiles.length) {
-    setStatus(form, "No PDF files found in the selected folder.");
+  const zipFiles = files.filter((file) => /\.zip$/i.test(file.name));
+  if (!pdfFiles.length && !zipFiles.length) {
+    setStatus(form, "Choose a folder or ZIP archive containing PDF files.");
     const results = form.querySelector("[data-bulk-results]");
     if (results) results.textContent = "";
     return;
   }
-  setStatus(form, `Importing ${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"}…`);
+  const importLabel = zipFiles.length
+    ? `${pdfFiles.length ? `${pdfFiles.length} local PDF${pdfFiles.length === 1 ? "" : "s"} and ` : ""}PDFs from ZIP`
+    : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"}`;
+  setStatus(form, `Importing ${importLabel}…`);
   try {
     const formData = new FormData(form);
     formData.delete("files");
     pdfFiles.forEach((file) => formData.append("files", file, file.name));
+    zipFiles.forEach((file) => formData.append("files", file, file.name));
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
-    if (folderTag) formData.set("folderTag", folderTag);
+    const archiveTag = zipFiles[0]?.name.replace(/\.zip$/i, "") || "";
+    if (folderTag || archiveTag) formData.set("folderTag", folderTag || archiveTag);
     const useFolderAsTag = form.querySelector("[data-folder-tag-toggle]");
     formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
     const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });

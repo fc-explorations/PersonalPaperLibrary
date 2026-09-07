@@ -63,7 +63,7 @@ The application stores its local data under `data/` (or under `DATA_DIR` when co
 
 Paper analysis questions are defined in [`config/questions.yaml`](./config/questions.yaml). Edit that file and restart the server to change the built-in Evaluate, Compare, and Review catalog. Additional per-paper open questions can be added from the paper page. AI provider settings, summaries, answers, and question definitions are stored in SQLite; OpenAI keys are kept in macOS Keychain (or read-only from `OPENAI_API_KEY`) and are never included in backups.
 
-This directory is intentionally ignored by Git. The Settings page provides **Download backup** and **Restore backup** controls for a portable JSON backup containing metadata, tags, and stored PDFs. Restore preserves existing papers and skips matching records. Keep backup files private because they contain the PDFs themselves.
+This directory is intentionally ignored by Git. The Settings page provides **Download snapshot** and **Restore snapshot** controls for a ZIP64 snapshot containing the SQLite database and stored PDFs. Restoring a snapshot replaces the current library and takes effect after restarting the app. Keep snapshot files private because they contain the PDFs and database contents.
 
 ## Scope
 
@@ -79,6 +79,7 @@ Optional environment variables:
 
 - `MAX_PDF_MB` — maximum PDF size; defaults to 50 MB.
 - `MAX_REQUEST_MB` — maximum request/backup size; defaults to 256 MB.
+- `MAX_BACKUP_MB` — maximum streamed snapshot upload size; defaults to 64 GiB.
 - `HOST` — bind address; defaults to `127.0.0.1`.
 - `APP_PASSWORD` — enables the login gate. It is required when `HOST` is not loopback.
 - `PUBLIC_ORIGIN` — expected origin for state-changing requests when the app is exposed behind a proxy.

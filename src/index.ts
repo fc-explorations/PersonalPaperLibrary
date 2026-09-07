@@ -3,8 +3,10 @@ import { createApp } from "./app.js";
 import { openDatabase } from "./db/database.js";
 import { PaperRepository } from "./repositories/papers.js";
 import { FileStorage } from "./services/storage.js";
+import { applyPendingSnapshot } from "./services/snapshot.js";
 
 const storage = new FileStorage();
+applyPendingSnapshot(storage.root);
 const db = openDatabase();
 const repository = new PaperRepository(db);
 await storage.cleanupStaging();

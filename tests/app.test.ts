@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "../src/app.js";
 import { FileStorage } from "../src/services/storage.js";
+import { createZip } from "../src/services/zip.js";
 
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
@@ -297,6 +298,25 @@ describe("HTTP application", () => {
     const papers = (await (await context.app.request("/api/papers")).json()).papers;
     expect(papers).toHaveLength(1);
     expect(papers[0].tags).toEqual([]);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("extracts PDFs from a ZIP during bulk import", async () => {
+    const context = testApp();
+    const archive = createZip([
+      { name: "papers/first_paper.pdf", data: pdf },
+      { name: "papers/notes.txt", data: new TextEncoder().encode("ignore this") },
+    ]);
+    const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
+    const form = new FormData();
+    form.append("files", new File([archiveBuffer], "papers.zip", { type: "application/zip" }));
+    const response = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.imported).toHaveLength(1);
+    expect(result.imported[0].filename).toBe("papers/first_paper.pdf");
+    expect(result.failed).toEqual([]);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

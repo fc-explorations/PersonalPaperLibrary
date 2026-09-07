@@ -246,6 +246,17 @@ export class PaperRepository {
     return { papers: this.list({ sort: "newest" }), tags: this.tags.list() };
   }
 
+  *iterateAll(batchSize = 500): Generator<PaperRecord> {
+    const size = Math.max(1, Math.floor(batchSize));
+    let lastRowid = 0;
+    while (true) {
+      const rows = this.db.prepare("SELECT p.*, p.rowid AS _rowid FROM papers p WHERE p.rowid > ? ORDER BY p.rowid LIMIT ?").all(lastRowid, size) as Array<PaperRow & { _rowid: number }>;
+      if (!rows.length) return;
+      for (const paper of this.hydrateMany(rows)) yield paper;
+      lastRowid = Number(rows[rows.length - 1]._rowid);
+    }
+  }
+
   private hydrate(row: PaperRow): PaperRecord {
     const authors = this.db.prepare("SELECT a.display_name FROM authors a JOIN paper_authors pa ON pa.author_id = a.id WHERE pa.paper_id = ? ORDER BY pa.author_order").all(row.id) as { display_name: string }[];
     const tags = this.db.prepare("SELECT t.name FROM tags t JOIN paper_tags pt ON pt.tag_id = t.id WHERE pt.paper_id = ? ORDER BY t.name COLLATE NOCASE").all(row.id) as { name: string }[];

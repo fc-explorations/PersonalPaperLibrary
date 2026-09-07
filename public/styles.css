@@ -71,6 +71,7 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 .55rem; }
 .form-actions .button, .inline-form .button { gap: 7px; white-space: nowrap; }
 .inline-form .button { flex: 0 0 auto; }
 .folder-import-controls { align-items: center; justify-content: space-between; gap: 16px; }
+.folder-import-pickers { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .folder-tag-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .86rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .folder-tag-toggle input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; }
 .toggle-track { display: inline-flex; width: 36px; height: 20px; align-items: center; padding: 2px; border-radius: 999px; background: #b8b5ad; transition: background .15s ease; }

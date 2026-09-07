@@ -1,4 +1,32 @@
 import { createReadStream, statSync } from "node:fs";
+import { Open } from "unzipper";
+
+export interface ExtractedZipFile {
+  name: string;
+  size: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+export async function extractPdfFiles(data: Uint8Array, maxPdfBytes: number): Promise<ExtractedZipFile[]> {
+  let directory;
+  try {
+    directory = await Open.buffer(Buffer.from(data));
+  } catch {
+    throw new Error("ZIP_INVALID");
+  }
+
+  return directory.files
+    .filter((entry) => entry.type === "File" && /\.pdf$/i.test(entry.path))
+    .map((entry) => ({
+      name: entry.path,
+      size: entry.uncompressedSize,
+      arrayBuffer: async () => {
+        if (entry.uncompressedSize > maxPdfBytes) throw new Error("PDF_TOO_LARGE");
+        const bytes = await entry.buffer();
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      },
+    }));
+}
 
 const crcTable = new Uint32Array(256);
 for (let index = 0; index < 256; index += 1) {

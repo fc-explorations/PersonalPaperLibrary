@@ -28,7 +28,8 @@ import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } fr
 import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
 import { groupLibraryResults } from "./services/library-query.js";
 import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
-import { createZipStream } from "./services/zip.js";
+import { createZipStream, extractPdfFiles, type ExtractedZipFile } from "./services/zip.js";
+import { createSnapshotArchive, receiveSnapshotUpload, stageSnapshotRestore } from "./services/snapshot.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { suggestTags } from "./services/tag-suggestions.js";
@@ -49,9 +50,11 @@ export interface AppDependencies {
   pdfTextExtractor?: PdfTextExtractor;
   pdfExcerptTextExtractor?: PdfTextExtractor;
   keychain?: KeychainAdapter;
+  maxBackupBytes?: number;
 }
 
 const DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_BACKUP_BYTES = 64 * 1024 * 1024 * 1024;
 const SESSION_COOKIE = "ppl_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 const LIBRARY_PAGE_SIZE = 50;
@@ -174,8 +177,6 @@ function pdfFilename(title: string, used: Set<string>): string {
 }
 
 type StagedPdfResult = { status: "not_found" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
-
-const BACKUP_VERSION = 2;
 
 async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
   let target = new URL(url);
@@ -306,11 +307,13 @@ export function createApp(dependencies: AppDependencies = {}) {
   const fetcher = dependencies.fetcher || fetch;
   const maxPdfBytes = dependencies.maxPdfBytes ?? (Number(process.env.MAX_PDF_MB || 50) * 1024 * 1024 || DEFAULT_MAX_PDF_BYTES);
   const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
+  const maxBackupBytes = dependencies.maxBackupBytes ?? (Number(process.env.MAX_BACKUP_MB || 64 * 1024) * 1024 * 1024 || DEFAULT_MAX_BACKUP_BYTES);
   const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
   const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
   const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number; appendixExcluded?: boolean }>();
   let libraryIndexProgress: { active: boolean; phase?: "abstracts" | "embeddings"; requested: number; processed: number; total: number; startedAt?: string; etaSeconds?: number; error?: string } = { active: false, requested: 0, processed: 0, total: 0 };
+  let snapshotMaintenance: "backup" | "restore" | null = null;
 
   function selectedLlm(settings: AiSettings, summaryModel?: string): { provider: LlmProvider; model: string; client: LlmClient } {
     if (settings.provider === "ollama") {
@@ -483,7 +486,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
   app.use("*", async (c, next) => {
     const contentLength = Number(c.req.header("content-length") || 0);
-    if (contentLength > maxRequestBytes) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The request is larger than the configured limit.");
+    const requestLimit = c.req.path === "/api/import/backup" ? maxBackupBytes : maxRequestBytes;
+    if (contentLength > requestLimit) return jsonError(c, 413, c.req.path === "/api/import/backup" ? "SNAPSHOT_TOO_LARGE" : "REQUEST_TOO_LARGE", "The request is larger than the configured limit.");
     return next();
   });
   app.use("*", async (c, next) => {
@@ -496,6 +500,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       const origin = c.req.header("origin");
       const expectedOrigin = process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
       if (origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
+      if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", `The library is temporarily unavailable while a snapshot ${snapshotMaintenance} is in progress.`);
     }
     return next();
   });
@@ -797,7 +802,12 @@ export function createApp(dependencies: AppDependencies = {}) {
       const folderTag = useFolderAsTag ? folderTagFromInput(body.folderTag) : undefined;
       const rawFiles = body.files;
       const candidates = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((file): file is File => typeof file !== "string" && Boolean(file) && "arrayBuffer" in file);
-      const files = candidates.filter((file) => /\.pdf$/i.test(file.name || ""));
+      const files: Array<File | ExtractedZipFile> = candidates.filter((file) => /\.pdf$/i.test(file.name || ""));
+      const zipFiles = candidates.filter((file) => /\.zip$/i.test(file.name || ""));
+      for (const zipFile of zipFiles) {
+        const extracted = await extractPdfFiles(new Uint8Array(await zipFile.arrayBuffer()), maxPdfBytes);
+        files.push(...extracted);
+      }
       if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
       if (!files.length) return c.json({ imported, skipped, failed, folderTag });
       if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
@@ -1200,73 +1210,44 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.get("/api/export/metadata", (c) => {
-    c.header("Content-Disposition", "attachment; filename=paper-library.json");
-    return c.json(repo.exportData());
+    const lines = (function* () {
+      yield `${JSON.stringify({ format: "personal-paper-library-metadata", formatVersion: 1, appVersion: "2.0.1", tags: repo.tags.list() })}\n`;
+      for (const paper of repo.iterateAll()) yield `${JSON.stringify({ paper })}\n`;
+    })();
+    c.header("Content-Disposition", "attachment; filename=paper-library-metadata.ndjson");
+    c.header("Content-Type", "application/x-ndjson; charset=utf-8");
+    return c.body(Readable.toWeb(Readable.from(lines)) as ReadableStream, 200);
   });
 
   app.get("/api/export/backup", async (c) => {
-    const exported = repo.exportData();
-    const papers = await Promise.all(exported.papers.map(async (paper) => {
-      const bytes = paper.r2Key ? await storage.get(paper.id) : null;
-      return { paper, pdfBase64: bytes?.toString("base64") };
-    }));
-    const analysisData = analysis.exportData(new Set(exported.papers.map((paper) => paper.id)));
-    c.header("Content-Disposition", "attachment; filename=paper-library-backup.json");
-    return c.json({ version: BACKUP_VERSION, exportedAt: new Date().toISOString(), papers, tags: exported.tags, analysis: analysisData });
+    if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", "A snapshot operation is already in progress.");
+    snapshotMaintenance = "backup";
+    try {
+      const snapshot = await createSnapshotArchive(db, storage);
+      const release = () => { if (snapshotMaintenance === "backup") snapshotMaintenance = null; };
+      snapshot.done.then(release, release);
+      c.header("Content-Disposition", "attachment; filename=paper-library-snapshot.zip");
+      c.header("Content-Type", "application/zip");
+      return c.body(snapshot.stream, 200);
+    } catch (error) {
+      snapshotMaintenance = null;
+      return jsonError(c, 500, errorMessage(error), "The snapshot could not be created.");
+    }
   });
 
   app.post("/api/import/backup", async (c) => {
+    if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", "A snapshot operation is already in progress.");
+    snapshotMaintenance = "restore";
     try {
-      const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
-      const file = uploadedFile(body.backup);
-      if (!file) return jsonError(c, 400, "BACKUP_REQUIRED", "Choose a PersonalPaperLibrary backup file.");
-      if (file.size > maxRequestBytes) return jsonError(c, 413, "BACKUP_TOO_LARGE", "The backup is larger than the configured request limit.");
-      const backup = JSON.parse(new TextDecoder().decode(await file.arrayBuffer())) as { version?: number; papers?: Array<{ paper?: Record<string, unknown>; pdfBase64?: string }>; analysis?: { summaries?: Array<Record<string, unknown>>; questions?: Array<Record<string, unknown>>; answers?: Array<Record<string, unknown>> } };
-      if ((backup.version !== 1 && backup.version !== BACKUP_VERSION) || !Array.isArray(backup.papers)) return jsonError(c, 400, "BACKUP_INVALID", "This is not a supported PersonalPaperLibrary backup.");
-      let restored = 0;
-      let skipped = 0;
-      for (const entry of backup.papers) {
-        const record = entry.paper;
-        if (!record || typeof record.id !== "string" || !/^[a-z0-9_-]+$/i.test(record.id) || typeof record.title !== "string" || !record.title.trim()) {
-          skipped++;
-          continue;
-        }
-        if (repo.findById(record.id) || repo.findDuplicate(record as unknown as PaperDraftInput, typeof record.pdfSha256 === "string" ? record.pdfSha256 : undefined)) {
-          skipped++;
-          continue;
-        }
-        let stored: { key: string; sha256: string } | undefined;
-        try {
-          if (entry.pdfBase64) {
-            const bytes = Uint8Array.from(Buffer.from(entry.pdfBase64, "base64"));
-            validatePdf(bytes, `${record.id}.pdf`, maxPdfBytes);
-            stored = await storage.put(record.id, bytes);
-          }
-          repo.create({ ...record, id: record.id, tags: Array.isArray(record.tags) ? record.tags : [] } as PaperDraftInput, stored);
-          if (backup.version === BACKUP_VERSION && backup.analysis) {
-            const summary = backup.analysis.summaries?.find((item) => item.paperId === record.id);
-            if (summary && typeof summary.content === "string" && typeof summary.provider === "string" && typeof summary.model === "string" && typeof summary.generatedAt === "string" && typeof summary.promptVersion === "string") {
-              analysis.saveSummary({ paperId: record.id, content: summary.content, provider: summary.provider, model: summary.model, generatedAt: summary.generatedAt, durationMs: typeof summary.durationMs === "number" ? summary.durationMs : undefined, sourcePdfSha256: typeof summary.sourcePdfSha256 === "string" ? summary.sourcePdfSha256 : undefined, promptVersion: summary.promptVersion, status: summary.status === "stale" || summary.status === "error" ? summary.status : "complete", errorMessage: typeof summary.errorMessage === "string" ? summary.errorMessage : undefined });
-            }
-            analysis.ensureQuestions(record.id);
-            for (const question of backup.analysis.questions || []) {
-              if (question.paperId !== record.id || typeof question.questionId !== "string" || typeof question.groupId !== "string" || typeof question.groupTitle !== "string" || typeof question.groupDescription !== "string" || typeof question.label !== "string" || typeof question.prompt !== "string" || typeof question.definitionHash !== "string") continue;
-              analysis.saveQuestion(record.id, { id: question.questionId, groupId: question.groupId, groupTitle: question.groupTitle, groupDescription: question.groupDescription, label: question.label, prompt: question.prompt, order: Number(question.order) || 0, definitionHash: question.definitionHash, isCustom: Boolean(question.isCustom), isActive: question.isActive === false ? false : true });
-            }
-            for (const answer of backup.analysis.answers || []) {
-              if (answer.paperId !== record.id || typeof answer.questionId !== "string" || typeof answer.content !== "string" || typeof answer.provider !== "string" || typeof answer.model !== "string" || typeof answer.generatedAt !== "string" || typeof answer.promptVersion !== "string") continue;
-              analysis.saveAnswer(record.id, answer.questionId, { content: answer.content, provider: answer.provider, model: answer.model, generatedAt: answer.generatedAt, durationMs: typeof answer.durationMs === "number" ? answer.durationMs : undefined, sourcePdfSha256: typeof answer.sourcePdfSha256 === "string" ? answer.sourcePdfSha256 : undefined, promptVersion: answer.promptVersion, questionDefinitionHash: typeof answer.questionDefinitionHash === "string" ? answer.questionDefinitionHash : undefined, status: answer.status === "stale" || answer.status === "error" ? answer.status : "complete", errorMessage: typeof answer.errorMessage === "string" ? answer.errorMessage : undefined });
-            }
-          }
-          restored++;
-        } catch (error) {
-          if (stored) await storage.delete(record.id);
-          throw error;
-        }
-      }
-      return c.json({ ok: true, restored, skipped });
+      const archivePath = await receiveSnapshotUpload(c.req.raw, storage.root, maxBackupBytes);
+      const staged = await stageSnapshotRestore(archivePath, storage.root);
+      return c.json({ ok: true, mode: "snapshot", token: staged.token, restartRequired: true });
     } catch (error) {
-      return jsonError(c, 400, errorMessage(error), "The backup could not be restored.");
+      const message = errorMessage(error);
+      const status = message === "SNAPSHOT_TOO_LARGE" ? 413 : 400;
+      return jsonError(c, status, message, "The snapshot could not be staged.");
+    } finally {
+      snapshotMaintenance = null;
     }
   });
 
