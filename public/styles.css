@@ -214,6 +214,7 @@ select { width: auto; min-width: 150px; }
 .analysis-section > summary::-webkit-details-marker, .question-group > summary::-webkit-details-marker, .add-question-form > summary::-webkit-details-marker, .bibtex-section > summary::-webkit-details-marker { display: none; }
 .analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before { width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
 .analysis-section[open] > summary::before, .question-group[open] > summary::before, .add-question-form[open] > summary::before, .bibtex-section[open] > summary::before { transform: rotate(90deg); }
+.analysis-section > summary::before { color: var(--text); }
 .analysis-body, .question-group-body { padding-top: 22px; }
 .analysis-body { display: grid; grid-template-columns: minmax(0, 1fr) var(--analysis-action-width); column-gap: 32px; align-items: start; }
 .analysis-content { overflow-wrap: anywhere; }
