@@ -60,6 +60,13 @@ export function splitTextIntoPageChunks(text: string, pagesPerChunk = 4): string
   return chunks;
 }
 
+export function takeFirstPages(text: string, pageCount = 4): string {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized || pageCount < 1) return normalized;
+  const pages = normalized.split("\f").map((page) => page.trim()).filter(Boolean);
+  return pages.length <= pageCount ? normalized : pages.slice(0, pageCount).join("\n\n");
+}
+
 export function hasRequiredSummaryHeadings(content: string): boolean {
   return SUMMARY_HEADINGS.every((heading) => new RegExp(`^#{1,6}\\s+${heading.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s*$`, "mi").test(content));
 }

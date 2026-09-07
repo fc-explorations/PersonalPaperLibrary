@@ -80,7 +80,7 @@ function paperValues(id: string, input: PaperDraftInput, file: { key: string; sh
     id, arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null,
     input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null,
     input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null,
-    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl), normalizeUrl(input.arxivUrl),
+    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null,
     file?.key || null, file?.sha256 || null, input.metadataSource || (arxivId ? "arxiv" : "manual"), now, now,
     authors,
   ];
@@ -158,7 +158,7 @@ export class D1PaperRepository {
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
     const arxivBaseId = arxivId?.replace(/v\d+$/i, "");
     await batch(this.db, [
-      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl), normalizeUrl(input.arxivUrl), file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
+      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null, file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
       { query: "DELETE FROM paper_authors WHERE paper_id = ?", values: [id] },
       { query: "DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM paper_authors)" },
       ...authorStatements(id, authors),

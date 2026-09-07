@@ -11,6 +11,9 @@ a { color: var(--accent); }
 .cloud-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: .9rem; font-weight: 700; }
 .cloud-form-grid input { min-width: 0; color: var(--text); font-weight: 400; }
 .cloud-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.analysis-result { max-width: 78ch; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--section-surface); }
+.analysis-result strong { display: block; margin-bottom: 6px; color: var(--accent); }
+.analysis-result pre { margin: 0; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.55; }
 @media (max-width: 720px) { .cloud-form-grid { grid-template-columns: 1fr; } }
 .site-header { background: transparent; }
 .site-header .shell { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }

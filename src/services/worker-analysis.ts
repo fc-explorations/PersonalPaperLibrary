@@ -3,7 +3,7 @@ import { D1AnalysisRepository } from "../repositories/d1-analysis.js";
 import { D1PaperRepository } from "../repositories/d1-papers.js";
 import type { D1Database } from "../cloudflare/d1.js";
 import { OpenAiLlmClient, type LlmClient } from "./llm.js";
-import { excludeAppendixMaterial, hasRequiredSummaryHeadings, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, QUESTION_PROMPT_VERSION } from "./pdf-analysis-core.js";
+import { excludeAppendixMaterial, hasRequiredSummaryHeadings, splitTextIntoPageChunks, takeFirstPages, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, QUESTION_PROMPT_VERSION } from "./pdf-analysis-core.js";
 import type { R2BucketLike } from "./r2-storage.js";
 import type { AiSettings, QuestionAnswer, SummaryRecord } from "../repositories/analysis.js";
 
@@ -54,7 +54,7 @@ async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r
     { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
   );
   if (result.format === "error" || !result.data?.trim()) throw new Error(result.error || "PDF_TEXT_EMPTY");
-  return { text: result.data.trim(), sha256: paper.pdfSha256 };
+  return { text: takeFirstPages(result.data.trim(), 4), sha256: paper.pdfSha256 };
 }
 
 function messages(content: string) {
