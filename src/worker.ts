@@ -5,6 +5,7 @@ import { D1AnalysisRepository } from "./repositories/d1-analysis.js";
 import { D1AnalysisJobRepository } from "./repositories/d1-analysis-jobs.js";
 import { D1PaperRepository, type D1TagFilterMode } from "./repositories/d1-papers.js";
 import { R2Storage, type R2BucketLike } from "./services/r2-storage.js";
+import { executeAnalysisJob, type WorkersAiMarkdownBinding } from "./services/worker-analysis.js";
 import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
 import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput } from "./types.js";
@@ -38,6 +39,7 @@ export interface CloudflareBindings {
   MAX_PDF_BYTES?: string;
   OPENAI_API_KEY?: string;
   ANALYSIS_QUEUE?: AnalysisQueue;
+  AI?: WorkersAiMarkdownBinding;
 }
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -267,6 +269,7 @@ app.post("/api/papers", async (c) => {
       throw error;
     }
   } catch (error) {
+    console.error("hosted paper save failed", errorMessage(error));
     return jsonError(c, 400, errorMessage(error), "The paper could not be saved.");
   }
 });
@@ -400,7 +403,11 @@ const worker = {
           message.ack();
           continue;
         }
-        await jobs.fail(claimed.id, "PDF_EXTRACTOR_UNAVAILABLE", "Analysis is queued, but a Worker-compatible PDF extractor has not been configured.");
+        try {
+          await executeAnalysisJob(env, claimed);
+        } catch (error) {
+          await jobs.fail(claimed.id, errorMessage(error), errorMessage(error));
+        }
         message.ack();
       } catch {
         message.retry();

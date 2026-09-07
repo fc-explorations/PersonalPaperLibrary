@@ -71,16 +71,19 @@ Version 1 focuses on arXiv and title/DOI imports, individual and bulk local PDF 
 
 Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv page, then the DOI resolver, then a publisher landing page, over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
 
-The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker now has a separate D1/R2 API slice; the full browser application, PDF extraction, analysis jobs, backup/restore, and production Access setup remain separate deployment phases.
+The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker now has a separate D1/R2 API slice; the full browser application, PDF extraction, analysis execution, backup/restore, and remaining production hardening are separate deployment phases.
 
 ## Cloudflare scaffold
 
 The repository includes a Worker entry point and Wrangler bindings for the
 `personal-paper-library` D1 database and R2 bucket. It exposes `/api/health`,
 paper listing/creation/deletion, tag creation, PDF staging, and PDF reads. The
-hosted API also persists AI settings, summaries, and custom questions in D1;
-summary/question generation remains disabled until a Worker-compatible PDF
-extractor and job runner are added. The
+hosted API also persists AI settings, summaries, custom questions, and durable
+analysis jobs in D1. Summary/question requests are dispatched through the
+`personal-paper-library-analysis` Cloudflare Queue. The consumer extracts PDF
+text with the Workers AI `toMarkdown` binding and uses the configured OpenAI
+provider when its Worker Secret is present; hosted Ollama is intentionally
+rejected until a secured reachable endpoint is supplied. The
 hosted API requires Cloudflare Access when `ACCESS_REQUIRED=true` and verifies
 the Access JWT against the configured team domain and audience.
 
@@ -89,6 +92,13 @@ npm run cf:dev       # Run the Worker locally with Wrangler
 npm run cf:deploy    # Deploy after configuring Access variables
 npm run cf:migrate   # Apply migrations/cloudflare migrations remotely
 npm run cf:tail      # Tail deployed Worker logs
+```
+
+Hosted analysis requires an OpenAI Worker Secret. Set it without committing the
+credential:
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
 ```
 
 The cloud baseline is in `migrations/cloudflare/` and has been applied to the

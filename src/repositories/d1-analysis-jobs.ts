@@ -76,6 +76,18 @@ export class D1AnalysisJobRepository {
     return job?.status === "running" ? job : null;
   }
 
+  async updatePhase(id: string, phase: string): Promise<AnalysisJob | null> {
+    const now = new Date().toISOString();
+    await this.db.prepare("UPDATE analysis_jobs SET phase = ?, updated_at = ? WHERE id = ? AND status = 'running'").bind(phase, now, id).run();
+    return this.get(id);
+  }
+
+  async complete(id: string): Promise<AnalysisJob | null> {
+    const now = new Date().toISOString();
+    await this.db.prepare("UPDATE analysis_jobs SET status = 'complete', phase = 'complete', updated_at = ?, completed_at = ? WHERE id = ? AND status = 'running'").bind(now, now, id).run();
+    return this.get(id);
+  }
+
   async fail(id: string, errorCode: string, errorMessage: string): Promise<AnalysisJob | null> {
     const now = new Date().toISOString();
     await this.db.prepare("UPDATE analysis_jobs SET status = 'error', phase = 'failed', error_code = ?, error_message = ?, updated_at = ?, completed_at = ? WHERE id = ? AND status IN ('queued', 'running')").bind(errorCode, errorMessage, now, now, id).run();

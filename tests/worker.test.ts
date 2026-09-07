@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker, { type CloudflareBindings } from "../src/worker.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
@@ -159,5 +159,39 @@ describe("Cloudflare Worker API", () => {
     const summary = await worker.request(`/api/papers/${paper.id}/summary`, {}, env);
     expect((await summary.json() as { summary: null; generation: string }).generation).toBe("not_available");
     env.d1.db.close();
+  });
+
+  it("extracts and completes a queued hosted summary", async () => {
+    const env = bindings();
+    const form = new FormData();
+    form.set("file", new File([pdf], "paper.pdf", { type: "application/pdf" }));
+    const upload = await worker.request("/api/uploads", { method: "POST", body: form }, env);
+    const stagingToken = (await upload.json() as { pdf: { stagingToken: string } }).pdf.stagingToken;
+    const create = await worker.request("/api/papers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Queued analysis paper", stagingToken, metadataSource: "manual" }),
+    }, env);
+    const paperId = (await create.json() as { paper: { id: string } }).paper.id;
+    const messages: Array<{ jobId: string }> = [];
+    env.ANALYSIS_QUEUE = { send: async (message) => { messages.push(message); } };
+    env.AI = { toMarkdown: async () => ({ format: "text", data: "Paper text extracted from the hosted PDF." }) };
+    env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ choices: [{ message: { content: "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG" } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const queued = await worker.request(`/api/papers/${paperId}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "quick" }) }, env);
+      expect(queued.status).toBe(202);
+      const acknowledged: string[] = [];
+      await worker.queue({ messages: [{ body: messages[0], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
+      expect(acknowledged).toEqual(["ack"]);
+      const progress = await worker.request(`/api/papers/${paperId}/summary/progress`, {}, env);
+      const result = await progress.json() as { job: { status: string }; };
+      expect(result.job.status).toBe("complete");
+      const summary = await worker.request(`/api/papers/${paperId}/summary`, {}, env);
+      expect((await summary.json() as { summary: { status: string } }).summary.status).toBe("complete");
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
   });
 });

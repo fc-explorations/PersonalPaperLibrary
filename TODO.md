@@ -13,8 +13,8 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, and a small hosted paper-library UI are deployed at `https://personal-paper-library.xfcosta.workers.dev`; the full browser application and remaining adapters are still pending.
-- Remote migration status: the cloud baseline has been applied to the remote D1 database after Wrangler authentication and verified with a read-only table query.
+- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a small hosted paper-library UI are deployed at `https://personal-paper-library.xfcosta.workers.dev`; the full browser application and remaining adapters are still pending.
+- Remote migration status: the cloud baseline and `0002_analysis_jobs.sql` have been applied to the remote D1 database after Wrangler authentication and verified with read-only table queries.
 
 ## Non-goals
 
@@ -40,7 +40,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [ ] Audit the Worker bundle and list every Node-only import reachable from hosted routes: native SQLite, filesystem, child processes, Keychain, Node server startup, ZIP/archive libraries, and environment access.
 - [ ] Build a minimal Worker/Hono entry point that serves the current health check and static assets.
 - [ ] Prototype the D1 repository contract against the current schema, including transactions and the queries used by library search, tags, analysis, and snapshots.
-- [ ] Test at least two Worker-compatible PDF extraction options against representative papers: text PDF, malformed PDF, encrypted PDF, scanned/image-only PDF, large PDF, and a paper with appendices.
+- [ ] Test the Workers AI `toMarkdown` PDF extractor against representative papers: text PDF, malformed PDF, encrypted PDF, scanned/image-only PDF, large PDF, and a paper with appendices; compare a second option if coverage is insufficient.
 - [ ] Measure the largest expected upload, extracted text, prompt, and analysis duration against Worker request/body/CPU/memory/subrequest limits.
 - [ ] Compare analysis execution designs: synchronous/streamed request, Durable Objects state, and Queues/Workflows. Choose one based on resumability, cost, and operational complexity.
 - [ ] Decide whether hosted uploads are proxied through the Worker or use browser-to-R2 upload for large files.
@@ -68,7 +68,8 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Add an initial hosted UI for search, PDF upload, metadata save, PDF viewing, and deletion.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
 - [x] Store PDFs in R2 under stable paper IDs for the hosted API slice; keep only object keys and SHA-256 hashes in D1.
-- [x] Persist hosted AI settings, summaries, custom questions, and answer-compatible records in D1; generation remains disabled pending Worker extraction/jobs.
+- [x] Persist hosted AI settings, summaries, custom questions, answer-compatible records, and durable analysis job state in D1.
+- [x] Add Cloudflare Queue dispatch and a fail-safe consumer for hosted analysis jobs; execution remains pending a Worker-compatible PDF extractor and provider path.
 - [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
 - [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
 - [ ] Add separate local, preview, and production bindings without committing secrets.
@@ -92,7 +93,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Implement the standalone R2 adapter for upload, read, replace, delete, temporary staging, and recovery.
 - [ ] Replace local staging/trash directories with temporary R2 prefixes and lifecycle cleanup.
 - [ ] Preserve SHA-256 calculation and stale-summary/stale-answer behavior after replacement.
-- [ ] Replace `pdftotext -layout` with the extractor selected in Phase 0; keep the local `pdftotext` adapter unchanged.
+- [x] Add a Worker-compatible PDF extractor using the Workers AI `toMarkdown` binding; keep the local `pdftotext` adapter unchanged.
 - [ ] Define behavior for scanned/image-only PDFs, malformed PDFs, encrypted PDFs, unsupported PDFs, extraction timeouts, and truncated text.
 - [ ] Ensure extraction failures never create partial summaries or answers.
 - [ ] Decide and implement whether extraction runs during upload, on demand, or in the analysis job.
@@ -108,8 +109,11 @@ These spikes should happen before a large migration. Record the result of each d
 - [ ] Treat Ollama as local-only unless the owner supplies a reachable HTTPS endpoint, authentication, and a clear SSRF-safe policy.
 - [ ] Never silently fall back between OpenAI and Ollama.
 - [ ] Add provider timeouts, bounded retries, cancellation, and actionable error reporting.
-- [ ] Select and implement the Phase 0 job design.
-- [ ] Persist job state so reloads show `queued`, `running`, `complete`, `stale`, `cancelled`, or `error`.
+- [x] Select Cloudflare Queues with D1 job state for hosted analysis dispatch.
+- [x] Implement the Worker-compatible analysis executor so queued jobs reach `complete` or actionable `error` after extraction/provider wiring.
+- [x] Configure the hosted OpenAI Worker Secret.
+- [ ] Run an authenticated live summary/question smoke test.
+- [ ] Extend job state and UI coverage so reloads show `queued`, `running`, `complete`, `stale`, `cancelled`, or `error`.
 - [ ] Preserve bounded digest/chunk parallelism while respecting provider and Worker subrequest limits.
 - [ ] Make progress resumable after transient failures; persist each completed answer immediately.
 - [ ] Make “Generate all answers” skip complete answers and prevent overlapping jobs for the same paper.
