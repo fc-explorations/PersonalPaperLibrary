@@ -29,7 +29,7 @@ describe("HTTP application", () => {
     expect(importResponse.status).toBe(200);
     const imported = await importResponse.json();
     expect(imported.paper.title).toBe("Test arXiv Paper");
-    expect(imported.paper.acceptedVenue).toBe("NeurIPS 2024");
+    expect(imported.paper.acceptedVenue).toBe("NeurIPS");
     expect(imported.pdf.status).toBe("staged");
     const stagedPdfResponse = await context.app.request(`/api/staging/${imported.pdf.stagingToken}/pdf`);
     expect(stagedPdfResponse.status).toBe(200);
@@ -43,8 +43,8 @@ describe("HTTP application", () => {
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
     const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
-    expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS 2024</dd>");
-    expect(paperPage).toContain("booktitle = {NeurIPS 2024}");
+    expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS</dd>");
+    expect(paperPage).toContain("booktitle = {NeurIPS}");
     expect(paperPage).toContain("data-copy-citation");
     expect(paperPage).not.toContain('aria-label="Open PDF"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);

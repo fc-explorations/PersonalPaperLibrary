@@ -2,7 +2,7 @@ import { openDatabase } from "./database.js";
 import { PaperRepository } from "../repositories/papers.js";
 import { FileStorage } from "../services/storage.js";
 import { extractPdfMetadata } from "../services/pdf-metadata.js";
-import { normalizeArxivInput, fetchArxivMetadata, parseAcceptedVenue } from "../services/arxiv.js";
+import { normalizeArxivInput, fetchArxivMetadata, parseAcceptedVenue, parseAcceptedVenueYear } from "../services/arxiv.js";
 import { lookupCrossref } from "../services/crossref.js";
 
 const db = openDatabase();
@@ -37,6 +37,8 @@ for (const paper of repo.list({ sort: "newest" })) {
     }
   }
   const metadata = arxivMetadata || citationMetadata;
+  const acceptedVenue = arxivMetadata?.acceptedVenue || parseAcceptedVenue(citationMetadata?.journalRef) || parseAcceptedVenue(extracted.journalRef) || parseAcceptedVenue(paper.journalRef) || paper.acceptedVenue;
+  const acceptedVenueYear = arxivMetadata?.year || parseAcceptedVenueYear(citationMetadata?.journalRef) || parseAcceptedVenueYear(extracted.journalRef) || parseAcceptedVenueYear(paper.journalRef) || parseAcceptedVenueYear(paper.acceptedVenue);
   if (!extracted.authors.length && !extracted.year && !extracted.journalRef && !extracted.arxivId && !metadata) {
     skipped++;
     continue;
@@ -44,14 +46,14 @@ for (const paper of repo.list({ sort: "newest" })) {
   const refreshed = repo.update(paper.id, {
     title: paper.title,
     authors: arxivMetadata ? arxivMetadata.authors : citationMetadata?.authors.length ? citationMetadata.authors : extracted.authors.length ? extracted.authors : paper.authors,
-    year: arxivMetadata ? arxivMetadata.year : citationMetadata?.year || extracted.year || paper.year,
+    year: acceptedVenueYear || (arxivMetadata ? arxivMetadata.year : citationMetadata?.year || extracted.year || paper.year),
     publishedDate: arxivMetadata ? arxivMetadata.publishedDate : citationMetadata?.publishedDate || paper.publishedDate,
     updatedDate: arxivMetadata ? arxivMetadata.updatedDate : paper.updatedDate,
     abstract: arxivMetadata ? arxivMetadata.abstract : citationMetadata?.abstract || paper.abstract,
     primaryCategory: arxivMetadata ? arxivMetadata.primaryCategory : paper.primaryCategory,
     categories: arxivMetadata ? arxivMetadata.categories : citationMetadata?.categories.length ? citationMetadata.categories : paper.categories,
     journalRef: arxivMetadata ? arxivMetadata.journalRef : citationMetadata?.journalRef || extracted.journalRef || paper.journalRef,
-    acceptedVenue: arxivMetadata?.acceptedVenue || parseAcceptedVenue(citationMetadata?.journalRef) || parseAcceptedVenue(extracted.journalRef) || parseAcceptedVenue(paper.journalRef) || paper.acceptedVenue,
+    acceptedVenue,
     doi: arxivMetadata ? arxivMetadata.doi : citationMetadata?.doi || paper.doi,
     arxivId: arxivMetadata ? arxivMetadata.arxivId : extracted.arxivId || paper.arxivId,
     arxivUrl: arxivMetadata ? arxivMetadata.arxivUrl : paper.arxivUrl,
