@@ -10,7 +10,7 @@ a { color: var(--accent); }
 .site-header .wordmark-paper { -webkit-text-stroke-width: 4px; }
 .brand { color: var(--text); font-weight: 700; letter-spacing: -.02em; text-decoration: none; }
 .site-header .brand { position: relative; display: inline-block; }
-.site-header .brand::after { content: ""; position: absolute; z-index: 0; left: 0; bottom: .08em; width: 0; height: max(2px, .06em); border-radius: 999px; background: var(--text); transition: width 1s ease; }
+.site-header .brand::after { content: ""; position: absolute; z-index: 0; left: 0; bottom: .08em; width: 0; height: max(2px, .06em); border-radius: 999px; background: var(--text); transition: width .7s ease; }
 .site-header .brand:hover::after, .site-header .brand:focus-visible::after { width: calc(100% - .5em); }
 .site-header .brand .wordmark { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) { .site-header .brand::after { transition: none; } }
