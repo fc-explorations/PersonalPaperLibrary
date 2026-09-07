@@ -437,6 +437,8 @@ describe("HTTP application", () => {
     expect(settingsHtml).toContain('<section class="panel settings-page">');
     expect(settingsHtml).toContain("Download backup");
     expect(settingsHtml).toContain("data-restore-backup");
+    expect(settingsHtml).toContain("data-restore-backup-trigger");
+    expect(settingsHtml).toContain("data-restore-backup-input");
     expect(settingsHtml).toContain("Entries per page");
     expect(settingsHtml).toContain('value="10" data-theme-setting="pageSize"');
     expect(settingsHtml).toContain('value="25" data-theme-setting="pageSize"');

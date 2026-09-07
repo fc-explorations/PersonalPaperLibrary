@@ -202,7 +202,18 @@ document.querySelectorAll("input[name=sourceUrl]").forEach((input) => {
   input.addEventListener("input", () => updateSourceUrlAction(input.form));
 });
 
-document.querySelector("[data-restore-backup]")?.addEventListener("submit", async (event) => {
+const restoreBackupForm = document.querySelector("[data-restore-backup]");
+const restoreBackupInput = restoreBackupForm?.querySelector("[data-restore-backup-input]");
+restoreBackupForm?.querySelector("[data-restore-backup-trigger]")?.addEventListener("click", () => {
+  if (!restoreBackupInput) return;
+  restoreBackupInput.value = "";
+  restoreBackupInput.click();
+});
+restoreBackupInput?.addEventListener("change", () => {
+  if (restoreBackupInput.files?.length) restoreBackupForm.requestSubmit();
+});
+
+restoreBackupForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   if (!window.confirm("Restore this backup? Existing papers will be preserved and matching records will be skipped.")) return;
