@@ -210,10 +210,10 @@ select { width: auto; min-width: 150px; }
 .detail-section { margin: 0; padding: 0 0 30px; border-bottom: 1px solid var(--border); }
 .detail-subheading { margin: 0 0 14px; color: var(--muted); font-size: .82rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .abstract-section .abstract { max-width: 78ch; margin-left: 24px; font-size: 1rem; line-height: 1.65; }
-.analysis-section > summary, .question-group > summary, .add-question-form > summary, .bibtex-section > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; font-size: var(--type-section); font-weight: 700; }
-.analysis-section > summary::-webkit-details-marker, .question-group > summary::-webkit-details-marker, .add-question-form > summary::-webkit-details-marker, .bibtex-section > summary::-webkit-details-marker { display: none; }
-.analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before { position: relative; top: -.1em; width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
-.analysis-section[open] > summary::before, .question-group[open] > summary::before, .add-question-form[open] > summary::before, .bibtex-section[open] > summary::before { transform: rotate(90deg); }
+.analysis-section > summary, .question-group > summary, .add-question-form > summary, .bibtex-section > summary, .metadata-panel > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; font-size: var(--type-section); font-weight: 700; }
+.analysis-section > summary::-webkit-details-marker, .question-group > summary::-webkit-details-marker, .add-question-form > summary::-webkit-details-marker, .bibtex-section > summary::-webkit-details-marker, .metadata-panel > summary::-webkit-details-marker { display: none; }
+.analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before, .metadata-panel > summary::before { position: relative; top: -.1em; width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
+.analysis-section[open] > summary::before, .question-group[open] > summary::before, .add-question-form[open] > summary::before, .bibtex-section[open] > summary::before, .metadata-panel[open] > summary::before { transform: rotate(90deg); }
 .analysis-section > summary::before { color: var(--text); }
 .analysis-body, .question-group-body { padding-top: 22px; }
 .analysis-body { display: grid; grid-template-columns: minmax(0, 1fr) var(--analysis-action-width); column-gap: 32px; align-items: start; }
@@ -280,6 +280,9 @@ select { width: auto; min-width: 150px; }
 .bibtex-section { margin: 0; }
 .bibtex-section > summary { color: var(--section-color); font-size: var(--type-kicker); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .bibtex-section > summary::before { color: var(--muted); }
+.metadata-panel > summary { color: var(--section-color); font-size: var(--type-kicker); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.metadata-panel > summary::before { color: var(--muted); }
+.metadata-panel > .metadata { padding-top: 22px; }
 .bibtex-body { padding: 22px 0 0 24px; }
 .bibtex-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
 .bibtex-heading .eyebrow { margin: 0; }
