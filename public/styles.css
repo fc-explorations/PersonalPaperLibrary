@@ -251,7 +251,7 @@ select { width: auto; min-width: 150px; }
 .analysis-questions-disclosure:not([open]) + .question-section-actions > button { display: none; }
 .analysis-questions-disclosure[open] + .question-section-actions .question-overview-progress { display: none; }
 .question-group { margin-top: 0; padding: 20px 0 0; }
-.analysis-questions-disclosure > .question-group:first-of-type { padding-top: 18px; }
+.analysis-questions-disclosure > .question-group:first-of-type { padding-top: 28px; }
 .question-group + .question-group { margin-top: 18px; }
 .question-group > summary { color: var(--section-color); font-size: var(--type-subsection); font-weight: 650; }
 .question-group > summary::before { color: var(--section-color); }
