@@ -16,6 +16,30 @@ const backgroundThemes = {
 const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
 const pageSizeOptions = ["10", "25", "50", "100"];
 
+function mixHexColors(hex, target, amount) {
+  const value = hex.slice(1);
+  const channels = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16));
+  return `#${channels.map((channel, index) => Math.round(channel + (target[index] - channel) * amount).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function relativeLuminance(hex) {
+  const value = hex.slice(1);
+  const channels = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
+  const linear = channels.map((channel) => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function deriveBackgroundColors(background) {
+  const isLight = relativeLuminance(background) > 0.5;
+  const darkTarget = isLight ? [0, 0, 0] : [255, 255, 255];
+  const lightTarget = isLight ? [255, 255, 255] : [0, 0, 0];
+  return {
+    sectionColor: mixHexColors(background, darkTarget, isLight ? 0.52 : 0.58),
+    sectionSurface: mixHexColors(background, lightTarget, 0.22),
+    sectionBorder: mixHexColors(background, darkTarget, 0.14),
+  };
+}
+
 function loadTheme() {
   try {
     return JSON.parse(localStorage.getItem(themeStorageKey) || "{}");
@@ -33,6 +57,7 @@ function applyTheme(theme) {
   const backgroundKey = backgroundThemes[theme.background] ? theme.background : theme.background === "custom" ? "custom" : "paper";
   const selectedAccent = accentKey === "custom" ? { accent: customAccent, dark: `color-mix(in srgb, ${customAccent} 82%, black 18%)`, soft: `color-mix(in srgb, ${customAccent} 12%, white 88%)`, border: `color-mix(in srgb, ${customAccent} 48%, white 52%)` } : accent;
   const selectedBackground = backgroundKey === "custom" ? customBackground : background;
+  const derivedColors = deriveBackgroundColors(selectedBackground);
   const contentWidth = contentWidthOptions.includes(String(theme.contentWidth)) ? String(theme.contentWidth) : "90";
   const pageSize = pageSizeOptions.includes(String(theme.pageSize)) ? String(theme.pageSize) : "50";
   document.documentElement.style.setProperty("--accent", selectedAccent.accent);
@@ -40,6 +65,11 @@ function applyTheme(theme) {
   document.documentElement.style.setProperty("--accent-soft", selectedAccent.soft);
   document.documentElement.style.setProperty("--accent-border", selectedAccent.border);
   document.documentElement.style.setProperty("--page-bg", selectedBackground);
+  document.documentElement.style.setProperty("--muted", derivedColors.sectionColor);
+  document.documentElement.style.setProperty("--section-color", derivedColors.sectionColor);
+  document.documentElement.style.setProperty("--section-surface", derivedColors.sectionSurface);
+  document.documentElement.style.setProperty("--section-border", derivedColors.sectionBorder);
+  document.documentElement.style.setProperty("--border", derivedColors.sectionBorder);
   document.querySelectorAll("[data-theme-setting]").forEach((input) => {
     const setting = input.dataset.themeSetting;
     const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : setting === "contentWidth" ? contentWidth : pageSize;
