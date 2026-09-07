@@ -133,7 +133,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=10" defer></script>
+  <script src="/app.js?v=11" defer></script>
 </body>
 </html>`;
 }
@@ -390,6 +390,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
   const openPdfButton = isEdit && data.r2Key ? `<a class="button button-secondary button-small" href="/api/papers/${escapeHtml(data.id)}/pdf" target="_blank" aria-label="Open PDF" title="Open PDF">${openIcon()}<span>Open</span></a>` : "";
   const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
+  const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest tags</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
   const fields = `${titleField}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
@@ -397,7 +398,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
     <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("DOI", "doi", data.doi)}</div>
     <div class="form-row">${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}${sourceUrlField(data.sourceUrl)}</div>
-    ${field("Tags", "tags", (data.tags || []).join(", "), { placeholder: "topic, project, method" })}`;
+    ${tagsField}`;
   const actions = formActions(data, isEdit, formId);
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <div class="form-grid">${fields}</div>

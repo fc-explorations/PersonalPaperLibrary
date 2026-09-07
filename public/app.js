@@ -336,6 +336,52 @@ async function jsonRequest(url, options) {
   return body;
 }
 
+function renderTagSuggestions(form, suggestions, provider, model) {
+  const panel = form?.querySelector("[data-tag-suggestions]");
+  const list = panel?.querySelector("[data-tag-suggestion-list]");
+  const status = panel?.querySelector("[data-tag-suggestions-status]");
+  if (!panel || !list) return;
+  panel.hidden = false;
+  if (status) status.textContent = `${provider} · ${model}`;
+  list.innerHTML = suggestions.length ? suggestions.map((suggestion) => `<label class="tag-suggestion"><input type="checkbox" checked data-tag-suggestion data-tag-name="${escapeText(suggestion.name)}"><span class="tag-suggestion-name">${escapeText(suggestion.name)}</span><span class="tag-suggestion-kind">${suggestion.existing ? "Existing" : "New"}</span>${suggestion.reason ? `<span class="tag-suggestion-reason">${escapeText(suggestion.reason)}</span>` : ""}</label>`).join("") : `<p class="muted">No specific tags were found for this abstract.</p>`;
+  const applyButton = panel.querySelector("[data-apply-tag-suggestions]");
+  if (applyButton) applyButton.hidden = !suggestions.length;
+}
+
+document.querySelectorAll("[data-suggest-tags]").forEach((button) => button.addEventListener("click", async () => {
+  const form = button.form || button.closest("[data-paper-form]");
+  const abstract = value(form, "abstract").trim();
+  if (!abstract) {
+    setStatus(form, "Add an abstract before asking for tag suggestions.", true);
+    return;
+  }
+  button.disabled = true;
+  setStatus(form, "Suggesting tags…");
+  try {
+    const body = await jsonRequest("/api/tags/suggestions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), abstract, categories: commaValues(value(form, "categories")) }) });
+    renderTagSuggestions(form, body.suggestions || [], body.provider || "AI", body.model || "");
+    setStatus(form, body.suggestions?.length ? "Review the suggested tags below." : "No specific tags were found.");
+  } catch (error) {
+    setStatus(form, clientErrorMessage(error), true);
+    const panel = form?.querySelector("[data-tag-suggestions]");
+    if (panel) panel.hidden = true;
+  } finally {
+    button.disabled = false;
+  }
+}));
+
+document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => button.addEventListener("click", () => {
+  const form = button.closest("[data-paper-form]");
+  const panel = button.closest("[data-tag-suggestions]");
+  if (!form || !panel) return;
+  const current = commaValues(value(form, "tags"));
+  const selected = [...panel.querySelectorAll("[data-tag-suggestion]:checked")].map((input) => input.dataset.tagName || "");
+  const names = [...current, ...selected].filter(Boolean).filter((name, index, values) => values.findIndex((candidate) => candidate.toLocaleLowerCase() === name.toLocaleLowerCase()) === index);
+  setValue(form, "tags", names.join(", "));
+  panel.hidden = true;
+  setStatus(form, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
+}));
+
 document.querySelector("[data-import-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;

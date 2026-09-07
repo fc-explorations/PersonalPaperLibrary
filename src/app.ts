@@ -27,6 +27,7 @@ import { excludeAppendixMaterial, extractPdfText, hasRequiredSummaryHeadings, QU
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
+import { suggestTags } from "./services/tag-suggestions.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
@@ -625,6 +626,19 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
+    }
+  });
+
+  app.post("/api/tags/suggestions", async (c) => {
+    try {
+      const body = await c.req.json<{ title?: string; abstract?: string; categories?: string[] }>();
+      const abstract = typeof body.abstract === "string" ? body.abstract.trim() : "";
+      if (!abstract) return jsonError(c, 400, "ABSTRACT_REQUIRED", "Add an abstract before asking for tag suggestions.");
+      const selected = selectedLlm(analysis.getSettings());
+      const result = await suggestTags({ title: body.title, abstract, categories: categories(body.categories), existingTags: repo.tags.list() }, selected.client, selected.model);
+      return c.json({ suggestions: result, provider: selected.provider, model: selected.model });
+    } catch (error) {
+      return jsonError(c, 502, errorMessage(error), "Tag suggestions could not be generated. Check the provider settings and retry.");
     }
   });
 

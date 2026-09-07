@@ -566,6 +566,27 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("suggests reusable existing and new tags from an abstract", async () => {
+    let prompt = "";
+    const context = testApp(undefined, undefined, { llmClient: { complete: async ({ messages }) => {
+      prompt = messages.at(-1)?.content || "";
+      return JSON.stringify({ suggestions: [
+        { name: "Bayesian inference", reason: "The abstract describes posterior uncertainty." },
+        { name: "Molecular simulation", reason: "The abstract studies molecular systems." },
+      ] });
+    } } });
+    await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Tagged paper", abstract: "A study of posterior uncertainty in molecular systems.", tags: ["Bayesian inference"], metadataSource: "manual" }) });
+    const response = await context.app.request("/api/tags/suggestions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "A study", abstract: "A study of posterior uncertainty in molecular systems.", categories: ["cs.LG"] }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).suggestions).toEqual([
+      { name: "Bayesian inference", existing: true, reason: "The abstract describes posterior uncertainty." },
+      { name: "Molecular simulation", existing: false, reason: "The abstract studies molecular systems." },
+    ]);
+    expect(prompt).toContain("Bayesian inference");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("lists models reported by Ollama", async () => {
     const context = testApp(async (input) => {
       if (String(input) === "http://localhost:11434/api/tags") return new Response(JSON.stringify({ models: [{ name: "gemma4:12b-mlx" }, { model: "llama3.2" }] }), { status: 200 });
