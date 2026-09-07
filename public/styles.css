@@ -248,6 +248,7 @@ select { width: auto; min-width: 150px; }
 .analysis-questions-disclosure > .form-status:empty { display: none; }
 .question-section-actions { flex-wrap: nowrap; gap: 12px; }
 .question-overview-progress { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 6px; margin-right: 6px; white-space: nowrap; }
+.analysis-questions-disclosure[open] + .question-section-actions .question-overview-progress { display: none; }
 .question-group { margin-top: 0; padding: 20px 0 0; }
 .analysis-questions-disclosure > .question-group:first-of-type { padding-top: 0; }
 .question-group + .question-group { margin-top: 18px; }
