@@ -51,6 +51,7 @@ for (const paper of repo.list({ sort: "newest" })) {
     primaryCategory: arxivMetadata ? arxivMetadata.primaryCategory : paper.primaryCategory,
     categories: arxivMetadata ? arxivMetadata.categories : citationMetadata?.categories.length ? citationMetadata.categories : paper.categories,
     journalRef: arxivMetadata ? arxivMetadata.journalRef : citationMetadata?.journalRef || extracted.journalRef || paper.journalRef,
+    acceptedVenue: arxivMetadata?.acceptedVenue || paper.acceptedVenue,
     doi: arxivMetadata ? arxivMetadata.doi : citationMetadata?.doi || paper.doi,
     arxivId: arxivMetadata ? arxivMetadata.arxivId : extracted.arxivId || paper.arxivId,
     arxivUrl: arxivMetadata ? arxivMetadata.arxivUrl : paper.arxivUrl,

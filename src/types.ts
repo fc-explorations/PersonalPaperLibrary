@@ -12,6 +12,7 @@ export interface PaperMetadata {
   primaryCategory?: string;
   categories: string[];
   journalRef?: string;
+  acceptedVenue?: string;
   doi?: string;
   sourceUrl?: string;
   /** A downloadable PDF URL used transiently during metadata lookup. */
@@ -41,6 +42,7 @@ export interface PaperDraftInput {
   primaryCategory?: string;
   categories?: string[];
   journalRef?: string;
+  acceptedVenue?: string;
   doi?: string;
   sourceUrl?: string;
   arxivUrl?: string;

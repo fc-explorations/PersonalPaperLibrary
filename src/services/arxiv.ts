@@ -35,6 +35,11 @@ function fields(xml: string, name: string): string[] {
   return [...xml.matchAll(pattern)].map((match) => decodeXml(match[1])).filter(Boolean);
 }
 
+function acceptedVenue(comment?: string): string | undefined {
+  const match = comment?.match(/\baccepted\s+(?:(?:for|to)\s+publication\s+)?(?:at|to|for|in)\s+(.+?)(?:[.;]|$)/i);
+  return match?.[1]?.trim() || undefined;
+}
+
 export function normalizeArxivInput(input: string): NormalizedArxivInput | null {
   let value = input.trim();
   if (!value) return null;
@@ -92,6 +97,7 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
     primaryCategory: field(entry, "primary_category") || categoryMatches[0],
     categories: [...new Set(categoryMatches)],
     journalRef: field(entry, "journal_ref"),
+    acceptedVenue: acceptedVenue(field(entry, "comment")),
     doi: field(entry, "doi"),
     sourceUrl: normalized.abstractUrl,
     pdfUrl: normalized.pdfUrl,

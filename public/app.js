@@ -310,6 +310,7 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "primaryCategory", paper.primaryCategory);
   setValue(form, "categories", (paper.categories || []).join(", "));
   setValue(form, "journalRef", paper.journalRef);
+  setValue(form, "acceptedVenue", paper.acceptedVenue);
   setValue(form, "doi", paper.doi);
   setValue(form, "arxivId", paper.arxivId);
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
@@ -460,7 +461,7 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
   const body = {
     title: value(form, "title"), authors: value(form, "authors").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
     year: value(form, "year") || undefined, publishedDate: value(form, "publishedDate"), abstract: value(form, "abstract"),
-    primaryCategory: value(form, "primaryCategory"), categories: commaValues(value(form, "categories")), journalRef: value(form, "journalRef"),
+    primaryCategory: value(form, "primaryCategory"), categories: commaValues(value(form, "categories")), journalRef: value(form, "journalRef"), acceptedVenue: value(form, "acceptedVenue"),
     doi: value(form, "doi"), arxivId: value(form, "arxivId"), sourceUrl: value(form, "sourceUrl"), tags: commaValues(value(form, "tags")),
     stagingToken: value(form, "stagingToken"), metadataSource: value(form, "arxivId") ? "mixed" : "manual",
   };
@@ -486,6 +487,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "primaryCategory", result.paper.primaryCategory);
     setValue(form, "categories", (result.paper.categories || []).join(", "));
     setValue(form, "journalRef", result.paper.journalRef);
+    setValue(form, "acceptedVenue", result.paper.acceptedVenue);
     setValue(form, "doi", result.paper.doi);
     setValue(form, "arxivId", result.paper.arxivId);
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);

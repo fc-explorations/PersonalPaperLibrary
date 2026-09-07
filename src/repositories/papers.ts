@@ -57,6 +57,7 @@ function rowToPaper(row: PaperRow, tags: string[], authors: string[]): PaperReco
     primaryCategory: row.primary_category ? String(row.primary_category) : undefined,
     categories: jsonArray(row.categories),
     journalRef: row.journal_ref ? String(row.journal_ref) : undefined,
+    acceptedVenue: row.accepted_venue ? String(row.accepted_venue) : undefined,
     doi: row.doi ? String(row.doi) : undefined,
     sourceUrl: row.source_url ? String(row.source_url) : undefined,
     arxivUrl: row.arxiv_url ? String(row.arxiv_url) : undefined,
@@ -116,13 +117,13 @@ export class PaperRepository {
     this.db.transaction(() => {
       this.db.prepare(`INSERT INTO papers (
         id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year,
-        primary_category, categories, journal_ref, doi, source_url, arxiv_url, r2_key,
+        primary_category, categories, journal_ref, accepted_venue, doi, source_url, arxiv_url, r2_key,
         pdf_sha256, metadata_source, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, arxivId, arxivBaseId, input.title.trim(), input.abstract?.trim() || null,
         input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null,
         input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []),
-        input.journalRef?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl),
+        input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl),
         normalizeUrl(input.arxivUrl), file?.key || null, file?.sha256 || null, metadataSource, now, now,
       );
       const insertAuthor = this.db.prepare("INSERT INTO authors (id, display_name) VALUES (?, ?)");
@@ -148,12 +149,12 @@ export class PaperRepository {
     this.db.transaction(() => {
       this.db.prepare(`UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?,
         published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?,
-        journal_ref = ?, doi = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key),
+        journal_ref = ?, accepted_venue = ?, doi = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key),
         pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?`).run(
         arxivId, arxivBaseId, input.title.trim(), input.abstract?.trim() || null,
         input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null,
         input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []),
-        input.journalRef?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl),
+        input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl),
         normalizeUrl(input.arxivUrl), file?.key || null, file?.sha256 || null,
         input.metadataSource || existing.metadataSource, new Date().toISOString(), id,
       );

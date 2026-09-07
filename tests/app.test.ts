@@ -6,13 +6,13 @@ import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "../src/app.js";
 import { FileStorage } from "../src/services/storage.js";
 
-const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/></entry></feed>`;
+const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
 function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "pdfTextExtractor" | "keychain"> = {}) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
-  db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
+  db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
   const defaultFetcher = async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: ["Test arXiv Paper"], author: [{ given: "Test", family: "Author" }], DOI: "10.1000/test", "container-title": ["Test Journal"], published: { "date-parts": [[2024]] } }] } }), { status: 200 });
@@ -29,6 +29,7 @@ describe("HTTP application", () => {
     expect(importResponse.status).toBe(200);
     const imported = await importResponse.json();
     expect(imported.paper.title).toBe("Test arXiv Paper");
+    expect(imported.paper.acceptedVenue).toBe("NeurIPS 2024");
     expect(imported.pdf.status).toBe("staged");
     const stagedPdfResponse = await context.app.request(`/api/staging/${imported.pdf.stagingToken}/pdf`);
     expect(stagedPdfResponse.status).toBe(200);
@@ -42,6 +43,9 @@ describe("HTTP application", () => {
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
     const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
+    expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS 2024</dd>");
+    expect(paperPage).toContain("booktitle = {NeurIPS 2024}");
+    expect(paperPage).toContain("data-copy-citation");
     expect(paperPage).not.toContain('aria-label="Open PDF"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
     expect(await editPage.text()).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);

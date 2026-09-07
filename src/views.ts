@@ -243,12 +243,13 @@ function bibtexEntry(paper: PaperRecord): string {
     ["author", paper.authors.length ? paper.authors.join(" and ") : "Unknown author"],
     paper.year || paper.publishedDate?.slice(0, 4) ? ["year", String(paper.year || paper.publishedDate?.slice(0, 4))] : null,
     paper.journalRef ? ["journal", paper.journalRef] : null,
+    paper.acceptedVenue ? ["booktitle", paper.acceptedVenue] : null,
     paper.doi ? ["doi", paper.doi] : null,
     paper.arxivId ? ["eprint", paper.arxivId] : null,
     paper.arxivId ? ["archivePrefix", "arXiv"] : null,
     paper.sourceUrl || paper.arxivUrl ? ["url", paper.sourceUrl || paper.arxivUrl || ""] : null,
   ].filter((field): field is [string, string] => Boolean(field));
-  const type = paper.journalRef ? "article" : "misc";
+  const type = paper.acceptedVenue ? "inproceedings" : paper.journalRef ? "article" : "misc";
   return [`@${type}{${bibtexKey(paper)},`, ...fields.map(([name, value], index) => `  ${name} = {${bibtexEscape(value)}}${index === fields.length - 1 ? "" : ","}`), "}"].join("\n");
 }
 
@@ -287,7 +288,7 @@ function citationStyles(paper: PaperRecord): Array<{ label: string; text: string
   const harvardAuthors = joinCitationAuthors(parts.map((part) => `${part.family}, ${citationInitials(part.given)}`.trim()), "and");
   const vancouverAuthors = parts.map((part) => `${part.family} ${citationInitials(part.given)}`.trim()).join(", ") || "Unknown author";
   const title = paper.title.trim();
-  const venue = paper.journalRef?.trim() || "";
+  const venue = paper.acceptedVenue?.trim() || paper.journalRef?.trim() || "";
   const year = citationYear(paper);
   const yearOrNd = year || "n.d.";
   const entries = [
@@ -447,8 +448,9 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
     ${field("Abstract", "abstract", data.abstract, { rows: 6 })}
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
-    <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("DOI", "doi", data.doi)}</div>
-    <div class="form-row">${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}${sourceUrlField(data.sourceUrl)}</div>
+    <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("Accepted venue", "acceptedVenue", data.acceptedVenue)}</div>
+    <div class="form-row">${field("DOI", "doi", data.doi)}${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}</div>
+    ${sourceUrlField(data.sourceUrl)}
     ${tagsField}`;
   const actions = formActions(data, isEdit, formId);
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
@@ -505,6 +507,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
     metadataRow("arXiv", paper.arxivId, paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a>` : ""),
     metadataRow("Categories", paper.categories.join(", ")),
     metadataRow("Journal reference", paper.journalRef),
+    metadataRow("Accepted venue", paper.acceptedVenue),
     metadataRow("DOI", paper.doi),
     metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/api/papers/${escapeHtml(paper.id)}/pdf" target="_blank" rel="noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`),
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),

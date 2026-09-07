@@ -10,6 +10,7 @@ const atom = `<?xml version="1.0"?><feed><entry>
   <author><name>Alan Turing</name></author>
   <category term="cs.AI"/><category term="cs.LG"/>
   <arxiv:journal_ref>Journal 1</arxiv:journal_ref>
+  <arxiv:comment>10 pages. Accepted at ICLR 2017.</arxiv:comment>
   <arxiv:doi>10.1000/example</arxiv:doi>
 </entry></feed>`;
 
@@ -43,6 +44,7 @@ describe("arXiv metadata", () => {
       authors: ["Ada Lovelace", "Alan Turing"],
       year: 2024,
       categories: ["cs.AI", "cs.LG"],
+      acceptedVenue: "ICLR 2017",
       arxivUrl: "https://arxiv.org/abs/2401.12345",
     });
   });
