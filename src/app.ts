@@ -342,14 +342,14 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   async function completeQuestion(paperId: string, questionId: string): Promise<import("./repositories/analysis.js").QuestionAnswer> {
     const summary = analysis.getSummary(paperId);
-    if (!summary || summary.status !== "complete") throw new Error("SUMMARY_REQUIRED");
     const question = analysis.listQuestions(paperId).find((item) => item.id === questionId);
     if (!question) throw new Error("QUESTION_NOT_FOUND");
     const source = await paperText(paperId);
     const selected = selectedLlm(analysis.getSettings());
     const startedAt = Date.now();
     try {
-      const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: "Answer questions about a scientific paper accurately. Use only the supplied paper text and summary. Do not invent evidence." }, { role: "user", content: `${question.prompt}\n\nPaper summary:\n${summary.content}\n\nFull paper text:\n${source.text}` }] });
+      const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
+      const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: "Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence." }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
       const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, status: "complete" as const };
       analysis.saveAnswer(paperId, questionId, record);
       return record;
@@ -421,6 +421,21 @@ export function createApp(dependencies: AppDependencies = {}) {
     const settings = analysis.getSettings();
     const key = await keychain.get();
     return c.json({ ...settings, openaiConfigured: Boolean(key), openaiKeySource: key ? keychain.source : "none", openaiKeyEditable: keychain.writable });
+  });
+
+  app.get("/api/settings/llm/ollama/models", async (c) => {
+    const configuredUrl = c.req.query("baseUrl")?.trim() || analysis.getSettings().ollamaBaseUrl;
+    if (!/^https?:\/\//i.test(configuredUrl)) return jsonError(c, 400, "OLLAMA_URL_INVALID", "Enter a valid Ollama HTTP URL.");
+    const baseUrl = configuredUrl.replace(/\/$/, "");
+    try {
+      const response = await fetcher(`${baseUrl}/api/tags`);
+      if (!response.ok) throw new Error(`OLLAMA_HTTP_${response.status}`);
+      const body = await response.json() as { models?: Array<{ name?: string; model?: string }> };
+      const models = [...new Set((body.models || []).map((model) => model.name || model.model || "").map((model) => model.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+      return c.json({ models });
+    } catch (error) {
+      return jsonError(c, 502, errorMessage(error), "The Ollama models could not be loaded. Check that Ollama is running and retry.");
+    }
   });
 
   app.put("/api/settings/llm", async (c) => {
@@ -729,7 +744,6 @@ export function createApp(dependencies: AppDependencies = {}) {
       const body = await c.req.json<{ question?: string; label?: string; prompt?: string }>();
       const question = body.question?.trim() || body.label?.trim() || "";
       const created = analysis.addQuestion(id, question, body.prompt?.trim() || question);
-      if (!analysis.getSummary(id) || analysis.getSummary(id)?.status !== "complete") await completeSummary(id);
       const answer = await completeQuestion(id, created.id);
       return c.json({ question: { ...created, answer }, answer }, 201);
     } catch (error) {
@@ -743,7 +757,6 @@ export function createApp(dependencies: AppDependencies = {}) {
     const id = c.req.param("id");
     if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
     if (c.req.param("questionId") === "generate-all") {
-      if (!analysis.getSummary(id) || analysis.getSummary(id)?.status !== "complete") return jsonError(c, 409, "SUMMARY_REQUIRED", "Generate a paper summary before generating questions.");
       const results: Array<{ questionId: string; ok: boolean; error?: string }> = [];
       for (const question of analysis.listQuestions(id)) {
         try { await completeQuestion(id, question.id); results.push({ questionId: question.id, ok: true }); }
@@ -756,8 +769,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ answer, answerHtml: renderMarkdown(answer.content) });
     } catch (error) {
       const message = errorMessage(error);
-      const status = ["QUESTION_NOT_FOUND", "SUMMARY_REQUIRED", "PDF_NOT_FOUND"].includes(message) ? 409 : 502;
-      const detail = message === "SUMMARY_REQUIRED" ? "Generate the paper summary before generating answers." : message === "PDF_NOT_FOUND" ? "The paper PDF is not available." : "The question could not be answered. Please retry.";
+      const status = ["QUESTION_NOT_FOUND", "PDF_NOT_FOUND"].includes(message) ? 409 : 502;
+      const detail = message === "PDF_NOT_FOUND" ? "The paper PDF is not available." : "The question could not be answered. Please retry.";
       return jsonError(c, status, message, detail);
     }
   });

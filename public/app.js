@@ -178,13 +178,44 @@ const aiSettingsForm = document.querySelector("[data-ai-settings]");
 if (aiSettingsForm) {
   const keyStatus = aiSettingsForm.querySelector("[data-openai-key-status]");
   const clearKey = aiSettingsForm.querySelector("[data-clear-openai-key]");
+  const ollamaModel = aiSettingsForm.elements.namedItem("ollamaModel");
+  const ollamaBaseUrl = aiSettingsForm.elements.namedItem("ollamaBaseUrl");
+  const ollamaModelStatus = aiSettingsForm.querySelector("[data-ollama-model-status]");
+  const loadOllamaModelsButton = aiSettingsForm.querySelector("[data-load-ollama-models]");
+  const preserveOllamaModel = (model) => {
+    if (!ollamaModel || !model || [...ollamaModel.options].some((option) => option.value === model)) return;
+    ollamaModel.value = model;
+  };
+  const loadOllamaModels = async (selectedModel = ollamaModel?.value || "") => {
+    if (!ollamaModel || !ollamaBaseUrl) return;
+    const baseUrl = ollamaBaseUrl.value.trim();
+    if (!baseUrl) return;
+    if (ollamaModelStatus) ollamaModelStatus.textContent = "Loading available models…";
+    if (loadOllamaModelsButton) loadOllamaModelsButton.disabled = true;
+    try {
+      const body = await jsonRequest(`/api/settings/llm/ollama/models?baseUrl=${encodeURIComponent(baseUrl)}`);
+      const models = Array.isArray(body.models) ? body.models : [];
+      const current = selectedModel || ollamaModel.value;
+      ollamaModel.replaceChildren(new Option("Choose an available model…", ""));
+      if (current && !models.includes(current)) ollamaModel.add(new Option(`${current} (saved, unavailable)`, current));
+      models.forEach((model) => ollamaModel.add(new Option(model, model)));
+      ollamaModel.value = current;
+      if (ollamaModelStatus) ollamaModelStatus.textContent = models.length ? `${models.length} model${models.length === 1 ? "" : "s"} available.` : "No Ollama models are installed.";
+    } catch (error) {
+      preserveOllamaModel(selectedModel);
+      if (ollamaModelStatus) ollamaModelStatus.textContent = clientErrorMessage(error);
+    } finally {
+      if (loadOllamaModelsButton) loadOllamaModelsButton.disabled = false;
+    }
+  };
   const loadAiSettings = async () => {
     try {
       const settings = await jsonRequest("/api/settings/llm");
       aiSettingsForm.elements.namedItem("provider").value = settings.provider;
       aiSettingsForm.elements.namedItem("openaiModel").value = settings.openaiModel;
       aiSettingsForm.elements.namedItem("ollamaBaseUrl").value = settings.ollamaBaseUrl;
-      aiSettingsForm.elements.namedItem("ollamaModel").value = settings.ollamaModel;
+      preserveOllamaModel(settings.ollamaModel);
+      await loadOllamaModels(settings.ollamaModel);
       if (keyStatus) keyStatus.textContent = settings.openaiConfigured ? `OpenAI key configured (${settings.openaiKeySource}).${settings.openaiKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenAI key not configured.";
       if (clearKey) clearKey.disabled = !settings.openaiConfigured || !settings.openaiKeyEditable;
       const keyInput = aiSettingsForm.elements.namedItem("openaiApiKey");
@@ -194,6 +225,8 @@ if (aiSettingsForm) {
     }
   };
   loadAiSettings();
+  loadOllamaModelsButton?.addEventListener("click", () => loadOllamaModels());
+  ollamaBaseUrl?.addEventListener("change", () => loadOllamaModels());
   aiSettingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const body = { provider: value(aiSettingsForm, "provider"), openaiModel: value(aiSettingsForm, "openaiModel"), ollamaBaseUrl: value(aiSettingsForm, "ollamaBaseUrl"), ollamaModel: value(aiSettingsForm, "ollamaModel") };
@@ -482,6 +515,19 @@ function showQuestionAnswer(item, answer, answerHtml) {
 
   const label = item.querySelector("[data-generate-question] span:last-child");
   if (label) label.textContent = "Regenerate answer";
+
+  const group = item.closest("[data-question-group]");
+  const progress = group?.querySelector(".question-progress");
+  const questionItems = group ? [...group.querySelectorAll("[data-question-id]")] : [];
+  const questionIndex = questionItems.indexOf(item);
+  const dot = questionIndex >= 0 ? progress?.querySelectorAll(".question-progress-dot")[questionIndex] : null;
+  dot?.classList.add("is-answered");
+  if (progress && group) {
+    const answered = group.querySelectorAll(".question-answer").length;
+    const total = questionItems.length;
+    progress.setAttribute("aria-label", `${answered} of ${total} questions answered`);
+    progress.setAttribute("title", `${answered} of ${total} questions answered`);
+  }
 }
 
 async function generateOneQuestion(button) {
@@ -533,19 +579,32 @@ document.querySelector("[data-toggle-questions]")?.addEventListener("click", (ev
   const icon = button.querySelector(".material-symbols-outlined");
   if (icon) icon.textContent = expand ? "unfold_less" : "unfold_more";
 });
+document.querySelectorAll("[data-collapse-section]").forEach((button) => button.addEventListener("click", () => {
+  const section = button.closest("details");
+  if (!section) return;
+  section.open = false;
+  section.querySelector("summary")?.focus();
+}));
 document.querySelector("[data-generate-all-questions]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const status = document.querySelector("[data-questions-status]");
   const buttons = [...document.querySelectorAll("[data-generate-question]")];
+  const pendingButtons = buttons.filter((questionButton) => !questionButton.closest("[data-question-id]")?.querySelector(".question-answer"));
+  const skipped = buttons.length - pendingButtons.length;
   button.disabled = true;
+  if (!pendingButtons.length) {
+    if (status) status.textContent = "All answers have already been generated.";
+    button.disabled = false;
+    return;
+  }
   let completed = 0;
   let failed = 0;
-  for (const questionButton of buttons) {
-    if (status) status.textContent = `Generating question ${completed + failed + 1} of ${buttons.length}…`;
+  for (const questionButton of pendingButtons) {
+    if (status) status.textContent = `Generating answer ${completed + failed + 1} of ${pendingButtons.length}…`;
     if (await generateOneQuestion(questionButton)) completed += 1; else failed += 1;
   }
   button.disabled = false;
-  if (status) status.textContent = `Saved ${completed} answer${completed === 1 ? "" : "s"}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`;
+  if (status) status.textContent = `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`;
 });
 
 document.querySelector("[data-add-question]")?.addEventListener("submit", async (event) => {

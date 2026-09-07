@@ -40,6 +40,9 @@ describe("HTTP application", () => {
     const pdfResponse = await context.app.request(`/api/papers/${saved.paper.id}/pdf`);
     expect(pdfResponse.status).toBe(200);
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
+    const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
+    expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
+    expect(paperPage).not.toContain('aria-label="Open PDF"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
     expect(await editPage.text()).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
     context.db.close();
@@ -210,14 +213,14 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
-  it("shows a web resource action on metadata pages without a stored PDF", async () => {
+  it("shows PDF availability in paper information without a stored PDF", async () => {
     const context = testApp();
     const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Web resource paper", doi: "10.1000/web-resource", sourceUrl: "https://publisher.example/web-resource", metadataSource: "mixed" }) });
     expect(response.status).toBe(201);
     const { paper } = await response.json();
     const page = await (await context.app.request(`/papers/${paper.id}`)).text();
-    expect(page).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
-    expect(page).toContain("Web resource");
+    expect(page).toContain('<dt>Document</dt><dd><span class="muted">Not stored</span></dd>');
+    expect(page).not.toContain('aria-label="Open web resource"');
     const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();
     expect(editPage).toContain('data-web-resource-for="paper-form-');
     expect(editPage).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
@@ -504,15 +507,17 @@ describe("HTTP application", () => {
     const saved = await (await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "AI paper", metadataSource: "manual", stagingToken: upload.pdf.stagingToken }) })).json();
     const paperId = saved.paper.id;
     const beforeSummary = await (await context.app.request(`/papers/${paperId}`)).text();
-    expect(beforeSummary).toContain("Generate the paper summary before generating answers.");
-    expect(beforeSummary).toMatch(/data-generate-all-questions disabled/);
+    expect(beforeSummary).not.toContain("Generate the paper summary before generating answers.");
+    expect(beforeSummary).not.toMatch(/data-generate-all-questions disabled/);
+    const answerBeforeSummary = await context.app.request(`/api/papers/${paperId}/questions/evaluate_main_claim`, { method: "POST" });
+    expect(answerBeforeSummary.status).toBe(200);
     const summaryResponse = await context.app.request(`/api/papers/${paperId}/summary`, { method: "POST" });
     expect(summaryResponse.status).toBe(200);
     const generatedSummary = (await summaryResponse.json()).summary;
     expect(generatedSummary.content).toContain("# Why It Matters");
     expect(generatedSummary.model).toBe("gpt-4.1-mini");
     expect(generatedSummary.durationMs).toBeTypeOf("number");
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     const questions = await (await context.app.request(`/api/papers/${paperId}/questions`)).json();
     expect(questions.questions).toHaveLength(16);
     expect(questions.questions.map((question: { groupTitle: string }) => question.groupTitle)).toContain("Evaluate");
@@ -537,6 +542,22 @@ describe("HTTP application", () => {
     expect((await (await context.app.request(`/api/papers/${paperId}/questions`)).json()).questions.some((question: { id: string }) => question.id === custom.question.id)).toBe(false);
     await context.app.request("/api/settings/llm/openai-key", { method: "DELETE" });
     expect(storedKey).toBeUndefined();
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("lists models reported by Ollama", async () => {
+    const context = testApp(async (input) => {
+      if (String(input) === "http://localhost:11434/api/tags") return new Response(JSON.stringify({ models: [{ name: "gemma4:12b-mlx" }, { model: "llama3.2" }] }), { status: 200 });
+      return new Response(atom, { status: 200 });
+    });
+    const settingsPage = await context.app.request("/settings");
+    const settingsHtml = await settingsPage.text();
+    expect(settingsHtml).toContain('<select name="ollamaModel"');
+    expect(settingsHtml).not.toContain('name="ollamaModel" type="text"');
+    const response = await context.app.request("/api/settings/llm/ollama/models");
+    expect(response.status).toBe(200);
+    expect((await response.json()).models).toEqual(["gemma4:12b-mlx", "llama3.2"]);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
