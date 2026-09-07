@@ -662,6 +662,8 @@ function showQuestionAnswer(item, answer, answerHtml) {
     progress.setAttribute("aria-label", `${answered} of ${total} questions answered`);
     progress.setAttribute("title", `${answered} of ${total} questions answered`);
   }
+  const overviewDot = [...document.querySelectorAll("[data-question-overview-dot]")].find((dot) => dot.dataset.questionOverviewDot === item.dataset.questionId);
+  overviewDot?.classList.add("is-answered");
   typesetMath(item);
 }
 
@@ -705,6 +707,7 @@ document.querySelectorAll("[data-delete-question]").forEach((button) => button.a
   }
 }));
 document.querySelector("[data-toggle-questions]")?.addEventListener("click", (event) => {
+  event.stopPropagation();
   const button = event.currentTarget;
   const groups = [...document.querySelectorAll("[data-question-group]")];
   const expand = groups.some((group) => !group.open);
@@ -721,6 +724,7 @@ document.querySelectorAll("[data-collapse-section]").forEach((button) => button.
   section.querySelector("summary")?.focus();
 }));
 document.querySelector("[data-generate-all-questions]")?.addEventListener("click", async (event) => {
+  event.stopPropagation();
   const button = event.currentTarget;
   const status = document.querySelector("[data-questions-status]");
   const buttons = [...document.querySelectorAll("[data-generate-question]")];
