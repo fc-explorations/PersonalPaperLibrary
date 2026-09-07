@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx src/db/migrate.ts",
-    "metadata:backfill": "tsx src/db/backfill-metadata.ts"
+    "metadata:backfill": "npm run build && node dist/src/db/backfill-metadata.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
