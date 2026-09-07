@@ -188,7 +188,7 @@ select { width: auto; min-width: 150px; }
 .tag-suggestion-reason { color: var(--muted); font-size: .84rem; }
 .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .form-actions { display: grid; gap: 8px; margin-top: 22px; }
-.form-actions-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.form-actions-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .form-actions-left, .form-actions-right { display: flex; align-items: center; gap: 10px; }
 .form-actions .form-status { width: 100%; text-align: center; }
 .form-status { height: 1.4em; min-height: 1.4em; overflow: visible; color: var(--accent); font-size: .9rem; }

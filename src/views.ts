@@ -378,8 +378,7 @@ function sourceUrlField(value: unknown): string {
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
   const webResourceUrl = !data.r2Key ? paperWebResource(data) : undefined;
   const webResourceButton = `<a class="button button-secondary" data-web-resource data-web-resource-for="${escapeHtml(formId)}"${webResourceUrl ? ` href="${escapeHtml(webResourceUrl)}"` : ""} target="_blank" rel="noreferrer"${webResourceUrl ? "" : " hidden"}>${openIcon()}<span>Open web resource</span></a>`;
-  const cancelButton = isEdit ? "" : `<a class="button button-secondary" href="/">${closeIcon()}<span>Cancel</span></a>`;
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-left"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${webResourceButton}</div><div class="form-actions-right"><button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button>${cancelButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${webResourceButton}<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {
