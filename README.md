@@ -71,26 +71,38 @@ Version 1 focuses on arXiv and title/DOI imports, individual and bulk local PDF 
 
 Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv page, then the DOI resolver, then a publisher landing page, over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
 
-The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. Cloudflare Workers, D1, R2, and Access are planned for a later deployment phase.
+The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker now has a separate D1/R2 API slice; the full browser application, PDF extraction, analysis jobs, backup/restore, and production Access setup remain separate deployment phases.
 
 ## Cloudflare scaffold
 
-The repository now includes a minimal Worker entry point and Wrangler bindings
-for the `personal-paper-library` D1 database and R2 bucket. The scaffold serves
-the existing `public/` assets and exposes `/api/health`; the full hosted app
-still requires the D1/R2 adapters, hosted authentication, and Worker-safe PDF
-extraction described in [`TODO.md`](./TODO.md).
+The repository includes a Worker entry point and Wrangler bindings for the
+`personal-paper-library` D1 database and R2 bucket. It exposes `/api/health`,
+paper listing/creation/deletion, tag creation, PDF staging, and PDF reads. The
+hosted API requires Cloudflare Access when `ACCESS_REQUIRED=true` and verifies
+the Access JWT against the configured team domain and audience.
 
 ```bash
 npm run cf:dev       # Run the Worker locally with Wrangler
-npm run cf:deploy    # Deploy the current Worker scaffold
+npm run cf:deploy    # Deploy after configuring Access variables
 npm run cf:migrate   # Apply migrations/cloudflare migrations remotely
 npm run cf:tail      # Tail deployed Worker logs
 ```
 
-Do not run `cf:migrate` until a D1-compatible migration has been added under
-`migrations/cloudflare/`; the existing files under `migrations/` target local
-SQLite.
+The cloud baseline is in `migrations/cloudflare/` and has been applied to the
+provisioned remote D1 database. The existing files under `migrations/` target
+local SQLite.
+
+Before exposing the Worker, configure these non-secret Wrangler variables (or
+the equivalent dashboard variables):
+
+- `ACCESS_REQUIRED=true`
+- `ACCESS_TEAM_DOMAIN=https://<your-team>.cloudflareaccess.com`
+- `ACCESS_AUDIENCE=<the Access application audience tag>`
+- `ACCESS_ALLOWED_EMAIL=<your owner email>`
+
+Create the Access application and allow only the owner identity before running
+`npm run cf:deploy`. The health endpoint remains available for deployment
+smoke checks; application API routes reject missing or invalid Access JWTs.
 
 ## Configuration
 

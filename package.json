@@ -25,6 +25,7 @@
     "better-sqlite3": "^12.4.1",
     "busboy": "^1.6.0",
     "hono": "^4.9.7",
+    "jose": "^6.2.12",
     "unzipper": "^0.12.5"
   },
   "devDependencies": {

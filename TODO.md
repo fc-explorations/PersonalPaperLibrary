@@ -13,8 +13,8 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold and core async D1 repositories are locally validated but not deployed; the hosted application routes and remaining adapters are still pending.
-- Remote migration status: the cloud baseline is validated locally but has not been applied remotely because Wrangler needs an authenticated CLI session or `CLOUDFLARE_API_TOKEN`.
+- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, and a tested D1/R2 paper API slice are locally validated but not deployed; the full browser application and remaining adapters are still pending.
+- Remote migration status: the cloud baseline has been applied to the remote D1 database after Wrangler authentication and verified with a read-only table query.
 
 ## Non-goals
 
@@ -62,10 +62,11 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Serve compiled browser assets through Worker Static Assets.
 - [x] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, and R2 binding. Add environment-specific configuration later.
 - [x] Add a clean D1 baseline migration containing the final schema represented by local migrations `0001`–`0008`; validate it against an empty local D1 database.
-- [ ] Validate the D1 baseline against a representative local export and apply it to the remote database after Wrangler authentication.
+- [x] Validate the D1 baseline against an empty local D1 database and apply it to the remote database after Wrangler authentication.
 - [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
+- [x] Add an initial Worker API slice for D1 paper/tag operations and R2 PDF staging, reading, and deletion with focused tests.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
-- [ ] Store PDFs in R2 under stable paper IDs. Keep only object keys, sizes, content types, and SHA-256 hashes in D1.
+- [x] Store PDFs in R2 under stable paper IDs for the hosted API slice; keep only object keys and SHA-256 hashes in D1.
 - [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, input hashes, definition hashes, and errors.
 - [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
 - [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
@@ -74,6 +75,7 @@ These spikes should happen before a large migration. Record the result of each d
 ## Phase 3 — Access, authentication, and security
 
 - [ ] Protect the hosted application with Cloudflare Access and allow only the owner’s identity.
+- [x] Add Worker-side Cloudflare Access JWT verification and an owner-email allowlist hook; configure the Access application and variables before deployment.
 - [ ] Validate the Access JWT at the Worker boundary: signature, issuer, audience, expiry, and expected identity.
 - [ ] Reject missing, invalid, expired, and unexpected identities before application routes execute.
 - [ ] Use one fixed personal library namespace in D1/R2; do not add user-account or tenant columns.
@@ -86,7 +88,7 @@ These spikes should happen before a large migration. Record the result of each d
 
 ## Phase 4 — PDF storage and extraction
 
-- [ ] Implement the R2 adapter for upload, read, replace, delete, temporary staging, and recovery.
+- [x] Implement the standalone R2 adapter for upload, read, replace, delete, temporary staging, and recovery.
 - [ ] Replace local staging/trash directories with temporary R2 prefixes and lifecycle cleanup.
 - [ ] Preserve SHA-256 calculation and stale-summary/stale-answer behavior after replacement.
 - [ ] Replace `pdftotext -layout` with the extractor selected in Phase 0; keep the local `pdftotext` adapter unchanged.
