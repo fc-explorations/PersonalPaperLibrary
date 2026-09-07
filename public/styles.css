@@ -238,6 +238,7 @@ select { width: auto; min-width: 150px; }
 .ai-key-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
 .status-warning { color: #9a5d27; }
 .analysis-questions { padding-top: 30px; }
+.analysis-section { border-bottom: 0; }
 .analysis-questions .section-heading { margin-bottom: 10px; }
 .analysis-questions .section-heading h2 { padding-left: 24px; color: var(--text); font-size: var(--type-section); font-weight: 700; }
 .analysis-questions > .form-status:empty { display: none; }
