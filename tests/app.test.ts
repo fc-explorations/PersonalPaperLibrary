@@ -4,8 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "../src/app.js";
+import { openDatabase } from "../src/db/database.js";
+import { PaperRepository } from "../src/repositories/papers.js";
 import { FileStorage } from "../src/services/storage.js";
+import { applyPendingSnapshot } from "../src/services/snapshot.js";
 import { createZip } from "../src/services/zip.js";
+import * as unzipper from "unzipper";
 
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
@@ -33,6 +37,7 @@ describe("HTTP application", () => {
     const staged = await context.storage.stage(pdf);
     const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Paper missing an abstract", metadataSource: "manual", stagingToken: staged.token }) });
     expect(saveResponse.status).toBe(201);
+    const saved = await saveResponse.json();
     const saved = await saveResponse.json();
 
     const indexResponse = await context.app.request("/api/library/search-index/continue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) });
@@ -565,7 +570,7 @@ describe("HTTP application", () => {
     const settings = await source.app.request("/settings");
     const settingsHtml = await settings.text();
     expect(settingsHtml).toContain('<section class="panel settings-page">');
-    expect(settingsHtml).toContain("Download backup");
+    expect(settingsHtml).toContain("Download snapshot");
     expect(settingsHtml).toContain("data-restore-backup");
     expect(settingsHtml).toContain("data-restore-backup-trigger");
     expect(settingsHtml).toContain("data-restore-backup-input");
@@ -574,32 +579,40 @@ describe("HTTP application", () => {
     expect(settingsHtml).toContain('value="25" data-theme-setting="pageSize"');
     const backupResponse = await source.app.request("/api/export/backup");
     expect(backupResponse.status).toBe(200);
-    const backup = await backupResponse.json();
-    expect(backup.version).toBe(2);
-    expect(backup.papers[0].pdfBase64).toBeTruthy();
+    expect(backupResponse.headers.get("content-type")).toContain("application/zip");
+    expect(backupResponse.headers.get("content-disposition")).toContain("paper-library-snapshot.zip");
+    const backupBytes = new Uint8Array(await backupResponse.arrayBuffer());
+    const archive = await unzipper.Open.buffer(Buffer.from(backupBytes));
+    expect(archive.files.map((file) => file.path)).toEqual(expect.arrayContaining(["format.json", "library.sqlite", `pdfs/${saved.paper.id}.pdf`]));
+    const format = JSON.parse((await archive.files.find((file) => file.path === "format.json")!.buffer()).toString("utf8"));
+    expect(format).toMatchObject({ format: "personal-paper-library-snapshot", formatVersion: 1, appVersion: "2.0.1" });
+    expect(archive.files.some((file) => file.path === `pdfs/${saved.paper.id}.pdf`)).toBe(true);
 
     const target = testApp();
     const restoreForm = new FormData();
-    restoreForm.append("backup", new File([JSON.stringify(backup)], "library-backup.json", { type: "application/json" }));
+    restoreForm.append("backup", new File([backupBytes], "library-snapshot.zip", { type: "application/zip" }));
     const restoreResponse = await target.app.request("/api/import/backup", { method: "POST", body: restoreForm });
     expect(restoreResponse.status).toBe(200);
-    expect((await restoreResponse.json()).restored).toBe(1);
-    const restored = (await (await target.app.request("/api/papers")).json()).papers[0];
-    expect(restored.title).toBe("Backup paper");
-    expect((await target.app.request(`/api/papers/${restored.id}/pdf`)).status).toBe(200);
-    const legacyTarget = testApp();
-    const legacyBackup = { ...backup, version: 1 } as Record<string, unknown>;
-    delete legacyBackup.analysis;
-    const legacyForm = new FormData();
-    legacyForm.append("backup", new File([JSON.stringify(legacyBackup)], "legacy-backup.json", { type: "application/json" }));
-    const legacyRestore = await legacyTarget.app.request("/api/import/backup", { method: "POST", body: legacyForm });
-    expect((await legacyRestore.json()).restored).toBe(1);
-    source.db.close();
+    expect(await restoreResponse.json()).toMatchObject({ ok: true, mode: "snapshot", restartRequired: true });
     target.db.close();
-    legacyTarget.db.close();
+    expect(applyPendingSnapshot(target.root)).toBe(true);
+    const restoredDb = openDatabase(join(target.root, "library.sqlite"));
+    const restoredRepo = new PaperRepository(restoredDb);
+    const restored = restoredRepo.list({ limit: 1 })[0];
+    expect(restored.title).toBe("Backup paper");
+    expect(new Uint8Array(await (await import("node:fs/promises")).readFile(join(target.root, "pdfs", `${restored.id}.pdf`)))).toEqual(pdf);
+    restoredDb.close();
+    const jsonRestore = new FormData();
+    jsonRestore.append("backup", new File(["{}"], "legacy-backup.json", { type: "application/json" }));
+    const rejectedLegacyContext = testApp();
+    const rejectedLegacy = await rejectedLegacyContext.app.request("/api/import/backup", { method: "POST", body: jsonRestore });
+    expect(rejectedLegacy.status).toBe(400);
+    expect((await rejectedLegacy.json()).error.code).toBe("SNAPSHOT_REQUIRED");
+    rejectedLegacyContext.db.close();
+    rmSync(rejectedLegacyContext.root, { recursive: true, force: true });
+    source.db.close();
     rmSync(source.root, { recursive: true, force: true });
     rmSync(target.root, { recursive: true, force: true });
-    rmSync(legacyTarget.root, { recursive: true, force: true });
   });
 
   it("requires the configured password before serving the library", async () => {

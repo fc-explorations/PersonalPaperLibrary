@@ -622,13 +622,19 @@ singlePdfInput?.addEventListener("change", () => {
 });
 
 const folderPdfInput = document.querySelector("[data-folder-pdf-input]");
+const folderZipInput = document.querySelector("[data-folder-zip-input]");
 folderPdfInput?.addEventListener("change", () => {
-  if (folderPdfInput.files.length && folderPdfInput.form) folderPdfInput.form.requestSubmit();
+  if (folderPdfInput.files.length && folderPdfInput.form) {
+    if (folderZipInput) folderZipInput.value = "";
+    folderPdfInput.form.requestSubmit();
+  }
 });
 
-const folderZipInput = document.querySelector("[data-folder-zip-input]");
 folderZipInput?.addEventListener("change", () => {
-  if (folderZipInput.files.length && folderZipInput.form) folderZipInput.form.requestSubmit();
+  if (folderZipInput.files.length && folderZipInput.form) {
+    if (folderPdfInput) folderPdfInput.value = "";
+    folderZipInput.form.requestSubmit();
+  }
 });
 
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {

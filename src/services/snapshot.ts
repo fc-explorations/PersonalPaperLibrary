@@ -1,15 +1,18 @@
-import archiver from "archiver";
 import busboy from "busboy";
 import Database from "better-sqlite3";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { IncomingHttpHeaders } from "node:http";
 import * as unzipper from "unzipper";
 import type { FileStorage } from "./storage.js";
+
+const require = createRequire(import.meta.url);
+const archiver = require("archiver") as (format: string, options: { forceZip64: boolean; store: boolean }) => import("archiver").Archiver;
 
 export const SNAPSHOT_FORMAT = "personal-paper-library-snapshot";
 export const SNAPSHOT_FORMAT_VERSION = 1;
@@ -82,7 +85,7 @@ export async function createSnapshotArchive(db: Database.Database, storage: File
       else resolveDone();
       void cleanupDirectory(directory);
     };
-    archive.once("error", (error) => finish(error));
+    archive.once("error", (error: unknown) => finish(error));
     archive.once("close", () => finish());
     archive.once("end", () => finish());
     archive.append(Buffer.from(JSON.stringify({
@@ -90,10 +93,10 @@ export async function createSnapshotArchive(db: Database.Database, storage: File
       formatVersion: SNAPSHOT_FORMAT_VERSION,
       appVersion: SNAPSHOT_APP_VERSION,
       createdAt: new Date().toISOString(),
-    }) + "\n"), { name: "format.json", store: true });
-    archive.file(databasePath, { name: "library.sqlite", store: true });
-    for (const pdf of pdfs) archive.file(pdf.path, { name: `pdfs/${pdf.id}.pdf`, store: true });
-    void archive.finalize().catch((error) => finish(error));
+    }) + "\n"), { name: "format.json" });
+    archive.file(databasePath, { name: "library.sqlite" });
+    for (const pdf of pdfs) archive.file(pdf.path, { name: `pdfs/${pdf.id}.pdf` });
+    void archive.finalize().catch((error: unknown) => finish(error));
     return { stream: Readable.toWeb(archive) as ReadableStream<Uint8Array>, done: done.finally(() => cleanupDirectory(directory)) };
   } catch (error) {
     await cleanupDirectory(directory);
@@ -128,7 +131,7 @@ export async function receiveSnapshotUpload(request: Request, root: string, maxB
     parser.once("error", (error) => rejectParsed(error));
     parser.once("close", () => resolveParsed());
   });
-  Readable.fromWeb(request.body as globalThis.ReadableStream<Uint8Array>).pipe(parser);
+  Readable.fromWeb(request.body as any).pipe(parser);
   try {
     await parsed;
     if (writePromise) await writePromise;
@@ -180,7 +183,8 @@ export async function stageSnapshotRestore(archivePath: string, root: string): P
     const formatEntry = archive.files.find((file) => file.path === "format.json" && file.type === "File");
     const databaseEntry = archive.files.find((file) => file.path === "library.sqlite" && file.type === "File");
     if (!formatEntry || !databaseEntry) throw snapshotError("SNAPSHOT_MANIFEST_REQUIRED");
-    if (formatEntry.vars.uncompressedSize > 1024 * 1024) throw snapshotError("SNAPSHOT_MANIFEST_TOO_LARGE");
+    const formatSize = (formatEntry as unknown as { vars?: { uncompressedSize?: number } }).vars?.uncompressedSize;
+    if (formatSize !== undefined && formatSize > 1024 * 1024) throw snapshotError("SNAPSHOT_MANIFEST_TOO_LARGE");
     const format = JSON.parse((await formatEntry.buffer()).toString("utf8")) as { format?: string; formatVersion?: number };
     if (format.format !== SNAPSHOT_FORMAT || format.formatVersion !== SNAPSHOT_FORMAT_VERSION) throw snapshotError("SNAPSHOT_FORMAT_UNSUPPORTED");
 

@@ -805,8 +805,12 @@ export function createApp(dependencies: AppDependencies = {}) {
       const files: Array<File | ExtractedZipFile> = candidates.filter((file) => /\.pdf$/i.test(file.name || ""));
       const zipFiles = candidates.filter((file) => /\.zip$/i.test(file.name || ""));
       for (const zipFile of zipFiles) {
-        const extracted = await extractPdfFiles(new Uint8Array(await zipFile.arrayBuffer()), maxPdfBytes);
-        files.push(...extracted);
+        try {
+          const extracted = await extractPdfFiles(new Uint8Array(await zipFile.arrayBuffer()), maxPdfBytes);
+          files.push(...extracted);
+        } catch (error) {
+          failed.push({ filename: zipFile.name || "unknown archive", reason: errorMessage(error) });
+        }
       }
       if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
       if (!files.length) return c.json({ imported, skipped, failed, folderTag });
