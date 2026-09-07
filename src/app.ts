@@ -541,6 +541,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       const parsedCitation = await parseCitationForLookup(input);
       const lookupTitle = parsedCitation.title || input;
       const doi = doiFromInput(input);
+      const localExisting = repo.findDuplicate({ title: lookupTitle, authors: parsedCitation.authors, year: parsedCitation.year, doi, sourceUrl: /^https?:\/\//i.test(input) ? input : undefined });
+      if (localExisting) return c.json({ existing: localExisting, duplicate: true });
       let metadata: PaperMetadata;
       const warnings: string[] = [];
       try {
@@ -576,6 +578,8 @@ export function createApp(dependencies: AppDependencies = {}) {
         }
       }
       if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
+      const existing = repo.findDuplicate(metadata);
+      if (existing) return c.json({ existing, duplicate: true });
       const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
       if (downloaded.warning) warnings.push(downloaded.warning);
       return c.json({ paper: metadata, pdf: downloaded.pdf, warnings });

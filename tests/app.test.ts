@@ -69,6 +69,22 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("returns an existing paper for a repeated title search without fetching it again", async () => {
+    let fetchCalls = 0;
+    const context = testApp(async () => {
+      fetchCalls += 1;
+      return new Response(atom, { status: 200 });
+    });
+    const saved = await (await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Density Estimation Using Real NVP", authors: ["Laurent Dinh"], year: 2016, metadataSource: "manual" }) })).json();
+    const response = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "density estimation using real nvp" }) });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).existing.id).toBe(saved.paper.id);
+    expect(fetchCalls).toBe(0);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("stages a single uploaded PDF", async () => {
     const context = testApp();
     const form = new FormData();

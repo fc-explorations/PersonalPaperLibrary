@@ -29,6 +29,20 @@ function normalizeUrl(url?: string): string | undefined {
   }
 }
 
+function normalizeTitle(title: string): string {
+  return title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function authorFamily(author: string): string {
+  const words = author.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((word) => word.length > 1);
+  return words.at(-1) || "";
+}
+
+function authorsOverlap(left: string[], right: string[]): boolean {
+  const expected = new Set(left.map(authorFamily).filter(Boolean));
+  return !expected.size || !right.length || right.some((author) => expected.has(authorFamily(author)));
+}
+
 function rowToPaper(row: PaperRow, tags: string[], authors: string[]): PaperRecord {
   return {
     id: String(row.id),
@@ -72,7 +86,20 @@ export class PaperRepository {
     let row: PaperRow | undefined;
     if (arxivBaseId) row = this.db.prepare("SELECT * FROM papers WHERE lower(arxiv_base_id) = ? AND id != COALESCE(?, '')").get(arxivBaseId, input.id || "") as PaperRow | undefined;
     if (!row && input.sourceUrl) row = this.db.prepare("SELECT * FROM papers WHERE source_url = ? AND id != COALESCE(?, '')").get(normalizeUrl(input.sourceUrl), input.id || "") as PaperRow | undefined;
+    if (!row && input.doi) row = this.db.prepare("SELECT * FROM papers WHERE lower(doi) = lower(?) AND id != COALESCE(?, '')").get(input.doi.trim(), input.id || "") as PaperRow | undefined;
     if (!row && pdfSha256) row = this.db.prepare("SELECT * FROM papers WHERE pdf_sha256 = ? AND id != COALESCE(?, '')").get(pdfSha256, input.id || "") as PaperRow | undefined;
+    if (!row && input.title) {
+      const title = normalizeTitle(input.title);
+      if (title) {
+        const candidates = this.db.prepare("SELECT * FROM papers WHERE id != COALESCE(?, '')").all(input.id || "") as PaperRow[];
+        row = candidates.find((candidate) => {
+          if (normalizeTitle(String(candidate.title || "")) !== title) return false;
+          if (input.year && candidate.year && Number(input.year) !== Number(candidate.year)) return false;
+          const existingAuthors = this.hydrate(candidate).authors;
+          return authorsOverlap(input.authors || [], existingAuthors);
+        });
+      }
+    }
     return row ? this.hydrate(row) : null;
   }
 

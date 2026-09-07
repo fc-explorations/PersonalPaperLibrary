@@ -391,6 +391,8 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
       form.querySelector("[data-existing-paper]")?.remove();
+      const preview = document.querySelector("[data-preview]");
+      if (preview) preview.hidden = true;
       form.insertAdjacentHTML("beforeend", `<a class="inline-link" data-existing-paper href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
     } else {
       setStatus(form, "Review the details below.");
