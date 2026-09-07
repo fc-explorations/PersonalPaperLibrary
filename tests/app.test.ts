@@ -43,6 +43,8 @@ describe("HTTP application", () => {
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
     const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
     expect(paperPage).toContain('<p class="muted">Test Author · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
+    const libraryPage = await (await context.app.request("/")).text();
+    expect(libraryPage).toContain('<p class="muted">Test Author · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
     expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS</dd>");
     expect(paperPage).toContain("booktitle = {NeurIPS}");

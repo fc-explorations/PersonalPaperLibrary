@@ -349,13 +349,10 @@ function paperYear(paper: PaperRecord): string | undefined {
   return paper.year ? String(paper.year) : paper.publishedDate?.slice(0, 4) || undefined;
 }
 
-function paperSummary(paper: PaperRecord): string {
-  return [paper.authors.length ? authorLine(paper.authors) : undefined, paperYear(paper)].filter(Boolean).join(" · ");
-}
-
-function paperHeaderSummary(paper: PaperRecord): string {
+function paperHeaderSummary(paper: PaperRecord, includeSource = false): string {
   const arxiv = paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : undefined;
-  return [paper.authors.length ? escapeHtml(authorLine(paper.authors)) : undefined, paper.acceptedVenue || paper.journalRef ? escapeHtml(paper.acceptedVenue || paper.journalRef || "") : undefined, paperYear(paper) ? escapeHtml(paperYear(paper) || "") : undefined, arxiv].filter(Boolean).join(" · ");
+  const source = includeSource && !paper.arxivId ? "Manual upload" : undefined;
+  return [paper.authors.length ? escapeHtml(authorLine(paper.authors)) : undefined, paper.acceptedVenue || paper.journalRef ? escapeHtml(paper.acceptedVenue || paper.journalRef || "") : undefined, paperYear(paper) ? escapeHtml(paperYear(paper) || "") : undefined, arxiv, source].filter(Boolean).join(" · ");
 }
 
 function paperWebResource(paper: Partial<PaperRecord & PaperMetadata>): string | undefined {
@@ -370,12 +367,11 @@ function metadataRow(label: string, value: unknown, content = renderText(value))
 }
 
 function paperCard(paper: PaperRecord): string {
-  const summary = paperSummary(paper);
+  const summary = paperHeaderSummary(paper, true);
   return `<article class="paper-card">
     ${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing">${pdfMissingIcon()}</span>`}
     <div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${renderText(paper.title, false)}</a></h2>
-    ${summary ? `<p class="muted">${renderText(summary)}</p>` : ""}
-    <p class="paper-meta">${paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : "Manual upload"}${paper.journalRef ? ` · ${renderText(paper.journalRef)}` : ""}</p></div>
+    ${summary ? `<p class="muted">${summary}</p>` : ""}</div>
     ${paper.tags.length ? `<div class="paper-tags">${tagLinks(paper.tags)}</div>` : ""}
   </article>`;
 }
