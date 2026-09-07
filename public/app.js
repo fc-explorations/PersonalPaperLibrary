@@ -606,9 +606,11 @@ const paperId = paperDetail?.dataset.paperId;
 const summaryStatus = paperDetail?.querySelector("[data-summary-status]");
 const generateSummary = async (button) => {
   if (!paperId) return;
-  button.disabled = true;
+  const summaryMode = button.dataset.summaryMode === "full" ? "full" : "quick";
+  const summaryButtons = paperDetail?.querySelectorAll("[data-generate-summary], [data-regenerate-summary]") || [];
+  summaryButtons.forEach((summaryButton) => { summaryButton.disabled = true; });
   if (summaryStatus) {
-    summaryStatus.textContent = "Preparing summary…";
+    summaryStatus.textContent = summaryMode === "full" ? "Preparing full summary…" : "Preparing summary from the opening pages…";
     summaryStatus.classList.remove("status-error");
   }
   const updateSummaryProgress = async () => {
@@ -626,10 +628,10 @@ const generateSummary = async (button) => {
   const progressTimer = window.setInterval(() => { void updateSummaryProgress(); }, 750);
   void updateSummaryProgress();
   try {
-    await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST" });
+    await jsonRequest(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: summaryMode }) });
     window.location.reload();
   } catch (error) {
-    button.disabled = false;
+    summaryButtons.forEach((summaryButton) => { summaryButton.disabled = false; });
     if (summaryStatus) { summaryStatus.textContent = clientErrorMessage(error); summaryStatus.classList.add("status-error"); }
   } finally {
     window.clearInterval(progressTimer);

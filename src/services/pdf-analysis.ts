@@ -29,16 +29,26 @@ export function excludeAppendixMaterial(text: string): { text: string; excluded:
   return { text, excluded: false };
 }
 
-export async function extractPdfText(path: string): Promise<string> {
+async function extractPdfTextRange(path: string, lastPage?: number, maxCharacters?: number): Promise<string> {
   try {
-    const result = await execFileAsync("pdftotext", ["-layout", path, "-"], { maxBuffer: 100 * 1024 * 1024 });
-    const text = result.stdout.trim();
+    const pageArgs = lastPage ? ["-f", "1", "-l", String(lastPage)] : [];
+    const result = await execFileAsync("pdftotext", ["-layout", ...pageArgs, path, "-"], { maxBuffer: 100 * 1024 * 1024 });
+    const extracted = result.stdout.trim();
+    const text = maxCharacters === undefined ? extracted : extracted.slice(0, maxCharacters);
     if (!text) throw new Error("PDF_TEXT_EMPTY");
     return text;
   } catch (error) {
     if (error instanceof Error && error.message === "PDF_TEXT_EMPTY") throw error;
     throw new Error("PDF_TEXT_EXTRACTION_FAILED");
   }
+}
+
+export async function extractPdfText(path: string): Promise<string> {
+  return extractPdfTextRange(path);
+}
+
+export async function extractPdfTextExcerpt(path: string, maxPages = 4, maxCharacters = 18_000): Promise<string> {
+  return extractPdfTextRange(path, maxPages, maxCharacters);
 }
 
 function cleanExtractedAbstract(value: string): string | undefined {
@@ -97,6 +107,18 @@ export function splitTextIntoChunks(text: string, maxCharacters = 20_000, overla
     current = current ? `${current}\n\n${paragraph}` : paragraph;
   }
   if (current) chunks.push(current);
+  return chunks;
+}
+
+export function splitTextIntoPageChunks(text: string, pagesPerChunk = 4): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  const pages = normalized.split("\f").map((page) => page.trim()).filter(Boolean);
+  if (pages.length <= 1) return splitTextIntoChunks(normalized);
+  const chunks: string[] = [];
+  for (let index = 0; index < pages.length; index += pagesPerChunk) {
+    chunks.push(pages.slice(index, index + pagesPerChunk).join("\n\n"));
+  }
   return chunks;
 }
 

@@ -23,7 +23,7 @@ import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
-import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
+import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream } from "./services/zip.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
@@ -42,6 +42,7 @@ export interface AppDependencies {
   authPassword?: string;
   llmClient?: LlmClient;
   pdfTextExtractor?: PdfTextExtractor;
+  pdfExcerptTextExtractor?: PdfTextExtractor;
   keychain?: KeychainAdapter;
 }
 
@@ -274,6 +275,9 @@ export function createApp(dependencies: AppDependencies = {}) {
   const analysis = new AnalysisRepository(db);
   const keychain = dependencies.keychain || createKeychainAdapter();
   const pdfTextExtractor = dependencies.pdfTextExtractor || extractPdfText;
+  const pdfExcerptTextExtractor = dependencies.pdfExcerptTextExtractor || (dependencies.pdfTextExtractor
+    ? async (path: string) => (await pdfTextExtractor(path)).slice(0, 18_000)
+    : extractPdfTextExcerpt);
   const fetcher = dependencies.fetcher || fetch;
   const maxPdfBytes = dependencies.maxPdfBytes ?? (Number(process.env.MAX_PDF_MB || 50) * 1024 * 1024 || DEFAULT_MAX_PDF_BYTES);
   const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
@@ -304,48 +308,54 @@ export function createApp(dependencies: AppDependencies = {}) {
     return metadata;
   }
 
-  async function paperText(paperId: string): Promise<{ text: string; sha256: string }> {
+  async function paperText(paperId: string, scope: "full" | "excerpt" = "full"): Promise<{ text: string; sha256: string }> {
     const paper = repo.findById(paperId);
     if (!paper) throw new Error("PAPER_NOT_FOUND");
     const path = storage.getPath(paper.id);
     if (!existsSync(path)) throw new Error("PDF_NOT_FOUND");
-    const text = await pdfTextExtractor(path);
+    const text = await (scope === "excerpt" ? pdfExcerptTextExtractor : pdfTextExtractor)(path);
     if (!text.trim()) throw new Error("PDF_TEXT_EMPTY");
     return { text, sha256: paper.pdfSha256 || await sha256File(path) };
   }
 
-  async function completeSummary(paperId: string): Promise<import("./repositories/analysis.js").SummaryRecord> {
-    const source = await paperText(paperId);
-    const summarySource = excludeAppendixMaterial(source.text);
+  async function completeSummary(paperId: string, mode: "quick" | "full" = "quick"): Promise<import("./repositories/analysis.js").SummaryRecord> {
+    const source = await paperText(paperId, mode === "full" ? "full" : "excerpt");
+    const summarySource = mode === "full" ? excludeAppendixMaterial(source.text) : { text: source.text, excluded: false };
     const selected = selectedLlm(analysis.getSettings(), SUMMARY_OPENAI_MODEL);
     const startedAt = Date.now();
     const messages = (content: string) => [{ role: "system" as const, content: "You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details." }, { role: "user" as const, content }];
     try {
-      const chunks = splitTextIntoChunks(summarySource.text);
-      if (!chunks.length) throw new Error("PDF_TEXT_EMPTY");
-      summaryProgress.set(paperId, { phase: "digesting", current: 0, total: chunks.length, appendixExcluded: summarySource.excluded });
-      let completedChunks = 0;
-      const digests = await mapWithConcurrency(chunks, SUMMARY_CHUNK_CONCURRENCY, async (chunk, index) => {
-        const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Create a compact factual digest of chunk ${index + 1} of ${chunks.length}. Keep claims, methods, results, limitations, and section context. Do not omit information because it is inconvenient.\n\n${chunk}`) });
-        completedChunks += 1;
-        summaryProgress.set(paperId, { phase: "digesting", current: completedChunks, total: chunks.length });
-        return digest;
-      });
-      summaryProgress.set(paperId, { phase: "synthesizing", appendixExcluded: summarySource.excluded });
-      let current = digests;
-      let reductionRounds = 0;
-      while (current.join("\n\n").length > 20_000) {
-        if (reductionRounds++ >= 12) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
-        const batches: string[][] = [];
-        let batch: string[] = [];
-        for (const digest of current) {
-          if (batch.length && `${batch.join("\n\n")}\n\n${digest}`.length > 20_000) { batches.push(batch); batch = []; }
-          batch.push(digest);
+      let content: string;
+      if (mode === "quick") {
+        summaryProgress.set(paperId, { phase: "synthesizing" });
+        content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the supplied opening pages, explicitly state when information is insufficient, and do not imply that the omitted pages were reviewed. Do not add other top-level headings.\n\nOpening pages of the paper:\n${summarySource.text}`) });
+      } else {
+        const chunks = splitTextIntoPageChunks(summarySource.text, 4);
+        if (!chunks.length) throw new Error("PDF_TEXT_EMPTY");
+        summaryProgress.set(paperId, { phase: "digesting", current: 0, total: chunks.length, appendixExcluded: summarySource.excluded });
+        let completedChunks = 0;
+        const digests = await mapWithConcurrency(chunks, SUMMARY_CHUNK_CONCURRENCY, async (chunk, index) => {
+          const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Summarize the main things in four-page chunk ${index + 1} of ${chunks.length}. Keep the important claims, methods, results, limitations, uncertainties, and section context. Do not omit information because it is inconvenient, and do not invent details.\n\n${chunk}`) });
+          completedChunks += 1;
+          summaryProgress.set(paperId, { phase: "digesting", current: completedChunks, total: chunks.length });
+          return digest;
+        });
+        summaryProgress.set(paperId, { phase: "synthesizing", appendixExcluded: summarySource.excluded });
+        let current = digests;
+        let reductionRounds = 0;
+        while (current.join("\n\n").length > 20_000) {
+          if (reductionRounds++ >= 12) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
+          const batches: string[][] = [];
+          let batch: string[] = [];
+          for (const digest of current) {
+            if (batch.length && `${batch.join("\n\n")}\n\n${digest}`.length > 20_000) { batches.push(batch); batch = []; }
+            batch.push(digest);
+          }
+          if (batch.length) batches.push(batch);
+          current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Compress these paper digests into one complete, factual digest of no more than 12,000 characters. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
         }
-        if (batch.length) batches.push(batch);
-        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Compress these paper digests into one complete, factual digest of no more than 12,000 characters. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
+        content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
       }
-      const content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
       let finalContent = content;
       if (!hasRequiredSummaryHeadings(finalContent)) {
         finalContent = await selected.client.complete({
@@ -806,7 +816,9 @@ export function createApp(dependencies: AppDependencies = {}) {
     const id = c.req.param("id");
     if (!repo.findById(id)) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
     try {
-      return c.json({ summary: await completeSummary(id) });
+      const body: { mode?: unknown } = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }));
+      const mode = body.mode === "full" ? "full" : "quick";
+      return c.json({ summary: await completeSummary(id, mode) });
     } catch (error) {
       const message = errorMessage(error);
       const status = message === "PDF_NOT_FOUND" || message === "PAPER_NOT_FOUND" ? 404 : message === "OPENAI_KEY_NOT_CONFIGURED" || message === "OLLAMA_MODEL_REQUIRED" ? 409 : 502;

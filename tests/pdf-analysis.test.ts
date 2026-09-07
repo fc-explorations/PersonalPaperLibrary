@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { excludeAppendixMaterial, extractAbstractFromPdfText } from "../src/services/pdf-analysis.js";
+import { excludeAppendixMaterial, extractAbstractFromPdfText, splitTextIntoPageChunks } from "../src/services/pdf-analysis.js";
 
 describe("PDF analysis text preparation", () => {
   it("extracts an abstract from the beginning of PDF text on request", async () => {
@@ -42,5 +42,11 @@ describe("PDF analysis text preparation", () => {
     expect(result.excluded).toBe(false);
     expect(result.text).toContain("Appendix A");
     expect(result.text).toContain("Main paper content");
+  });
+
+  it("groups full-paper text into four-page chunks", () => {
+    const chunks = splitTextIntoPageChunks(["Page 1", "Page 2", "Page 3", "Page 4", "Page 5"].join("\f"));
+
+    expect(chunks).toEqual(["Page 1\n\nPage 2\n\nPage 3\n\nPage 4", "Page 5"]);
   });
 });

@@ -589,7 +589,7 @@ describe("HTTP application", () => {
     expect(generatedSummary.content).toContain("# Why It Matters");
     expect(generatedSummary.model).toBe("gpt-4.1-mini");
     expect(generatedSummary.durationMs).toBeTypeOf("number");
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     const questions = await (await context.app.request(`/api/papers/${paperId}/questions`)).json();
     expect(questions.questions).toHaveLength(16);
     expect(questions.questions.map((question: { groupTitle: string }) => question.groupTitle)).toContain("Evaluate");
