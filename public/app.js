@@ -171,7 +171,9 @@ function updateWebResource(form, paper, pdf) {
   if (!link) return;
   const doiUrl = paper?.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "";
   const url = paper?.arxivUrl || doiUrl || paper?.sourceUrl || paper?.pdfUrl || "";
-  const available = pdf?.status !== "staged" && /^https?:\/\//i.test(url);
+  const localPdfLink = form?.querySelector("[data-paper-pdf-link]");
+  const hasLocalPdf = localPdfLink && !localPdfLink.hidden;
+  const available = !hasLocalPdf && !["staged", "preserved"].includes(pdf?.status) && /^https?:\/\//i.test(url);
   link.hidden = !available;
   if (available) link.href = url;
 }
@@ -696,7 +698,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   const form = button.form || button.closest("[data-paper-form]");
   setStatus(form, "Looking up citation metadata…");
   try {
-    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId") }) });
+    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, preservePdf: Boolean(value(form, "stagingToken")) }) });
     setValue(form, "title", result.paper.title);
     setValue(form, "authors", (result.paper.authors || []).join("\n"));
     setValue(form, "year", result.paper.year);

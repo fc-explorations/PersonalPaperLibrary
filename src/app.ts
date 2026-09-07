@@ -176,7 +176,7 @@ function pdfFilename(title: string, used: Set<string>): string {
   return filename;
 }
 
-type StagedPdfResult = { status: "not_found" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
+type StagedPdfResult = { status: "not_found" | "preserved" } | { status: "staged"; stagingToken: string; sizeBytes: number; sha256: string };
 
 async function fetchRemotePdf(url: string, maxPdfBytes: number, fetcher: typeof fetch): Promise<Uint8Array> {
   let target = new URL(url);
@@ -491,12 +491,16 @@ export function createApp(dependencies: AppDependencies = {}) {
     return next();
   });
   app.use("*", async (c, next) => {
-    if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js") return next();
+    const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method);
+    if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js") {
+      if (mutating && snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", `The library is temporarily unavailable while a snapshot ${snapshotMaintenance} is in progress.`);
+      return next();
+    }
     if (!validSession(getCookie(c, SESSION_COOKIE), authPassword)) {
       if (c.req.method === "GET" || c.req.method === "HEAD") return c.redirect("/login");
       return jsonError(c, 401, "AUTH_REQUIRED", "Sign in to use the paper library.");
     }
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
+    if (mutating) {
       const origin = c.req.header("origin");
       const expectedOrigin = process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
       if (origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
@@ -692,7 +696,7 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/metadata/lookup", async (c) => {
     try {
-      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string }>();
+      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string; paperId?: string; preservePdf?: boolean }>();
       let metadata: PaperMetadata;
       let provider: string;
       if (body.arxivId) {
@@ -725,7 +729,11 @@ export function createApp(dependencies: AppDependencies = {}) {
           }
         }
       }
-      const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      const existingPaper = body.paperId ? repo.findById(body.paperId) : null;
+      const preservePdf = body.preservePdf === true || Boolean(existingPaper?.r2Key);
+      const downloaded = preservePdf
+        ? { pdf: { status: "preserved" } as StagedPdfResult }
+        : await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
@@ -1244,7 +1252,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     snapshotMaintenance = "restore";
     try {
       const archivePath = await receiveSnapshotUpload(c.req.raw, storage.root, maxBackupBytes);
-      const staged = await stageSnapshotRestore(archivePath, storage.root);
+      const staged = await stageSnapshotRestore(archivePath, storage.root, maxBackupBytes);
       return c.json({ ok: true, mode: "snapshot", token: staged.token, restartRequired: true });
     } catch (error) {
       const message = errorMessage(error);

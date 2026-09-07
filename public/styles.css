@@ -42,9 +42,10 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 .55rem; }
 .paper-detail-heading .muted { color: var(--text); font-style: normal; }
 .paper-authors { font-style: italic; }
 .paper-detail-heading + .detail-section { padding-top: 24px; }
-.edit-actions-top { display: flex; justify-content: flex-end; margin: 0; }
-.edit-actions-top .form-actions { width: auto; margin-top: 0; }
+.edit-actions-top { display: flex; min-width: 0; justify-content: flex-end; margin: 0; }
+.edit-actions-top .form-actions { width: auto; max-width: 100%; margin-top: 0; }
 .edit-actions-top .form-actions-row { justify-content: flex-end; }
+.edit-actions-top .form-actions .form-status { position: static; width: min(520px, 100%); max-width: 100%; height: auto; margin-left: auto; overflow-wrap: anywhere; text-align: right; }
 .paper-heading, .paper-detail { max-width: none; }
 .edit-page, .edit-panel { width: 100%; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
@@ -248,8 +249,8 @@ select { width: auto; min-width: 150px; }
 .preview-panel { margin-bottom: 60px; }
 .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 20px; }
 .preview-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.preview-actions .form-actions { position: relative; width: auto; margin: 0; }
-.preview-actions .form-actions .form-status { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: min(70vw, 520px); text-align: right; }
+.preview-actions .form-actions { width: auto; max-width: 100%; margin: 0; }
+.preview-actions .form-actions .form-status { position: static; width: min(520px, 100%); max-width: 100%; height: auto; margin-left: auto; overflow-wrap: anywhere; text-align: right; }
 .pdf-status { color: var(--accent); font-size: .9rem; font-weight: 700; }
 .form-grid { display: grid; gap: 14px; }
 .form-grid label { display: grid; gap: 5px; color: #5b574f; font-size: .9rem; font-weight: 700; }

@@ -78,7 +78,7 @@ The current runtime is local Node.js with Hono, SQLite, and filesystem PDF stora
 Optional environment variables:
 
 - `MAX_PDF_MB` — maximum PDF size; defaults to 50 MB.
-- `MAX_REQUEST_MB` — maximum request/backup size; defaults to 256 MB.
+- `MAX_REQUEST_MB` — maximum size for ordinary requests; defaults to 256 MB.
 - `MAX_BACKUP_MB` — maximum streamed snapshot upload size; defaults to 64 GiB.
 - `HOST` — bind address; defaults to `127.0.0.1`.
 - `APP_PASSWORD` — enables the login gate. It is required when `HOST` is not loopback.

@@ -2,21 +2,21 @@ import busboy from "busboy";
 import Database from "better-sqlite3";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { IncomingHttpHeaders } from "node:http";
 import * as unzipper from "unzipper";
 import type { FileStorage } from "./storage.js";
+import { APP_VERSION } from "../version.js";
 
 const require = createRequire(import.meta.url);
-const archiver = require("archiver") as (format: string, options: { forceZip64: boolean; store: boolean }) => import("archiver").Archiver;
+const { ZipArchive } = require("archiver") as { ZipArchive: new (options: { forceZip64: boolean; store: boolean }) => import("archiver").Archiver };
 
 export const SNAPSHOT_FORMAT = "personal-paper-library-snapshot";
 export const SNAPSHOT_FORMAT_VERSION = 1;
-export const SNAPSHOT_APP_VERSION = "2.0.1";
+export const SNAPSHOT_APP_VERSION = APP_VERSION;
 export const SNAPSHOT_PENDING_FILE = "pending-snapshot-restore.json";
 
 type SnapshotArchive = {
@@ -70,7 +70,7 @@ export async function createSnapshotArchive(db: Database.Database, storage: File
       pdfs.push({ id: row.id, path });
     }
 
-    const archive = archiver("zip", { forceZip64: true, store: true });
+    const archive = new ZipArchive({ forceZip64: true, store: true });
     let settled = false;
     let resolveDone!: () => void;
     let rejectDone!: (error: unknown) => void;
@@ -97,7 +97,7 @@ export async function createSnapshotArchive(db: Database.Database, storage: File
     archive.file(databasePath, { name: "library.sqlite" });
     for (const pdf of pdfs) archive.file(pdf.path, { name: `pdfs/${pdf.id}.pdf` });
     void archive.finalize().catch((error: unknown) => finish(error));
-    return { stream: Readable.toWeb(archive) as ReadableStream<Uint8Array>, done: done.finally(() => cleanupDirectory(directory)) };
+    return { stream: Readable.toWeb(archive) as ReadableStream<Uint8Array>, done };
   } catch (error) {
     await cleanupDirectory(directory);
     throw error;
@@ -166,19 +166,32 @@ async function validateSnapshotDatabase(databasePath: string): Promise<Database.
   }
 }
 
-export async function stageSnapshotRestore(archivePath: string, root: string): Promise<{ token: string }> {
+export async function stageSnapshotRestore(archivePath: string, root: string, maxBytes = Number.MAX_SAFE_INTEGER): Promise<{ token: string }> {
   const destination = await mkdtemp(join(snapshotRoot(root), ".snapshot-restore-"));
   let database: Database.Database | undefined;
+  const uploadDirectory = dirname(archivePath);
   try {
     if (existsSync(pendingPath(root))) throw snapshotError("SNAPSHOT_RESTORE_PENDING");
-    const archive = await unzipper.Open.file(archivePath);
+    let archive: unzipper.CentralDirectory;
+    try {
+      archive = await unzipper.Open.file(archivePath);
+    } catch {
+      throw snapshotError("SNAPSHOT_REQUIRED");
+    }
     const files = archive.files.filter((file) => file.type === "File");
     const paths = new Set<string>();
+    let declaredBytes = 0;
     for (const file of files) {
       validateArchivePath(file.path);
       if (paths.has(file.path)) throw snapshotError("SNAPSHOT_DUPLICATE_ENTRY");
       paths.add(file.path);
       if (file.path !== "format.json" && file.path !== "library.sqlite" && !safePdfPath(file.path)) throw snapshotError("SNAPSHOT_ENTRY_INVALID");
+      const entryStats = file as unknown as { uncompressedSize?: number; vars?: { uncompressedSize?: number } };
+      const declaredSize = Number(entryStats.uncompressedSize ?? entryStats.vars?.uncompressedSize);
+      if (Number.isFinite(declaredSize) && declaredSize >= 0) {
+        declaredBytes += declaredSize;
+        if (declaredBytes > maxBytes) throw snapshotError("SNAPSHOT_TOO_LARGE");
+      }
     }
     const formatEntry = archive.files.find((file) => file.path === "format.json" && file.type === "File");
     const databaseEntry = archive.files.find((file) => file.path === "library.sqlite" && file.type === "File");
@@ -217,7 +230,7 @@ export async function stageSnapshotRestore(archivePath: string, root: string): P
     await cleanupDirectory(destination);
     throw error;
   } finally {
-    await cleanupDirectory(dirname(archivePath));
+    if (uploadDirectory.split(/[\\/]/).pop()?.startsWith(".snapshot-upload-")) await cleanupDirectory(uploadDirectory);
   }
 }
 

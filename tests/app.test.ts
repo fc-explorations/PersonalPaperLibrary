@@ -1,10 +1,9 @@
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "../src/app.js";
-import { openDatabase } from "../src/db/database.js";
 import { PaperRepository } from "../src/repositories/papers.js";
 import { FileStorage } from "../src/services/storage.js";
 import { applyPendingSnapshot } from "../src/services/snapshot.js";
@@ -37,7 +36,6 @@ describe("HTTP application", () => {
     const staged = await context.storage.stage(pdf);
     const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Paper missing an abstract", metadataSource: "manual", stagingToken: staged.token }) });
     expect(saveResponse.status).toBe(201);
-    const saved = await saveResponse.json();
     const saved = await saveResponse.json();
 
     const indexResponse = await context.app.request("/api/library/search-index/continue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) });
@@ -369,6 +367,32 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("preserves an existing PDF when refreshing metadata", async () => {
+    let pdfRequests = 0;
+    const title = "Existing PDF Metadata Test";
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: [title], DOI: "10.1000/existing-pdf-test", URL: "https://publisher.example/existing-pdf-test", link: [{ URL: "https://publisher.example/existing-pdf-test.pdf", "content-type": "application/pdf" }] }] } }), { status: 200 });
+      if (url.endsWith(".pdf")) {
+        pdfRequests += 1;
+        return new Response(pdf, { status: 200, headers: { "content-type": "application/pdf" } });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const context = testApp(fetcher);
+    const staged = await context.storage.stage(pdf);
+    const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Original title", metadataSource: "manual", stagingToken: staged.token }) });
+    const saved = await saveResponse.json();
+    const lookupResponse = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paperId: saved.paper.id, title }) });
+    expect(lookupResponse.status).toBe(200);
+    const lookup = await lookupResponse.json();
+    expect(lookup.pdf.status).toBe("preserved");
+    expect(lookup.warnings).toEqual([]);
+    expect(pdfRequests).toBe(0);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("returns the best web resource when automatic PDF retrieval fails", async () => {
     const title = "Metadata Web Resource Test";
     const fetcher = async (input: RequestInfo | URL) => {
@@ -567,6 +591,7 @@ describe("HTTP application", () => {
     const upload = await uploadResponse.json();
     const saveResponse = await source.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Backup paper", authors: ["Backup Author"], tags: ["saved"], metadataSource: "manual", stagingToken: upload.pdf.stagingToken }) });
     expect(saveResponse.status).toBe(201);
+    const saved = await saveResponse.json();
     const settings = await source.app.request("/settings");
     const settingsHtml = await settings.text();
     expect(settingsHtml).toContain('<section class="panel settings-page">');
@@ -596,7 +621,7 @@ describe("HTTP application", () => {
     expect(await restoreResponse.json()).toMatchObject({ ok: true, mode: "snapshot", restartRequired: true });
     target.db.close();
     expect(applyPendingSnapshot(target.root)).toBe(true);
-    const restoredDb = openDatabase(join(target.root, "library.sqlite"));
+    const restoredDb = new Database(join(target.root, "library.sqlite"), { readonly: true });
     const restoredRepo = new PaperRepository(restoredDb);
     const restored = restoredRepo.list({ limit: 1 })[0];
     expect(restored.title).toBe("Backup paper");
@@ -717,11 +742,15 @@ describe("HTTP application", () => {
     expect(paperPage).toContain("What is one extra concern?");
     expect(paperPage).toMatch(/openai · gpt-4\.1-mini · .* · 0:\d{2}/);
     expect(paperPage).toMatch(/openai · gpt-5\.4-nano · .* · 0:\d{2}/);
-    const backup = await (await context.app.request("/api/export/backup")).json();
-    expect(backup.version).toBe(2);
-    expect(backup.analysis.summaries).toHaveLength(1);
-    expect(backup.analysis.questions.some((question: { isCustom: boolean }) => question.isCustom)).toBe(true);
-    expect(JSON.stringify(backup)).not.toContain("secret-value");
+    const backupResponse = await context.app.request("/api/export/backup");
+    expect(backupResponse.status).toBe(200);
+    const backupArchive = await unzipper.Open.buffer(Buffer.from(await backupResponse.arrayBuffer()));
+    const backupDatabasePath = join(context.root, "backup.sqlite");
+    writeFileSync(backupDatabasePath, await backupArchive.files.find((file) => file.path === "library.sqlite")!.buffer());
+    const backupDatabase = new Database(backupDatabasePath, { readonly: true });
+    expect((backupDatabase.prepare("SELECT COUNT(*) AS count FROM paper_summaries").get() as { count: number }).count).toBe(1);
+    expect((backupDatabase.prepare("SELECT COUNT(*) AS count FROM paper_questions WHERE is_custom = 1").get() as { count: number }).count).toBe(1);
+    backupDatabase.close();
     const deleteQuestion = await context.app.request(`/api/papers/${paperId}/questions/${custom.question.id}`, { method: "DELETE" });
     expect(deleteQuestion.status).toBe(200);
     expect((await (await context.app.request(`/api/papers/${paperId}/questions`)).json()).questions.some((question: { id: string }) => question.id === custom.question.id)).toBe(false);
