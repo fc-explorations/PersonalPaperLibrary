@@ -353,6 +353,11 @@ function paperSummary(paper: PaperRecord): string {
   return [paper.authors.length ? authorLine(paper.authors) : undefined, paperYear(paper)].filter(Boolean).join(" · ");
 }
 
+function paperHeaderSummary(paper: PaperRecord): string {
+  const arxiv = paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : undefined;
+  return [paper.authors.length ? escapeHtml(authorLine(paper.authors)) : undefined, paper.acceptedVenue || paper.journalRef ? escapeHtml(paper.acceptedVenue || paper.journalRef || "") : undefined, paperYear(paper) ? escapeHtml(paperYear(paper) || "") : undefined, arxiv].filter(Boolean).join(" · ");
+}
+
 function paperWebResource(paper: Partial<PaperRecord & PaperMetadata>): string | undefined {
   if (paper.arxivUrl) return paper.arxivUrl;
   if (paper.doi) return `https://doi.org/${encodeURIComponent(paper.doi)}`;
@@ -496,7 +501,7 @@ function renderQuestionsSection(questions: StoredQuestion[]): string {
 }
 
 export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | null, questions: StoredQuestion[] = []): string {
-  const paperLine = paperSummary(paper);
+  const paperLine = paperHeaderSummary(paper);
   const bibtex = bibtexEntry(paper);
   const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
   const compactCitations = citationStyles(paper).map(({ label, text, html }) => `<article class="citation-style"><div class="citation-style-heading"><strong>${escapeHtml(label)}</strong><button class="button button-secondary button-small" type="button" data-copy-citation="${escapeHtml(text)}">${copyIcon()}<span>Copy</span></button></div><p class="citation-text">${html}</p></article>`).join("");
@@ -515,7 +520,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
   const tagsSection = paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : "";
   const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a><button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${renderText(paperLine)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><h2 class="detail-subheading">Paper information</h2><dl class="metadata">${metadata}</dl></section>${tagsSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}${citeSection}</div></article>`;
+  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${paperLine}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><h2 class="detail-subheading">Paper information</h2><dl class="metadata">${metadata}</dl></section>${tagsSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}${citeSection}</div></article>`;
   return layout(paper.title, body);
 }
 
