@@ -35,6 +35,9 @@ describe("library semantic search", () => {
     expect(result.hits[0].evidence).toContain("uncertainty");
     expect(result.coverage.totalPapers).toBe(2);
     expect(result.coverage.indexedPapers).toBe(2);
+    db.prepare("UPDATE tags SET name = 'Machine-Learning' WHERE name = 'machine-learning'").run();
+    search.syncDocuments();
+    expect(search.coverage().indexedPapers).toBe(2);
     db.close();
   });
 

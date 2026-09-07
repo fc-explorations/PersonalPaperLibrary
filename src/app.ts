@@ -321,6 +321,27 @@ export function createApp(dependencies: AppDependencies = {}) {
   const summaryProgress = new Map<string, { phase: "digesting" | "synthesizing"; current?: number; total?: number; appendixExcluded?: boolean }>();
   let libraryIndexProgress: { active: boolean; phase?: "abstracts" | "embeddings"; requested: number; processed: number; total: number; startedAt?: string; etaSeconds?: number; error?: string } = { active: false, requested: 0, processed: 0, total: 0 };
   let snapshotMaintenance: "backup" | "restore" | null = null;
+  let activeMutations = 0;
+  let mutationDrainWaiters: Array<() => void> = [];
+
+  async function waitForMutations(): Promise<void> {
+    if (!activeMutations) return;
+    await new Promise<void>((resolve) => mutationDrainWaiters.push(resolve));
+  }
+
+  async function runTrackedMutation(next: () => Promise<void>): Promise<void> {
+    activeMutations += 1;
+    try {
+      await next();
+    } finally {
+      activeMutations -= 1;
+      if (!activeMutations) {
+        const waiters = mutationDrainWaiters;
+        mutationDrainWaiters = [];
+        waiters.forEach((resolve) => resolve());
+      }
+    }
+  }
 
   function selectedLlm(settings: AiSettings, summaryModel?: string): { provider: LlmProvider; model: string; client: LlmClient } {
     if (settings.provider === "ollama") {
@@ -499,9 +520,11 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
   app.use("*", async (c, next) => {
     const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method);
+    const libraryMutation = mutating && c.req.path !== "/login" && c.req.path !== "/api/import/backup";
+    const continueRequest = () => libraryMutation ? runTrackedMutation(next) : next();
     if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js") {
       if (mutating && snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", `The library is temporarily unavailable while a snapshot ${snapshotMaintenance} is in progress.`);
-      return next();
+      return continueRequest();
     }
     if (!validSession(getCookie(c, SESSION_COOKIE), authPassword)) {
       if (c.req.method === "GET" || c.req.method === "HEAD") return c.redirect("/login");
@@ -513,7 +536,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (origin !== expectedOrigin) return jsonError(c, 403, "CSRF_BLOCKED", "The request origin is not allowed.");
       if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", `The library is temporarily unavailable while a snapshot ${snapshotMaintenance} is in progress.`);
     }
-    return next();
+    return continueRequest();
   });
 
   app.use("/styles.css", serveStatic({ root: publicRoot }));
@@ -1242,6 +1265,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", "A snapshot operation is already in progress.");
     snapshotMaintenance = "backup";
     try {
+      await waitForMutations();
       const snapshot = await createSnapshotArchive(db, storage);
       const release = () => { if (snapshotMaintenance === "backup") snapshotMaintenance = null; };
       snapshot.done.then(release, release);
@@ -1258,6 +1282,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     if (snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", "A snapshot operation is already in progress.");
     snapshotMaintenance = "restore";
     try {
+      await waitForMutations();
       const archivePath = await receiveSnapshotUpload(c.req.raw, storage.root, maxBackupBytes);
       const staged = await stageSnapshotRestore(archivePath, storage.root, maxBackupBytes);
       return c.json({ ok: true, mode: "snapshot", token: staged.token, restartRequired: true });

@@ -23,12 +23,13 @@ function tokens(value: string): string[] {
 }
 
 function canonicalText(paper: PaperRecord, summary?: SummaryRecord | null): string {
+  const canonicalTags = [...new Set(paper.tags.map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   return [
     `Title: ${paper.title}`,
     paper.authors.length ? `Authors: ${paper.authors.join(", ")}` : "",
     paper.abstract ? `Abstract: ${paper.abstract}` : "",
     paper.categories.length ? `Categories: ${paper.categories.join(", ")}` : "",
-    paper.tags.length ? `Tags: ${paper.tags.join(", ")}` : "",
+    canonicalTags.length ? `Tags: ${canonicalTags.join(", ")}` : "",
     paper.doi ? `DOI: ${paper.doi}` : "",
     paper.arxivId ? `arXiv: ${paper.arxivId}` : "",
     summary?.status === "complete" && summary.content ? `Summary: ${summary.content}` : "",

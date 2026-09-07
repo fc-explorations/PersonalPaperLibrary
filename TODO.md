@@ -1,134 +1,162 @@
-# TODO: Free Cloudflare version
+# TODO: Private Cloudflare deployment
 
-Goal: deploy a safe, single-user personal version of PersonalPaperLibrary on Cloudflare’s free tiers, while keeping the local Node.js version working. The hosted deployment is for one owner only: me. Multi-user accounts, sharing, teams, and tenant isolation are out of scope.
+## Goal
 
-The current application is a local Node/Hono app using `better-sqlite3`, filesystem PDFs, `pdftotext`, and macOS Keychain. It cannot be deployed unchanged to Workers. The online version should share the domain model, validation, prompts, and views where practical, but use Cloudflare-native adapters.
+Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudflare while keeping the local Node.js version fully functional. The hosted app is for one owner only: me. Accounts, sharing, teams, invitations, and tenant isolation are out of scope.
 
-## Target architecture
+## Current state
 
-- [ ] Add a Cloudflare Worker entry point using the existing Hono routes.
-- [ ] Serve the compiled browser assets through Worker Static Assets.
-- [ ] Replace synchronous `better-sqlite3` repositories with asynchronous D1 repositories.
-- [ ] Port the existing migrations to D1-compatible migrations and run them through Wrangler.
-- [ ] Store PDF objects in R2 under stable paper IDs; keep only object keys and hashes in D1.
-- [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, hashes, and errors.
-- [ ] Define an adapter boundary so local filesystem storage and cloud R2 storage share the same application interface.
-- [ ] Define an adapter boundary so local SQLite and D1 share repository contracts where feasible.
-- [ ] Remove Worker-incompatible imports from the cloud bundle: native SQLite, filesystem, child processes, macOS Keychain, and local server startup.
+- Local runtime: Node.js 24+, Hono, `better-sqlite3`, filesystem PDF storage, `pdftotext`, and macOS Keychain.
+- Existing seams: injectable app dependencies, `FileStorage`, `LlmClient`/embedding clients, SQLite migrations, and snapshot backup/restore.
+- Existing local auth: optional `APP_PASSWORD` login gate with session cookies and origin checks for state-changing requests.
+- Existing analysis behavior: summaries, questions, embeddings, bounded concurrency, stale-analysis tracking, and provider selection.
+- Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
+- Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 
-## Authentication and privacy
+## Non-goals
 
-- [ ] Protect the Worker with Cloudflare Access; the hosted application is private-by-default and limited to my identity.
-- [ ] Validate the Access JWT at the Worker boundary and reject missing, invalid, or unexpected identities.
-- [ ] Use one fixed personal library namespace in D1 and R2; do not introduce user accounts, sharing, or tenant columns.
-- [ ] Add explicit CSRF protection for cookie-authenticated state-changing requests, or use Access identity headers with a strict origin policy.
-- [ ] Add security headers and a production `PUBLIC_ORIGIN` configuration.
-- [ ] Add request size, upload type, and upload count limits at both Worker and application layers.
-- [ ] Add rate limits for uploads, metadata lookups, PDF extraction, summary generation, and question generation.
-- [ ] Document that “free” means within Cloudflare and provider quotas; OpenAI API usage is not free by default.
+- Multi-user accounts or authorization beyond one Cloudflare Access identity.
+- Public libraries, sharing links, collaboration, comments, or social features.
+- A general-purpose citation manager, notes app, reading tracker, or document editor.
+- Making Ollama a hosted dependency unless a reachable HTTPS endpoint is explicitly supplied and secured.
 
-## PDF storage and processing
+## Definition of done
 
-- [ ] Implement an R2 storage adapter for upload, read, replace, delete, staging, and recovery behavior.
-- [ ] Replace local staging/trash directories with R2 temporary prefixes and lifecycle cleanup.
-- [ ] Support direct browser-to-R2 upload for larger PDFs if proxying through the Worker becomes a bottleneck.
-- [ ] Preserve SHA-256 calculation and stale-summary/stale-answer behavior after upload replacement.
-- [ ] Replace `pdftotext -layout`; `child_process` is not available in Workers.
-- [ ] Evaluate a Worker-compatible PDF text extractor (pure JavaScript or WASM) against representative papers.
-- [ ] Enforce extraction time, memory, page-count, and text-size limits.
+- [ ] Local `npm run verify` remains green and the local app still uses SQLite, filesystem storage, `pdftotext`, and Keychain as before.
+- [ ] A preview Worker can be deployed from a clean checkout with no committed secrets.
+- [ ] Cloudflare Access protects every hosted route except the minimum platform health/static bootstrap surface.
+- [ ] A representative local snapshot can be imported into D1/R2 and verified by paper count, PDF hashes, tags, summaries, and questions.
+- [ ] The hosted app can add, replace, view, search, analyze, back up, and restore papers within documented limits.
+- [ ] Worker, D1, R2, Access, and provider failures produce recoverable errors without leaking paper contents or secrets.
+- [ ] A restore drill and PDF replacement/stale-analysis drill have both been completed before production deployment.
+
+## Phase 0 — Resolve feasibility questions first
+
+These spikes should happen before a large migration. Record the result of each decision in `README.md` or an architecture note.
+
+- [ ] Audit the Worker bundle and list every Node-only import reachable from hosted routes: native SQLite, filesystem, child processes, Keychain, Node server startup, ZIP/archive libraries, and environment access.
+- [ ] Build a minimal Worker/Hono entry point that serves the current health check and static assets.
+- [ ] Prototype the D1 repository contract against the current schema, including transactions and the queries used by library search, tags, analysis, and snapshots.
+- [ ] Test at least two Worker-compatible PDF extraction options against representative papers: text PDF, malformed PDF, encrypted PDF, scanned/image-only PDF, large PDF, and a paper with appendices.
+- [ ] Measure the largest expected upload, extracted text, prompt, and analysis duration against Worker request/body/CPU/memory/subrequest limits.
+- [ ] Compare analysis execution designs: synchronous/streamed request, Durable Objects state, and Queues/Workflows. Choose one based on resumability, cost, and operational complexity.
+- [ ] Decide whether hosted uploads are proxied through the Worker or use browser-to-R2 upload for large files.
+- [ ] Define a versioned cloud backup format before implementing restore.
+
+## Phase 1 — Establish portable application boundaries
+
+- [ ] Define a storage interface covering upload, read, metadata, replace, delete, temporary staging, recovery, and cleanup.
+- [ ] Adapt the existing filesystem implementation to that interface without changing local behavior, including staging/trash semantics.
+- [ ] Define repository interfaces for papers, tags, library search, analysis, and settings where the current synchronous SQLite API cannot be shared directly.
+- [ ] Keep domain types, validation, prompt construction, question definitions, stale-analysis rules, and view models shared where practical.
+- [ ] Separate runtime composition from `src/app.ts` so Node and Worker entry points provide different adapters without importing each other’s dependencies.
+- [ ] Make provider, secret, clock, and fetch dependencies injectable in hosted tests.
+- [ ] Add explicit cloud-safe serialization for dates, hashes, errors, provider/model metadata, and nullable fields.
+
+## Phase 2 — Cloudflare runtime and data plane
+
+- [ ] Add a Worker entry point using the existing Hono routes and a separate Node entry point for local startup.
+- [ ] Serve compiled browser assets through Worker Static Assets.
+- [ ] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, R2 binding, and environment-specific configuration.
+- [ ] Port migrations `0001`–`0008` to D1-compatible migrations; validate from an empty database and a representative export.
+- [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
+- [ ] Store PDFs in R2 under stable paper IDs. Keep only object keys, sizes, content types, and SHA-256 hashes in D1.
+- [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, input hashes, definition hashes, and errors.
+- [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
+- [ ] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, `cf:tail`, and preview deployment.
+- [ ] Add separate local, preview, and production bindings without committing secrets.
+
+## Phase 3 — Access, authentication, and security
+
+- [ ] Protect the hosted application with Cloudflare Access and allow only the owner’s identity.
+- [ ] Validate the Access JWT at the Worker boundary: signature, issuer, audience, expiry, and expected identity.
+- [ ] Reject missing, invalid, expired, and unexpected identities before application routes execute.
+- [ ] Use one fixed personal library namespace in D1/R2; do not add user-account or tenant columns.
+- [ ] Choose one state-changing request policy: explicit CSRF tokens for cookie-authenticated requests, or strict Access identity/origin enforcement. Document and test it.
+- [ ] Preserve `PUBLIC_ORIGIN` and add production security headers, including a restrictive CSP where compatible with the UI.
+- [ ] Enforce request size, PDF type, PDF size, upload count, page count, extracted-text size, and prompt-size limits at both Worker and application layers.
+- [ ] Add rate limits for uploads, metadata lookups, extraction, summary generation, and question generation.
+- [ ] Confirm secrets never appear in HTML, JSON, client code, D1, R2, backups, logs, traces, or error messages.
+- [ ] Document that Cloudflare’s free tier does not make OpenAI API usage free; configure a hard AI budget and billing alerts.
+
+## Phase 4 — PDF storage and extraction
+
+- [ ] Implement the R2 adapter for upload, read, replace, delete, temporary staging, and recovery.
+- [ ] Replace local staging/trash directories with temporary R2 prefixes and lifecycle cleanup.
+- [ ] Preserve SHA-256 calculation and stale-summary/stale-answer behavior after replacement.
+- [ ] Replace `pdftotext -layout` with the extractor selected in Phase 0; keep the local `pdftotext` adapter unchanged.
+- [ ] Define behavior for scanned/image-only PDFs, malformed PDFs, encrypted PDFs, unsupported PDFs, extraction timeouts, and truncated text.
 - [ ] Ensure extraction failures never create partial summaries or answers.
-- [ ] Decide whether extraction happens during upload, on-demand, or in a background job.
-- [ ] Keep the local `pdftotext` implementation unchanged behind the local extractor adapter.
+- [ ] Decide and implement whether extraction runs during upload, on demand, or in the analysis job.
+- [ ] If Worker proxy uploads are too constrained, implement direct browser-to-R2 upload with short-lived, owner-authorized upload tokens.
+- [ ] Add cleanup for abandoned uploads and staged objects.
 
-## AI providers
+## Phase 5 — Providers and long-running analysis
 
-- [ ] Keep provider-neutral `LlmClient` behavior and OpenAI/Ollama prompt normalization.
-- [ ] Store the owner’s hosted OpenAI credential as one Cloudflare Worker Secret managed with Wrangler; per-user credential storage is unnecessary.
-- [ ] Never store the plaintext key in D1, R2, backups, logs, or client responses.
-- [ ] Replace the local Keychain adapter with a Cloudflare secret/credential adapter.
-- [ ] Keep the Settings API secret-safe and make hosted key management explicit in the UI.
+- [ ] Keep provider-neutral `LlmClient` and embedding behavior, including OpenAI/Ollama prompt normalization.
+- [ ] Replace the local Keychain adapter with a Worker Secret/credential adapter. Store the owner’s hosted OpenAI credential only as a Cloudflare Worker Secret.
+- [ ] Keep hosted key management explicit in Settings; never return the plaintext key to the browser.
 - [ ] Keep OpenAI model selection and the faster summary model configurable.
-- [ ] Treat Ollama as local-only unless the user supplies a reachable HTTPS Ollama endpoint or a secured tunnel.
+- [ ] Treat Ollama as local-only unless the owner supplies a reachable HTTPS endpoint, authentication, and a clear SSRF-safe policy.
 - [ ] Never silently fall back between OpenAI and Ollama.
-- [ ] Add provider timeout, retry, cancellation, and useful error reporting.
-- [ ] Add hosted request budgets so “Generate all answers” cannot exhaust the free deployment or an API key.
+- [ ] Add provider timeouts, bounded retries, cancellation, and actionable error reporting.
+- [ ] Select and implement the Phase 0 job design.
+- [ ] Persist job state so reloads show `queued`, `running`, `complete`, `stale`, `cancelled`, or `error`.
+- [ ] Preserve bounded digest/chunk parallelism while respecting provider and Worker subrequest limits.
+- [ ] Make progress resumable after transient failures; persist each completed answer immediately.
+- [ ] Make “Generate all answers” skip complete answers and prevent overlapping jobs for the same paper.
+- [ ] Add idempotency keys for upload, summary, answer, and restore requests.
+- [ ] Add hosted request budgets so one action cannot exhaust the deployment or API key.
 
-## Summary and Q&A jobs
+## Phase 6 — Backup, restore, and recovery
 
-- [ ] Separate long-running analysis from the normal page request if Worker execution limits make synchronous generation unreliable.
-- [ ] Compare three options for the free version: synchronous streaming, Durable Objects state, and a queue/workflow design.
-- [ ] Preserve bounded parallel digest processing, but cap concurrency for provider limits and Worker subrequest limits.
-- [ ] Persist job state so reloads show `queued`, `running`, `complete`, `stale`, or `error`.
-- [ ] Keep chunk progress visible and resumable after transient failures.
-- [ ] Make “Generate all answers” skip complete answers and persist each answer immediately.
-- [ ] Prevent overlapping jobs for the same paper unless the owner explicitly regenerates them.
-- [ ] Add an idempotency key for upload, summary, and answer generation requests.
-
-## Backup and restore
-
-- [ ] Replace the current local JSON-with-PDF-base64 backup path for hosted use.
-- [ ] Export D1 metadata, tags, summaries, questions, and answers as version 3 or a separately named cloud format.
+- [ ] Replace the local JSON-with-PDF-base64 approach for hosted use; retain local snapshot compatibility.
+- [ ] Define a cloud backup version, including D1 metadata, tags, summaries, questions, answers, hashes, and R2 object manifest.
 - [ ] Keep API keys and Cloudflare secrets out of every backup format.
-- [ ] Choose between a manifest plus R2 object export and a streamed archive; avoid loading an entire library into Worker memory.
+- [ ] Choose between a manifest plus R2 object export and a streamed archive; do not load an entire library into Worker memory.
 - [ ] Add authenticated, expiring backup download links.
-- [ ] Preserve version-1 and version-2 local backup import compatibility where possible.
-- [ ] Add restore validation, duplicate handling, size limits, and rollback behavior.
+- [ ] Preserve version-1 and version-2 local backup import compatibility where practical.
+- [ ] Add restore validation, duplicate handling, size limits, hash verification, resumability, and rollback/cleanup behavior.
+- [ ] Document what happens when metadata exists but an R2 object is missing, and vice versa.
+- [ ] Complete a restore drill in preview before production.
 
-## Cloudflare project setup
+## Phase 7 — Testing and operations
 
-- [ ] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets configuration, D1 binding, and R2 binding.
-- [ ] Add separate local, preview, and production configuration without committing secrets.
-- [ ] Create the D1 database and R2 bucket in the `fc-explorations` Cloudflare account.
-- [ ] Apply D1 migrations in a disposable preview database first.
+- [ ] Keep the full local test suite running against local adapters.
+- [ ] Add Worker-runtime tests with the current Cloudflare-supported Vitest/Miniflare setup.
+- [ ] Test D1 migrations from empty and representative imported data.
+- [ ] Test R2 upload, replacement, missing-object, deletion, abandoned-upload, and stale-analysis paths.
+- [ ] Test PDF limits and malformed, encrypted, scanned, and large documents.
+- [ ] Test missing, invalid, expired, and unexpected Access identities.
+- [ ] Test provider failures, timeouts, retries, cancellation, budgets, and partial generate-all progress.
+- [ ] Test that secrets and paper contents are absent from logs and error responses.
+- [ ] Test mobile layout, accessibility, and authenticated deep links.
+- [ ] Add CI for typecheck, local tests, Worker tests, build, migration validation, and deployment smoke tests.
+- [ ] Add smoke coverage for home page, settings, upload, PDF read, search, summary, question answer, backup, restore, and protected API routes.
+- [ ] Add owner-only usage links/dashboard for Workers, D1, R2, Access, and AI spend.
+- [ ] Add alerts or documented checks for storage, request, analysis, and provider budgets.
+
+## Launch checklist
+
+- [ ] Recheck current Cloudflare Workers, D1, R2, Access, and provider limits immediately before launch.
+- [ ] Set a hard storage budget and AI spending budget.
+- [ ] Create the D1 database and R2 bucket in the `fc-explorations` account.
+- [ ] Apply migrations to a disposable preview database first.
 - [ ] Configure Worker Secrets through Wrangler or the Cloudflare dashboard.
-- [ ] Configure a custom domain and HTTPS.
-- [ ] Configure Cloudflare Access and test login, logout, and denied requests.
-- [ ] Add deployment scripts: `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`.
-- [ ] Add a GitHub Actions workflow for typecheck, tests, build, migration validation, and deployment.
-- [ ] Add a deployment smoke test for the home page, settings, upload, PDF read, and protected API routes.
+- [ ] Configure the custom domain and HTTPS.
+- [ ] Verify Access login, logout, denied requests, JWT validation, and deep-link behavior.
+- [ ] Verify no local filesystem, native SQLite, child-process, or Keychain dependency is bundled into the Worker.
+- [ ] Verify observability is sufficient without logging paper contents or secrets.
+- [ ] Deploy preview and complete smoke, import, backup/restore, and failure-mode drills.
+- [ ] Deploy production and record Worker, D1, R2, Access, domain, secret, and recovery configuration.
+- [ ] Update `README.md` with hosted setup, privacy, limits, cost, backup, restore, and recovery instructions.
 
-## Free-tier guardrails
+## Reference documentation
 
-Validate these limits immediately before launch because Cloudflare changes plan limits:
-
-- [ ] Workers Free: daily request quota, CPU time per invocation, memory, subrequests, and request body size.
-- [ ] D1 Free: daily rows read/written and total storage.
-- [ ] R2 Free: storage and Class A/Class B operation allowances; confirm the bucket remains on Standard storage.
-- [ ] Access: current free-user and application limits for one private owner.
-- [ ] OpenAI: budget, model limits, request limits, and billing alerts.
-- [ ] Add in-app warnings before approaching storage, request, analysis, or provider budgets.
-- [ ] Add an owner-only usage page or dashboard links for D1, R2, Workers, and AI spend.
-
-Current reference points from Cloudflare documentation include Workers Free’s 100,000 requests/day and 10ms CPU allowance, D1 Free’s 5 million rows read/day and 100,000 rows written/day, and R2 Standard’s 10 GB-month, 1 million Class A, and 10 million Class B monthly free allowance. Recheck before launch:
+Check these immediately before launch because quotas, pricing, and product limits change:
 
 - [Workers pricing and limits](https://developers.cloudflare.com/workers/platform/pricing/)
 - [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 - [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)
 - [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
 - [Cloudflare Access publishing](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
-
-## Compatibility and testing
-
-- [ ] Keep local Node tests running against the existing adapters.
-- [ ] Add Worker-runtime tests with Miniflare/Vitest or the current Cloudflare-supported test setup.
-- [ ] Test D1 migrations from an empty database and from a representative local export.
-- [ ] Test R2 upload, replacement, missing-object, deletion, and stale-analysis paths.
-- [ ] Test PDFs at the maximum supported size and with malformed/encrypted/scanned content.
-- [ ] Test missing, invalid, and unexpected Access identities.
-- [ ] Test provider failures, timeouts, retries, and partial generate-all progress.
-- [ ] Test that secrets never appear in HTML, JSON, logs, D1, R2, backups, or error messages.
-- [ ] Test mobile layout and accessibility for the hosted UI.
-- [ ] Run the full local and Worker test suites in CI before deployment.
-
-## Launch checklist
-
-- [ ] Document that the hosted version is private-by-default and restricted to the owner.
-- [ ] Set a hard storage budget and an AI spending budget.
-- [ ] Complete a backup and restore drill.
-- [ ] Complete a PDF replacement and stale-analysis drill.
-- [ ] Confirm Cloudflare Access protects every non-public route.
-- [ ] Confirm no local filesystem or Keychain dependency is bundled into the Worker.
-- [ ] Confirm observability is sufficient without logging paper contents or secrets.
-- [ ] Deploy to a preview environment and run smoke tests.
-- [ ] Deploy production and record the Worker, D1, R2, Access, and domain configuration.
-- [ ] Update `README.md` with hosted setup, privacy, cost, and recovery instructions.
