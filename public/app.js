@@ -542,6 +542,26 @@ document.querySelectorAll("[data-copy-bibtex]").forEach((button) => button.addEv
   }
 }));
 
+document.querySelectorAll("[data-copy-citation]").forEach((button) => button.addEventListener("click", async () => {
+  const text = button.dataset.copyCitation || button.closest(".citation-style")?.querySelector(".citation-text")?.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    document.body.appendChild(field);
+    field.select();
+    document.execCommand("copy");
+    field.remove();
+  }
+  const label = button.querySelector("span:last-child");
+  if (label) {
+    const previous = label.textContent;
+    label.textContent = "Copied";
+    window.setTimeout(() => { label.textContent = previous; }, 1500);
+  }
+}));
+
 const paperDetail = document.querySelector("[data-paper-id]");
 const paperId = paperDetail?.dataset.paperId;
 const summaryStatus = paperDetail?.querySelector("[data-summary-status]");

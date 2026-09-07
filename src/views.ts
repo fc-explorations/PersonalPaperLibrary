@@ -133,7 +133,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=11" defer></script>
+  <script src="/app.js?v=12" defer></script>
 </body>
 </html>`;
 }
@@ -250,6 +250,57 @@ function bibtexEntry(paper: PaperRecord): string {
   ].filter((field): field is [string, string] => Boolean(field));
   const type = paper.journalRef ? "article" : "misc";
   return [`@${type}{${bibtexKey(paper)},`, ...fields.map(([name, value], index) => `  ${name} = {${bibtexEscape(value)}}${index === fields.length - 1 ? "" : ","}`), "}"].join("\n");
+}
+
+function citationAuthorParts(author: string): { family: string; given: string } {
+  const parts = author.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) return { family: parts[0], given: parts.slice(1).join(" ") };
+  const words = author.trim().split(/\s+/).filter(Boolean);
+  return { family: words.pop() || "Unknown", given: words.join(" ") };
+}
+
+function citationInitials(given: string): string {
+  return given.split(/[\s-]+/).filter(Boolean).map((part) => `${part[0].toUpperCase()}.`).join(" ");
+}
+
+function joinCitationAuthors(names: string[], conjunction: string): string {
+  if (!names.length) return "Unknown author";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} ${conjunction} ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, ${conjunction} ${names.at(-1)}`;
+}
+
+function citationYear(paper: PaperRecord): string {
+  return String(paper.year || paper.publishedDate?.slice(0, 4) || "");
+}
+
+function citationWithVenue(text: string, venue: string): { text: string; html: string } {
+  const marker = "%%VENUE%%";
+  return { text: text.replace(marker, venue), html: escapeHtml(text).replace(marker, `<em>${escapeHtml(venue)}</em>`) };
+}
+
+function citationStyles(paper: PaperRecord): Array<{ label: string; text: string; html: string }> {
+  const parts = paper.authors.map(citationAuthorParts);
+  const mlaAuthors = joinCitationAuthors(parts.map((part, index) => index === 0 ? `${part.family}, ${part.given}`.trim() : `${part.given} ${part.family}`.trim()), "and");
+  const apaAuthors = joinCitationAuthors(parts.map((part) => `${part.family}, ${citationInitials(part.given)}`.trim()), "&");
+  const chicagoAuthors = mlaAuthors;
+  const harvardAuthors = joinCitationAuthors(parts.map((part) => `${part.family}, ${citationInitials(part.given)}`.trim()), "and");
+  const vancouverAuthors = parts.map((part) => `${part.family} ${citationInitials(part.given)}`.trim()).join(", ") || "Unknown author";
+  const title = paper.title.trim();
+  const venue = paper.journalRef?.trim() || "";
+  const year = citationYear(paper);
+  const yearOrNd = year || "n.d.";
+  const entries = [
+    ["MLA", `${mlaAuthors}. "${title}."${venue ? ` %%VENUE%%.` : ""}${year ? ` ${year}.` : ""}`],
+    ["APA", `${apaAuthors} (${yearOrNd}). ${title}.${venue ? " %%VENUE%%." : ""}`],
+    ["Chicago", `${chicagoAuthors}. "${title}."${venue ? " In %%VENUE%%," : ""}${year ? ` ${year}.` : ""}`],
+    ["Harvard", `${harvardAuthors} (${yearOrNd}). ${title}.${venue ? " %%VENUE%%." : ""}`],
+    ["Vancouver", `${vancouverAuthors}. ${title}.${venue ? " %%VENUE%%." : ""}${year ? ` ${year}.` : ""}`],
+  ] as const;
+  return entries.map(([label, value]) => {
+    const citation = citationWithVenue(value, venue);
+    return { label, text: citation.text, html: citation.html };
+  });
 }
 
 function tagLinks(tags: string[], selected?: string): string {
@@ -446,6 +497,8 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
   const paperLine = paperSummary(paper);
   const bibtex = bibtexEntry(paper);
   const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
+  const compactCitations = citationStyles(paper).map(({ label, text, html }) => `<article class="citation-style"><div class="citation-style-heading"><strong>${escapeHtml(label)}</strong><button class="button button-secondary button-small" type="button" data-copy-citation="${escapeHtml(text)}">${copyIcon()}<span>Copy</span></button></div><p class="citation-text">${html}</p></article>`).join("");
+  const citeSection = `<details class="detail-section bibtex-section"><summary>Cite</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">BibTeX</p><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea><div class="citation-styles"><p class="eyebrow">Compact styles</p>${compactCitations}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse Cite" title="Collapse Cite">${collapseIcon()}</button></div></div></details>`;
   const metadata = [
     metadataRow("Authors", paper.authors.join(", ")),
     metadataRow("Year", paperYear(paper)),
@@ -459,7 +512,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
   const tagsSection = paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : "";
   const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a><button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${renderText(paperLine)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><h2 class="detail-subheading">Paper information</h2><dl class="metadata">${metadata}</dl></section>${tagsSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}<details class="detail-section bibtex-section"><summary>BibTeX</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">Citation entry</p><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse BibTeX" title="Collapse BibTeX">${collapseIcon()}</button></div></div></details></div></article>`;
+  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${renderText(paperLine)}</p>` : ""}</header>${abstractSection}<section class="detail-section metadata-panel" aria-label="Paper information"><h2 class="detail-subheading">Paper information</h2><dl class="metadata">${metadata}</dl></section>${tagsSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}${citeSection}</div></article>`;
   return layout(paper.title, body);
 }
 
