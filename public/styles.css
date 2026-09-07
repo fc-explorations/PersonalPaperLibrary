@@ -35,7 +35,7 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 .55rem; }
 .edit-heading { align-items: center; }
 .paper-heading { display: flex; align-items: center; justify-content: space-between; padding-top: 28px; padding-bottom: 16px; }
 .paper-heading .page-actions { justify-content: flex-end; margin-top: 0; }
-.paper-detail-heading { margin: 0; padding: 0 0 24px; border-bottom: 1px solid var(--border); }
+.paper-detail-heading { margin: 0; padding: 0 0 24px 24px; border-bottom: 1px solid var(--border); }
 .paper-detail-heading h1 { font-size: clamp(1.7rem, 3.8vw, 2.5rem); }
 .paper-detail-heading .muted { color: var(--text); font-style: normal; }
 .paper-authors { font-style: italic; }
@@ -212,7 +212,7 @@ select { width: auto; min-width: 150px; }
 .abstract-section .abstract { max-width: 78ch; margin-left: 24px; font-size: 1rem; line-height: 1.65; }
 .analysis-section > summary, .question-group > summary, .add-question-form > summary, .bibtex-section > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; font-size: var(--type-section); font-weight: 700; }
 .analysis-section > summary::-webkit-details-marker, .question-group > summary::-webkit-details-marker, .add-question-form > summary::-webkit-details-marker, .bibtex-section > summary::-webkit-details-marker { display: none; }
-.analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before { color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; transition: transform .15s ease; }
+.analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before { width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
 .analysis-section[open] > summary::before, .question-group[open] > summary::before, .add-question-form[open] > summary::before, .bibtex-section[open] > summary::before { transform: rotate(90deg); }
 .analysis-body, .question-group-body { padding-top: 22px; }
 .analysis-body { display: grid; grid-template-columns: minmax(0, 1fr) var(--analysis-action-width); column-gap: 32px; align-items: start; }
@@ -238,7 +238,7 @@ select { width: auto; min-width: 150px; }
 .status-warning { color: #9a5d27; }
 .analysis-questions { padding-top: 30px; }
 .analysis-questions .section-heading { margin-bottom: 10px; }
-.analysis-questions .section-heading h2 { color: var(--text); font-size: var(--type-section); font-weight: 700; }
+.analysis-questions .section-heading h2 { padding-left: 24px; color: var(--text); font-size: var(--type-section); font-weight: 700; }
 .analysis-questions > .form-status:empty { display: none; }
 .question-section-actions { gap: 12px; }
 .question-group { margin-top: 0; padding: 20px 0 0; }
