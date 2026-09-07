@@ -11,7 +11,7 @@ const backgroundThemes = {
   white: "#ffffff",
   "light-gray": "#eeeeec",
   warm: "#f3efe8",
-  mint: "#e5f1ea",
+  mint: "#f6fdfa",
 };
 const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
 const pageSizeOptions = ["10", "25", "50", "100"];
