@@ -493,6 +493,16 @@ function formatAnalysisDuration(durationMs) {
   return ` · ${Math.floor(durationMs / 60000)}:${String(Math.floor(durationMs / 1000) % 60).padStart(2, "0")}`;
 }
 
+function typesetMath(root) {
+  const mathJax = window.MathJax;
+  if (!mathJax) return;
+  const typeset = () => {
+    if (typeof mathJax.typesetPromise === "function") void mathJax.typesetPromise([root]).catch(() => {});
+  };
+  if (mathJax.startup?.promise) void mathJax.startup.promise.then(typeset).catch(() => {});
+  else typeset();
+}
+
 function showQuestionAnswer(item, answer, answerHtml) {
   if (!item || !answer) return;
   item.querySelector("p.question-empty, p.status-error, p.status-warning")?.remove();
@@ -529,6 +539,7 @@ function showQuestionAnswer(item, answer, answerHtml) {
     progress.setAttribute("aria-label", `${answered} of ${total} questions answered`);
     progress.setAttribute("title", `${answered} of ${total} questions answered`);
   }
+  typesetMath(item);
 }
 
 async function generateOneQuestion(button) {

@@ -82,11 +82,21 @@ export function renderMarkdown(value: string): string {
   let list: string[] = [];
   let code: string[] = [];
   let inCode = false;
-  const inline = (text: string) => escapeHtml(text)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/_([^_]+)_/g, "<em>$1</em>");
+  const inline = (text: string) => {
+    const fragments: string[] = [];
+    const protect = (fragment: string) => {
+      const token = "\u0000" + fragments.length + "\u0000";
+      fragments.push(fragment);
+      return token;
+    };
+    let protectedText = text.replace(/`([^`]+)`/g, (_, code: string) => protect("<code>" + escapeHtml(code) + "</code>"));
+    protectedText = protectedText.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)[^$\n]+?(?<!\\)\$)/g, (math: string) => protect(escapeHtml(math)));
+    return escapeHtml(protectedText)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/_([^_]+)_/g, "<em>$1</em>")
+      .replace(/\u0000(\d+)\u0000/g, (_, index: string) => fragments[Number(index)]);
+  };
   const flushParagraph = () => { if (paragraph.length) { output.push(`<p>${inline(paragraph.join(" "))}</p>`); paragraph = []; } };
   const flushList = () => { if (list.length) { output.push(`<ul>${list.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>`); list = []; } };
   const flushCode = () => { if (code.length) { output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`); code = []; } };
@@ -123,7 +133,7 @@ function layout(title: string, body: string, showHeader = true): string {
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
   <main class="shell">${body}</main>
-  <script src="/app.js?v=8" defer></script>
+  <script src="/app.js?v=9" defer></script>
 </body>
 </html>`;
 }
