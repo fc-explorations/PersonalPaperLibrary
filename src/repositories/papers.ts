@@ -242,8 +242,12 @@ export class PaperRepository {
     return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
   }
 
-  exportData() {
-    return { papers: this.list({ sort: "newest" }), tags: this.tags.list() };
+  listIds(): string[] {
+    return (this.db.prepare("SELECT id FROM papers ORDER BY rowid").all() as Array<{ id: string }>).map((row) => row.id);
+  }
+
+  listStoredPdfIds(): string[] {
+    return (this.db.prepare("SELECT id FROM papers WHERE r2_key IS NOT NULL ORDER BY rowid").all() as Array<{ id: string }>).map((row) => row.id);
   }
 
   *iterateAll(batchSize = 500): Generator<PaperRecord> {

@@ -1,10 +1,10 @@
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { FileStorage } from "../src/services/storage.js";
-import { createSnapshotArchive, SNAPSHOT_FORMAT, SNAPSHOT_FORMAT_VERSION, stageSnapshotRestore } from "../src/services/snapshot.js";
+import { applyPendingSnapshot, createSnapshotArchive, SNAPSHOT_FORMAT, SNAPSHOT_FORMAT_VERSION, SNAPSHOT_PENDING_FILE, stageSnapshotRestore } from "../src/services/snapshot.js";
 import { createZip } from "../src/services/zip.js";
 
 function makeDatabase(root: string): Database.Database {
@@ -46,6 +46,29 @@ describe("snapshot backups", () => {
     const archivePath = join(root, "unsafe.zip");
     writeFileSync(archivePath, createZip([{ name: "../outside", data: new Uint8Array([1]) }]));
     await expect(stageSnapshotRestore(archivePath, root)).rejects.toThrow("SNAPSHOT_PATH_INVALID");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("moves live SQLite sidecars and PDFs to recoverable trash during startup restore", () => {
+    const root = mkdtempSync(join(tmpdir(), "snapshot-apply-"));
+    const token = ".snapshot-restore-test123";
+    const staged = join(root, token);
+    mkdirSync(join(staged, "pdfs"), { recursive: true });
+    mkdirSync(join(root, "pdfs"), { recursive: true });
+    writeFileSync(join(root, "library.sqlite"), "old database");
+    writeFileSync(join(root, "library.sqlite-wal"), "old wal");
+    writeFileSync(join(root, "library.sqlite-shm"), "old shm");
+    writeFileSync(join(root, "pdfs", "old.pdf"), "old pdf");
+    writeFileSync(join(staged, "library.sqlite"), "new database");
+    writeFileSync(join(staged, "pdfs", "new.pdf"), "new pdf");
+    writeFileSync(join(root, SNAPSHOT_PENDING_FILE), JSON.stringify({ token, directory: staged, createdAt: new Date().toISOString() }));
+
+    expect(applyPendingSnapshot(root)).toBe(true);
+    expect(readFileSync(join(root, "library.sqlite"), "utf8")).toBe("new database");
+    expect(existsSync(join(root, "library.sqlite-wal"))).toBe(false);
+    expect(existsSync(join(root, "library.sqlite-shm"))).toBe(false);
+    expect(readFileSync(join(root, "trash", `snapshot-${token}`, "library.sqlite-wal"), "utf8")).toBe("old wal");
+    expect(readFileSync(join(root, "trash", `snapshot-${token}`, "pdfs", "old.pdf"), "utf8")).toBe("old pdf");
     rmSync(root, { recursive: true, force: true });
   });
 });

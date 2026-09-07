@@ -134,10 +134,4 @@ export class AnalysisRepository {
     this.db.prepare(`INSERT INTO paper_question_answers (paper_id, question_id, content, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, question_definition_hash, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id, question_id) DO UPDATE SET content=excluded.content, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, question_definition_hash=excluded.question_definition_hash, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at`).run(paperId, questionId, answer.content, answer.provider, answer.model, answer.generatedAt, answer.durationMs ?? null, answer.sourcePdfSha256 || null, answer.promptVersion, answer.questionDefinitionHash || null, answer.status, answer.errorMessage || null, now);
   }
 
-  exportData(paperIds: Set<string>) {
-    const summaries = [...paperIds].map((id) => this.getSummary(id)).filter((value): value is SummaryRecord => Boolean(value));
-    const questions = [...paperIds].flatMap((id) => this.listQuestions(id, true).map(({ answer, paperId: _paperId, ...question }) => ({ paperId: id, ...question })));
-    const answers = [...paperIds].flatMap((id) => this.listQuestions(id, true).flatMap((question) => question.answer ? [{ paperId: id, questionId: question.id, ...question.answer }] : []));
-    return { summaries, questions, answers };
-  }
 }

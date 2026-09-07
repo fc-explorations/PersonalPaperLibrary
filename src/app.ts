@@ -37,6 +37,7 @@ import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi
 import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
+import { APP_VERSION } from "./version.js";
 
 export interface AppDependencies {
   db?: Database;
@@ -77,6 +78,12 @@ function isClientValidationError(message: string): boolean {
 function parsePageSize(value: unknown): number {
   const parsed = Number(value);
   return LIBRARY_PAGE_SIZES.includes(parsed as typeof LIBRARY_PAGE_SIZES[number]) ? parsed : LIBRARY_PAGE_SIZE;
+}
+
+function configuredBytes(value: number | undefined, environmentName: string, fallback: number): number {
+  if (value !== undefined) return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+  const megabytes = Number(process.env[environmentName]);
+  return Number.isFinite(megabytes) && megabytes > 0 ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(megabytes * 1024 * 1024)) : fallback;
 }
 
 async function mapWithConcurrency<Input, Output>(items: Input[], limit: number, mapper: (item: Input, index: number) => Promise<Output>): Promise<Output[]> {
@@ -307,7 +314,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const fetcher = dependencies.fetcher || fetch;
   const maxPdfBytes = dependencies.maxPdfBytes ?? (Number(process.env.MAX_PDF_MB || 50) * 1024 * 1024 || DEFAULT_MAX_PDF_BYTES);
   const maxRequestBytes = dependencies.maxRequestBytes ?? (Number(process.env.MAX_REQUEST_MB || 256) * 1024 * 1024 || DEFAULT_MAX_REQUEST_BYTES);
-  const maxBackupBytes = dependencies.maxBackupBytes ?? (Number(process.env.MAX_BACKUP_MB || 64 * 1024) * 1024 * 1024 || DEFAULT_MAX_BACKUP_BYTES);
+  const maxBackupBytes = configuredBytes(dependencies.maxBackupBytes, "MAX_BACKUP_MB", DEFAULT_MAX_BACKUP_BYTES);
   const authPassword = dependencies.authPassword ?? process.env.APP_PASSWORD;
   const app = new Hono();
   const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
@@ -1223,7 +1230,7 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/api/export/metadata", (c) => {
     const lines = (function* () {
-      yield `${JSON.stringify({ format: "personal-paper-library-metadata", formatVersion: 1, appVersion: "2.0.1", tags: repo.tags.list() })}\n`;
+      yield `${JSON.stringify({ format: "personal-paper-library-metadata", formatVersion: 1, appVersion: APP_VERSION, tags: repo.tags.list() })}\n`;
       for (const paper of repo.iterateAll()) yield `${JSON.stringify({ paper })}\n`;
     })();
     c.header("Content-Disposition", "attachment; filename=paper-library-metadata.ndjson");
