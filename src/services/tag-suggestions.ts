@@ -29,11 +29,12 @@ function parseJson(value: string): { suggestions?: unknown } | null {
 }
 
 function tagKey(value: string): string {
-  return value.toLocaleLowerCase();
+  return value.trim().toLocaleLowerCase();
 }
 
 export async function suggestTags(input: TagSuggestionInput, client: LlmClient, model: string): Promise<TagSuggestion[]> {
-  const existingByKey = new Map(input.existingTags.map((tag) => [tagKey(tag), tag]));
+  const existingTags = input.existingTags.map(tagKey).filter(Boolean);
+  const existingByKey = new Map(existingTags.map((tag) => [tagKey(tag), tag]));
   const response = await client.complete({
     model,
     temperature: 0.2,
@@ -52,7 +53,7 @@ Rules:
 - Do not duplicate tags or include # symbols.
 
 Existing library tags:
-${input.existingTags.length ? input.existingTags.join(", ") : "(none)"}
+        ${existingTags.length ? existingTags.join(", ") : "(none)"}
 
 Title: ${clean(input.title) || "(not provided)"}
 Categories: ${input.categories?.length ? input.categories.join(", ") : "(none)"}
@@ -72,7 +73,7 @@ ${input.abstract.trim()}` },
     if (seen.has(key)) continue;
     const existingName = existingByKey.get(key);
     seen.add(key);
-    suggestions.push({ name: existingName || requestedName.slice(0, 100), existing: Boolean(existingName), reason: clean(item?.reason).slice(0, 180) });
+    suggestions.push({ name: (existingName || requestedName).toLocaleLowerCase().slice(0, 100), existing: Boolean(existingName), reason: clean(item?.reason).slice(0, 180) });
     if (suggestions.length >= 8) break;
   }
   return suggestions;

@@ -80,7 +80,7 @@ describe("HTTP application", () => {
     const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...imported.paper, stagingToken: imported.pdf.stagingToken, tags: ["AI"] }) });
     expect(saveResponse.status).toBe(201);
     const saved = await saveResponse.json();
-    expect(saved.paper.tags).toEqual(["AI"]);
+    expect(saved.paper.tags).toEqual(["ai"]);
     const pdfResponse = await context.app.request(`/api/papers/${saved.paper.id}/pdf`);
     expect(pdfResponse.status).toBe(200);
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
@@ -110,7 +110,7 @@ describe("HTTP application", () => {
     expect(selectedLibrary).toContain("data-delete-selected-ids");
     const selectedTagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: [saved.paper.id], name: "Selected", action: "add" }) });
     expect(selectedTagResponse.status).toBe(200);
-    expect((await (await context.app.request(`/api/papers/${saved.paper.id}`)).json()).paper.tags).toContain("Selected");
+    expect((await (await context.app.request(`/api/papers/${saved.paper.id}`)).json()).paper.tags).toContain("selected");
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
     expect(paperPage).toContain('<summary>Paper information</summary>');
     expect(paperPage.indexOf(">Tags</h2>")).toBeLessThan(paperPage.indexOf("<summary>Paper information</summary>"));
@@ -275,7 +275,7 @@ describe("HTTP application", () => {
     const result = await response.json();
     expect(result.imported).toHaveLength(1);
     expect(result.skipped).toHaveLength(1);
-    expect(result.folderTag).toBe("Research papers");
+    expect(result.folderTag).toBe("research papers");
     expect((await (await context.app.request("/api/papers?tag=Research%20papers")).json()).papers).toHaveLength(1);
     const downloadResponse = await context.app.request("/api/export/pdfs?q=first");
     expect(downloadResponse.status).toBe(200);
@@ -455,11 +455,11 @@ describe("HTTP application", () => {
     }
     const defaultPage = await context.app.request("/");
     const defaultHtml = await defaultPage.text();
-    expect(defaultHtml).toContain('aria-pressed="false">All</a>');
+    expect(defaultHtml).toContain('aria-pressed="false">ALL</a>');
     expect(defaultHtml).not.toContain("data-delete-group");
     const allPage = await context.app.request("/?all=1");
     const allHtml = await allPage.text();
-    expect(allHtml).toContain('aria-pressed="true">All</a>');
+    expect(allHtml).toContain('aria-pressed="true">ALL</a>');
     expect(allHtml).toContain('data-delete-all="true"');
     expect(allHtml).toContain('data-selection-all="true"');
     const tagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ all: true, name: "selected", action: "add" }) });
@@ -479,7 +479,7 @@ describe("HTTP application", () => {
     expect(tagged.status).toBe(201);
     const page = await context.app.request("/?untagged=1");
     const html = await page.text();
-    expect(html).toContain('aria-pressed="true">NaN</a>');
+    expect(html).toContain('aria-pressed="true">NONE</a>');
     expect(html).toContain("Untagged paper");
     expect(html).not.toContain("Tagged paper");
     expect((await (await context.app.request("/api/papers?untagged=1")).json()).papers).toHaveLength(1);
@@ -694,10 +694,10 @@ describe("HTTP application", () => {
     const response = await context.app.request("/api/tags/suggestions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "A study", abstract: "A study of posterior uncertainty in molecular systems.", categories: ["cs.LG"] }) });
     expect(response.status).toBe(200);
     expect((await response.json()).suggestions).toEqual([
-      { name: "Bayesian inference", existing: true, reason: "The abstract describes posterior uncertainty." },
-      { name: "Molecular simulation", existing: false, reason: "The abstract studies molecular systems." },
+      { name: "bayesian inference", existing: true, reason: "The abstract describes posterior uncertainty." },
+      { name: "molecular simulation", existing: false, reason: "The abstract studies molecular systems." },
     ]);
-    expect(prompt).toContain("Bayesian inference");
+    expect(prompt).toContain("bayesian inference");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

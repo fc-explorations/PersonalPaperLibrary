@@ -13,6 +13,7 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openDatabase } from "./db/database.js";
 import { PaperRepository, type TagFilterMode } from "./repositories/papers.js";
+import { normalizeTagName } from "./repositories/tags.js";
 import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
@@ -104,7 +105,7 @@ function categories(value: unknown): string[] {
 
 function tagFilters(value: unknown, fallback?: unknown): string[] {
   const values = Array.isArray(value) ? value : fallback !== undefined ? [fallback] : [];
-  return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean))];
+  return [...new Set(values.filter((tag): tag is string => typeof tag === "string").map(normalizeTagName).filter(Boolean))];
 }
 
 function tagFilterMode(value: unknown): TagFilterMode {
@@ -132,7 +133,7 @@ function titleFromFilename(filename: string): string {
 function folderTagFromInput(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const clean = value.replace(/[\r\n,]+/g, " ").replace(/\s+/g, " ").trim();
-  return clean ? clean.slice(0, 100) : undefined;
+  return clean ? normalizeTagName(clean).slice(0, 100) : undefined;
 }
 
 function uploadedFile(value: unknown): File | undefined {
@@ -1078,7 +1079,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       const tags = tagFilters(body.tags, body.tag);
       const tagMode = tagFilterMode(body.tagMode);
       const selectedIds = paperIdFilters(body.selectedIds);
-      const name = body.name?.trim() || "";
+      const name = body.name ? normalizeTagName(body.name) : "";
       if (!q && !tags.length && !selectedIds.length && !body.all && !body.untagged) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
       if (!name || name.includes(",")) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter one tag without commas.");
       if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");

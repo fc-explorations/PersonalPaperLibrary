@@ -44,7 +44,7 @@ export function validatePdf(bytes: Uint8Array, filename = "paper.pdf", maxBytes 
 
 export function parseTags(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
-  return [...new Set(values.map(String).map((tag) => tag.trim()).filter(Boolean))].slice(0, 50);
+  return [...new Set(values.map(String).map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean))].slice(0, 50);
 }
 
 export function parseAuthors(value: unknown): string[] {

@@ -12,8 +12,8 @@ describe("tag suggestions", () => {
     };
 
     await expect(suggestTags({ abstract: "A paper about learned models.", existingTags: ["Machine Learning"] }, client, "gpt-5-nano")).resolves.toEqual([
-      { name: "Machine Learning", existing: true, reason: "The abstract studies a learned model." },
-      { name: "Bayesian inference", existing: false, reason: "The abstract describes posterior uncertainty." },
+      { name: "machine learning", existing: true, reason: "The abstract studies a learned model." },
+      { name: "bayesian inference", existing: false, reason: "The abstract describes posterior uncertainty." },
     ]);
   });
 });
