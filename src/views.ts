@@ -351,7 +351,8 @@ function paperYear(paper: PaperRecord): string | undefined {
 
 function paperHeaderSummary(paper: PaperRecord): string {
   const arxiv = paper.arxivId ? `<a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">arXiv:${escapeHtml(paper.arxivId)}</a>` : undefined;
-  return [paper.authors.length ? escapeHtml(authorLine(paper.authors)) : undefined, paper.acceptedVenue || paper.journalRef ? escapeHtml(paper.acceptedVenue || paper.journalRef || "") : undefined, paperYear(paper) ? escapeHtml(paperYear(paper) || "") : undefined, arxiv].filter(Boolean).join(" · ");
+  const authors = paper.authors.length ? `<span class="paper-authors">${escapeHtml(authorLine(paper.authors))}</span>` : undefined;
+  return [authors, paper.acceptedVenue || paper.journalRef ? escapeHtml(paper.acceptedVenue || paper.journalRef || "") : undefined, paperYear(paper) ? escapeHtml(paperYear(paper) || "") : undefined, arxiv].filter(Boolean).join(" · ");
 }
 
 function paperWebResource(paper: Partial<PaperRecord & PaperMetadata>): string | undefined {
