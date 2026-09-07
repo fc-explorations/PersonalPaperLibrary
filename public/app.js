@@ -317,7 +317,7 @@ function renderPreview(data, stagingToken = "") {
   const activeStagingToken = stagingToken || data.pdf?.stagingToken || "";
   setValue(form, "stagingToken", activeStagingToken);
   updateWebResource(form, paper, data.pdf);
-  const stagedPdfLink = preview.querySelector("[data-staged-pdf-link]");
+  const stagedPdfLink = form?.querySelector("[data-paper-pdf-link]");
   if (stagedPdfLink) {
     stagedPdfLink.hidden = !activeStagingToken;
     if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
@@ -490,7 +490,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     if (result.pdf?.stagingToken) {
       setValue(form, "stagingToken", result.pdf.stagingToken);
       const preview = form.closest("[data-preview]");
-      const stagedPdfLink = preview?.querySelector("[data-staged-pdf-link]");
+      const stagedPdfLink = form?.querySelector("[data-paper-pdf-link]");
       if (stagedPdfLink) {
         stagedPdfLink.hidden = false;
         stagedPdfLink.href = `/api/staging/${encodeURIComponent(result.pdf.stagingToken)}/pdf`;
