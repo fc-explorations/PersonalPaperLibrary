@@ -13,7 +13,8 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold is configured and locally validated but not deployed; the hosted application routes and adapters are still pending.
+- Current hosted status: Worker scaffold and core async D1 repositories are locally validated but not deployed; the hosted application routes and remaining adapters are still pending.
+- Remote migration status: the cloud baseline is validated locally but has not been applied remotely because Wrangler needs an authenticated CLI session or `CLOUDFLARE_API_TOKEN`.
 
 ## Non-goals
 
@@ -60,7 +61,9 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Add a minimal Worker entry point with a health endpoint and a separate Node entry point for local startup. Port the existing Hono routes after the cloud adapters are ready.
 - [x] Serve compiled browser assets through Worker Static Assets.
 - [x] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, and R2 binding. Add environment-specific configuration later.
-- [ ] Port migrations `0001`–`0008` to D1-compatible migrations; validate from an empty database and a representative export.
+- [x] Add a clean D1 baseline migration containing the final schema represented by local migrations `0001`–`0008`; validate it against an empty local D1 database.
+- [ ] Validate the D1 baseline against a representative local export and apply it to the remote database after Wrangler authentication.
+- [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
 - [ ] Store PDFs in R2 under stable paper IDs. Keep only object keys, sizes, content types, and SHA-256 hashes in D1.
 - [ ] Keep analysis records in D1: summaries, questions, answers, provider/model metadata, timestamps, durations, input hashes, definition hashes, and errors.

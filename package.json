@@ -16,7 +16,7 @@
     "metadata:backfill": "npm run build && node dist/src/db/backfill-metadata.js",
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
-    "cf:migrate": "wrangler d1 migrations apply personal-paper-library --remote --directory migrations/cloudflare",
+    "cf:migrate": "wrangler d1 migrations apply personal-paper-library --remote",
     "cf:tail": "wrangler tail"
   },
   "dependencies": {

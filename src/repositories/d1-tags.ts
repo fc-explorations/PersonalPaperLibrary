@@ -65,7 +65,7 @@ export class D1TagRepository {
   async removeFromPapers(paperIds: string[], name: string): Promise<void> {
     if (!paperIds.length) return;
     const normalized = normalizeD1TagName(name);
-    const statements = paperIds.map((paperId) => ({ query: "DELETE FROM paper_tags WHERE paper_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ? COLLATE NOCASE)", values: [paperId, normalized] }));
+    const statements: Array<{ query: string; values?: unknown[] }> = paperIds.map((paperId) => ({ query: "DELETE FROM paper_tags WHERE paper_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ? COLLATE NOCASE)", values: [paperId, normalized] }));
     statements.push({ query: "DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)" });
     await batch(this.db, statements);
   }
