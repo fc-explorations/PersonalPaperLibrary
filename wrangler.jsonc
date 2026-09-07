@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "personal-paper-library",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-07",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "personal-paper-library",
+      "database_id": "125f7459-7799-4ece-b407-ef4152b93460",
+      "migrations_dir": "migrations/cloudflare"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PAPER_PDFS",
+      "bucket_name": "personal-paper-library"
+    }
+  ]
+}

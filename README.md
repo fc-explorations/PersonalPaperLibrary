@@ -73,6 +73,25 @@ Use **Find metadata** on the add/edit form to look up authors, year, venue, abst
 
 The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. Cloudflare Workers, D1, R2, and Access are planned for a later deployment phase.
 
+## Cloudflare scaffold
+
+The repository now includes a minimal Worker entry point and Wrangler bindings
+for the `personal-paper-library` D1 database and R2 bucket. The scaffold serves
+the existing `public/` assets and exposes `/api/health`; the full hosted app
+still requires the D1/R2 adapters, hosted authentication, and Worker-safe PDF
+extraction described in [`TODO.md`](./TODO.md).
+
+```bash
+npm run cf:dev       # Run the Worker locally with Wrangler
+npm run cf:deploy    # Deploy the current Worker scaffold
+npm run cf:migrate   # Apply migrations/cloudflare migrations remotely
+npm run cf:tail      # Tail deployed Worker logs
+```
+
+Do not run `cf:migrate` until a D1-compatible migration has been added under
+`migrations/cloudflare/`; the existing files under `migrations/` target local
+SQLite.
+
 ## Configuration
 
 Optional environment variables:
