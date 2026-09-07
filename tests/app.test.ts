@@ -43,7 +43,7 @@ describe("HTTP application", () => {
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
     const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
     expect(paperPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
-    expect(paperPage.indexOf(">Cite</summary>")).toBeLessThan(paperPage.indexOf(">Paper summary</span>"));
+    expect(paperPage.indexOf(">Cite</summary>")).toBeLessThan(paperPage.indexOf(">Summary</span>"));
     const libraryPage = await (await context.app.request("/")).text();
     expect(libraryPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
     expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
@@ -574,7 +574,7 @@ describe("HTTP application", () => {
     expect(answer.status).toBe(200);
     expect((await answer.json()).answer.content).toBe("Generated answer");
     const paperPage = await (await context.app.request(`/papers/${paperId}`)).text();
-    expect(paperPage).toContain("Paper summary");
+    expect(paperPage).toContain(">Summary</span>");
     expect(paperPage).toContain("What is one extra concern?");
     expect(paperPage).toMatch(/openai · gpt-4\.1-mini · .* · 0:\d{2}/);
     expect(paperPage).toMatch(/openai · gpt-5\.4-nano · .* · 0:\d{2}/);
