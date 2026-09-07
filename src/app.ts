@@ -328,8 +328,16 @@ export function createApp(dependencies: AppDependencies = {}) {
         current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Synthesize these paper digests into one complete, factual digest. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
       }
       const content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
-      if (!hasRequiredSummaryHeadings(content)) throw new Error("SUMMARY_FORMAT_INVALID");
-      const summary = { paperId, content, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" as const };
+      let finalContent = content;
+      if (!hasRequiredSummaryHeadings(finalContent)) {
+        finalContent = await selected.client.complete({
+          model: selected.model,
+          temperature: 0.2,
+          messages: messages("Reformat the draft below into valid Markdown without losing information. Use exactly these seven headings, in this order: " + SUMMARY_HEADINGS.join(", ") + ". Each heading must be a Markdown heading such as ## Problem with no colon or other text on the heading line. Preserve all factual content and do not add other top-level headings. Draft:\n\n" + finalContent),
+        });
+      }
+      if (!hasRequiredSummaryHeadings(finalContent)) throw new Error("SUMMARY_FORMAT_INVALID");
+      const summary = { paperId, content: finalContent, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" as const };
       analysis.saveSummary(summary);
       return summary;
     } catch (error) {
@@ -727,7 +735,16 @@ export function createApp(dependencies: AppDependencies = {}) {
     } catch (error) {
       const message = errorMessage(error);
       const status = message === "PDF_NOT_FOUND" || message === "PAPER_NOT_FOUND" ? 404 : message === "OPENAI_KEY_NOT_CONFIGURED" || message === "OLLAMA_MODEL_REQUIRED" ? 409 : 502;
-      return jsonError(c, status, message, "The summary could not be generated. Please check the provider settings and retry.");
+      const detail = message === "SUMMARY_FORMAT_INVALID"
+        ? "The selected model returned an invalid summary format after retry. Please retry."
+        : message === "OPENAI_KEY_NOT_CONFIGURED"
+          ? "An OpenAI API key is not configured. Check Settings and retry."
+          : message === "OLLAMA_MODEL_REQUIRED"
+            ? "Select an Ollama model in Settings and retry."
+            : message === "PDF_TEXT_EXTRACTION_FAILED" || message === "PDF_TEXT_EMPTY"
+              ? "The PDF text could not be extracted. Check that the PDF contains readable text."
+              : "The summary provider returned an error. Please check the provider settings and retry.";
+      return jsonError(c, status, message, detail);
     }
   });
 

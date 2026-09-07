@@ -561,4 +561,37 @@ describe("HTTP application", () => {
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
+
+  it("repairs a summary when the model returns headings in the wrong format", async () => {
+    let finalCalls = 0;
+    const llmClient = {
+      complete: async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
+        const prompt = messages.at(-1)?.content || "";
+        if (prompt.startsWith("Write the final paper summary")) {
+          finalCalls += 1;
+          return "Problem: The paper studies a problem.";
+        }
+        if (prompt.startsWith("Reformat the draft")) {
+          finalCalls += 1;
+          return "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG";
+        }
+        return "A compact digest.";
+      },
+    };
+    const context = testApp(undefined, undefined, { llmClient, pdfTextExtractor: async () => "Complete extracted paper text." });
+    await context.app.request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "ollama", ollamaModel: "gemma4:12b-mlx" }) });
+    const form = new FormData();
+    form.append("file", new File([pdf], "repair-paper.pdf", { type: "application/pdf" }));
+    const upload = await (await context.app.request("/api/uploads", { method: "POST", body: form })).json();
+    const saved = await (await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Repair paper", metadataSource: "manual", stagingToken: upload.pdf.stagingToken }) })).json();
+    const response = await context.app.request(`/api/papers/${saved.paper.id}/summary`, { method: "POST" });
+    expect(response.status).toBe(200);
+    const summary = (await response.json()).summary;
+    expect(summary.content).toContain("# Why It Matters");
+    expect(summary.provider).toBe("ollama");
+    expect(summary.model).toBe("gemma4:12b-mlx");
+    expect(finalCalls).toBe(2);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
 });
