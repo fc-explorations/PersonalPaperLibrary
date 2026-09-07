@@ -7,7 +7,7 @@ describe("PDF analysis text preparation", () => {
     const abstract = await extractAbstractFromPdfText("Title\nAuthors\nAbstract\nA useful abstract.", {
       complete: async ({ messages }) => {
         prompt = messages.at(-1)?.content || "";
-        return "A useful abstract.";
+        return "A useful\nabstract.";
       },
     }, "test-model");
 

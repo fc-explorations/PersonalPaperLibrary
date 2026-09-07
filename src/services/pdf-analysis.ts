@@ -47,7 +47,7 @@ function cleanExtractedAbstract(value: string): string | undefined {
     .replace(/\s*```$/i, "")
     .trim();
   if (!clean || /^(?:not[_ -]?found|none|no abstract)$/i.test(clean)) return undefined;
-  return clean.replace(/^abstract\s*:\s*/i, "").trim() || undefined;
+  return clean.replace(/^abstract\s*:\s*/i, "").replace(/\s+/g, " ").trim() || undefined;
 }
 
 export async function extractAbstractFromPdfText(text: string, client: LlmClient, model: string): Promise<string | undefined> {
