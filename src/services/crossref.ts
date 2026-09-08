@@ -4,6 +4,7 @@ import { fetchWithTimeout, readResponseJson } from "./http.js";
 
 interface CrossrefWork {
   title?: string[];
+  type?: string;
   author?: Array<{ given?: string; family?: string; name?: string }>;
   DOI?: string;
   URL?: string;
@@ -17,6 +18,7 @@ interface CrossrefWork {
   "published-print"?: { "date-parts"?: number[][] };
   "published-online"?: { "date-parts"?: number[][] };
   issued?: { "date-parts"?: number[][] };
+  "is-referenced-by-count"?: number;
 }
 
 function cleanText(value: string | undefined): string | undefined {
@@ -91,15 +93,18 @@ export async function lookupCrossref(input: { title?: string; doi?: string }, fe
     return mapWork(work);
   }
   if (!input.title?.trim()) throw new Error("METADATA_LOOKUP_INPUT_REQUIRED");
-  const works = await requestCrossref(`https://api.crossref.org/works?query.title=${encodeURIComponent(input.title.trim())}&rows=5`, fetcher);
+  const works = await requestCrossref(`https://api.crossref.org/works?query.title=${encodeURIComponent(input.title.trim())}&rows=20`, fetcher);
   if (!Array.isArray(works)) throw new Error("CROSSREF_INVALID_RESPONSE");
-  const matches = works
+  const scored = works
     .map((work) => ({ work, score: titleSimilarity(input.title!, cleanText(work.title?.[0]) || "") }))
-    .sort((left, right) => right.score - left.score)[0];
+    .sort((left, right) => right.score - left.score);
+  const exactMatches = scored.filter(({ work }) => titleKey(cleanText(work.title?.[0]) || "") === titleKey(input.title!));
+  const typeRank = (type?: string): number => type === "journal-article" ? 0 : type === "proceedings-article" ? 1 : type === "posted-content" ? 2 : type === "book-chapter" ? 4 : 3;
+  const matches = exactMatches.sort((left, right) => typeRank(left.work.type) - typeRank(right.work.type) || (right.work["is-referenced-by-count"] || 0) - (left.work["is-referenced-by-count"] || 0) || right.score - left.score)[0] || scored[0];
   if (!matches || matches.score < 0.62) throw new Error("CROSSREF_NO_MATCH");
-  const exact = titleKey(cleanText(matches.work.title?.[0]) || "") === titleKey(input.title!);
-  const runnerUp = works
-    .map((work) => titleSimilarity(input.title!, cleanText(work.title?.[0]) || ""))
+  const exact = exactMatches.length > 0;
+  const runnerUp = scored
+    .map(({ work }) => titleSimilarity(input.title!, cleanText(work.title?.[0]) || ""))
     .sort((left, right) => right - left)[1];
   if (!exact && runnerUp !== undefined && matches.score - runnerUp < 0.05) throw new Error("CROSSREF_AMBIGUOUS");
   return mapWork(matches.work);

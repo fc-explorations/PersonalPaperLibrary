@@ -14,6 +14,7 @@ const backgroundThemes = {
   mint: "#f6fdfa",
 };
 const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
+const renderScaleOptions = ["100", "95", "90", "85", "80", "75"];
 const pageSizeOptions = ["10", "25", "50", "100"];
 
 function mixHexColors(hex, target, amount) {
@@ -59,6 +60,7 @@ function applyTheme(theme) {
   const selectedBackground = backgroundKey === "custom" ? customBackground : background;
   const derivedColors = deriveBackgroundColors(selectedBackground);
   const contentWidth = contentWidthOptions.includes(String(theme.contentWidth)) ? String(theme.contentWidth) : "90";
+  const renderScale = renderScaleOptions.includes(String(theme.renderScale)) ? String(theme.renderScale) : "100";
   const pageSize = pageSizeOptions.includes(String(theme.pageSize)) ? String(theme.pageSize) : "50";
   document.documentElement.style.setProperty("--accent", selectedAccent.accent);
   document.documentElement.style.setProperty("--accent-dark", selectedAccent.dark);
@@ -70,6 +72,8 @@ function applyTheme(theme) {
   document.documentElement.style.setProperty("--section-surface", derivedColors.sectionSurface);
   document.documentElement.style.setProperty("--section-border", derivedColors.sectionBorder);
   document.documentElement.style.setProperty("--border", derivedColors.sectionBorder);
+  document.documentElement.style.setProperty("--render-scale", String(Number(renderScale) / 100));
+  document.documentElement.style.setProperty("--render-width", `${10000 / Number(renderScale)}%`);
   document.querySelectorAll("[data-derived-color-swatch]").forEach((swatch) => {
     const color = derivedColors[swatch.dataset.derivedColorSwatch];
     if (!color) return;
@@ -84,7 +88,7 @@ function applyTheme(theme) {
   });
   document.querySelectorAll("[data-theme-setting]").forEach((input) => {
     const setting = input.dataset.themeSetting;
-    const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : setting === "contentWidth" ? contentWidth : pageSize;
+    const selected = setting === "accent" ? accentKey : setting === "background" ? backgroundKey : setting === "contentWidth" ? contentWidth : setting === "renderScale" ? renderScale : pageSize;
     input.checked = input.value === selected;
   });
   document.documentElement.style.setProperty("--content-width", `${contentWidth}%`);

@@ -84,7 +84,14 @@ function hostedShell(title: string, page: string, body: string): string {
     <script src="/cloud.js?v=10" defer></script>
   </body>
 </html>`;
-  return markup.replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
+  const withRenderScaleSettings = markup.replace(
+    '<div class="settings-group"><h2>Entries per page</h2>',
+    '<div class="settings-group"><h2>Rendering scale</h2><p class="muted">Scale the complete interface to fit more content on smaller screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="renderScale" value="100" data-theme-setting="renderScale"><span>100%</span></label><label class="width-option"><input type="radio" name="renderScale" value="95" data-theme-setting="renderScale"><span>95%</span></label><label class="width-option"><input type="radio" name="renderScale" value="90" data-theme-setting="renderScale"><span>90%</span></label><label class="width-option"><input type="radio" name="renderScale" value="85" data-theme-setting="renderScale"><span>85%</span></label><label class="width-option"><input type="radio" name="renderScale" value="80" data-theme-setting="renderScale"><span>80%</span></label><label class="width-option"><input type="radio" name="renderScale" value="75" data-theme-setting="renderScale"><span>75%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2>',
+  );
+  return withRenderScaleSettings
+    .replace(/styles\.css\?v=33/g, "styles.css?v=34")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=11")
+    .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
 function jsonError(c: { json: (body: unknown, status?: number) => Response }, status: number, code: string, message: string): Response {
@@ -264,8 +271,7 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
     ].map(async ([provider, lookup]) => {
       try {
         return verify(await (lookup as () => Promise<PaperMetadata>)());
-      } catch (error) {
-        console.warn("hosted metadata provider failed", provider, errorMessage(error));
+      } catch {
         return undefined;
       }
     }));

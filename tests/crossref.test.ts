@@ -37,6 +37,14 @@ describe("Crossref lookup", () => {
     expect(result.journalRef).toContain("Machine Learning");
   });
 
+  it("prefers an exact journal article over an exact book chapter", async () => {
+    const result = await lookupCrossref({ title: "Long Short-Term Memory" }, async () => new Response(JSON.stringify({ message: { items: [
+      { title: ["Long Short-Term Memory"], type: "book-chapter", DOI: "10.1000/chapter" },
+      { title: ["Long Short-Term Memory"], type: "journal-article", DOI: "10.1000/article", author: [{ given: "Sepp", family: "Hochreiter" }], published: { "date-parts": [[1997]] } },
+    ] } }), { status: 200 }));
+    expect(result).toMatchObject({ doi: "10.1000/article", authors: ["Sepp Hochreiter"], year: 1997 });
+  });
+
   it("rejects a near-match that shares generic title words", async () => {
     const fetcher = async () => new Response(JSON.stringify({ message: { items: [{ title: ["Generating 3D Facial Expressions with Recurrent Neural Networks"] }] } }), { status: 200 });
     await expect(lookupCrossref({ title: "Generating Sequences With Recurrent Neural Networks" }, fetcher)).rejects.toThrow("CROSSREF_NO_MATCH");
