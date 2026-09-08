@@ -57,7 +57,7 @@ function operationEta(durations, remaining) {
 
 async function enrichHostedPaperMetadata(current) {
   const paper = (await request(`/api/papers/${encodeURIComponent(current.id)}`)).paper;
-  const input = paper.arxivId || paper.doi || paper.title;
+  const input = paper.arxivId || paper.doi || paper.isbn || paper.title;
   const lookup = await request("/api/import", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -196,6 +196,33 @@ async function request(url, options = {}) {
     throw new Error(body?.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
   }
   return body;
+}
+
+function requestWithUploadProgress(url, options = {}, { onProgress, onUploadComplete } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(options.method || "GET", url);
+    xhr.withCredentials = true;
+    Object.entries(options.headers || {}).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(event.loaded, event.total);
+    };
+    xhr.upload.onload = () => onUploadComplete?.();
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader("content-type") || "";
+      let body = contentType.includes("application/json") ? {} : xhr.responseText;
+      try { if (contentType.includes("application/json")) body = JSON.parse(xhr.responseText || "{}"); } catch { /* The normal error below is more useful than a parse error. */ }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const message = body?.error?.message || `Request failed (${xhr.status})`;
+        reject(new Error(body?.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message));
+        return;
+      }
+      resolve(body);
+    };
+    xhr.onerror = () => reject(new Error("The library server connection failed. Check that it is running, then retry."));
+    xhr.ontimeout = () => reject(new Error("Request timed out."));
+    xhr.send(options.body);
+  });
 }
 
 function setStatus(element, message, error = false) {
@@ -462,6 +489,7 @@ function applyHostedMetadata(form, data) {
   setValue("journalRef", paper.journalRef);
   setValue("acceptedVenue", paper.acceptedVenue);
   setValue("doi", paper.doi);
+  setValue("isbn", paper.isbn);
   setValue("arxivId", paper.arxivId);
   setValue("sourceUrl", paper.sourceUrl || paper.arxivUrl);
   if (form.dataset.mode !== "edit") setValue("tags", (paper.tags || []).join(", "));
@@ -493,6 +521,7 @@ function applyHostedBibtex(form, metadata) {
   setIfPresent("journalRef", metadata.journalRef);
   setIfPresent("acceptedVenue", metadata.acceptedVenue);
   setIfPresent("doi", metadata.doi);
+  setIfPresent("isbn", metadata.isbn);
   setIfPresent("arxivId", metadata.arxivId);
   setIfPresent("sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
   const sourceUrl = form.querySelector("[data-source-url-go]");
@@ -525,7 +554,7 @@ function hostedPaperBody(form) {
     title: get("title"), authors: get("authors").split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean),
     year: get("year") || undefined, publishedDate: get("publishedDate"), abstract: get("abstract"),
     primaryCategory: get("primaryCategory"), categories: get("categories").split(",").map((value) => value.trim()).filter(Boolean),
-    journalRef: get("journalRef"), acceptedVenue: get("acceptedVenue"), doi: get("doi"), arxivId: get("arxivId"),
+    journalRef: get("journalRef"), acceptedVenue: get("acceptedVenue"), doi: get("doi"), isbn: get("isbn"), arxivId: get("arxivId"),
     sourceUrl: get("sourceUrl"), tags: get("tags").split(",").map((value) => value.trim()).filter(Boolean),
     stagingToken: get("stagingToken"), metadataSource: get("arxivId") ? "mixed" : "manual",
   };
@@ -578,8 +607,8 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   const status = document.querySelector(`[data-form-status-for="${form?.id}"]`);
   if (!form) return;
   const get = (name) => form.elements.namedItem(name)?.value || "";
-  const input = get("arxivId") || get("doi") || get("title");
-  if (!input.trim()) return setStatus(status, "Enter a title, DOI, or arXiv ID first.", true);
+  const input = get("arxivId") || get("doi") || get("isbn") || get("title");
+  if (!input.trim()) return setStatus(status, "Enter a title, DOI, ISBN, or arXiv ID first.", true);
   button.disabled = true;
   try {
     setStatus(status, "Looking up citation metadata…");
@@ -793,7 +822,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const files = source === "folder" ? pdfFiles : zipFiles;
   const progress = form.querySelector("[data-bulk-progress]");
   setStatus(form, isZip ? "Uploading and extracting ZIP archive…" : `Importing 0 of ${pdfFiles.length} PDFs… ETA calculating…`);
-  progress?.classList.toggle("is-indeterminate", isZip);
+  progress?.classList.remove("is-indeterminate");
   updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
@@ -809,9 +838,21 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       formData.set("folderTag", folderTag || archiveTag);
       formData.set("useFolderAsTag", String(form.querySelector("[data-folder-tag-toggle]")?.checked ?? true));
       try {
-        const body = await request("/api/bulk-upload", { method: "POST", body: formData });
+        const body = isZip
+          ? await requestWithUploadProgress("/api/bulk-upload", { method: "POST", body: formData }, {
+            onProgress: (loaded, total) => {
+              const percent = Math.round((loaded / total) * 100);
+              setStatus(form, `Uploading ZIP archive… ${percent}%`);
+              updateOperationProgress(progress, percent, 100);
+            },
+            onUploadComplete: () => {
+              setStatus(form, "Upload complete. Extracting ZIP archive…");
+              progress?.classList.add("is-indeterminate");
+            },
+          })
+          : await request("/api/bulk-upload", { method: "POST", body: formData });
         imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
-        if (isZip) setStatus(form, `Extracted ${body.discovered ?? imported.length} PDFs from ZIP; imported ${body.imported.length}…`);
+        if (isZip) setStatus(form, `Loaded ${body.discovered ?? imported.length} PDFs from ZIP; preparing metadata…`);
       } catch (error) {
         failed.push({ filename: file.name, reason: error.message });
       }

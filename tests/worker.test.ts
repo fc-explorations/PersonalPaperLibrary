@@ -13,6 +13,7 @@ class MemoryD1 implements D1Database {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0001_initial.sql", import.meta.url), "utf8"));
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0002_analysis_jobs.sql", import.meta.url), "utf8"));
+    this.db.exec(readFileSync(new URL("../migrations/cloudflare/0004_isbn.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -481,7 +482,7 @@ describe("Cloudflare Worker API", () => {
     const paperId = (await create.json() as { paper: { id: string } }).paper.id;
     const messages: Array<{ jobId: string }> = [];
     env.ANALYSIS_QUEUE = { send: async (message) => { messages.push(message); } };
-    env.AI = { toMarkdown: async () => ({ format: "text", data: "Opening page text.\fLater pages contain the decisive result." }) };
+    env.AI = { toMarkdown: async () => ({ format: "text", data: `Opening page text. ${"The hosted extractor returned representative paper text. ".repeat(5)}\fLater pages contain the decisive result. ${"Additional evidence appears in the later pages. ".repeat(5)}` }) };
     env.OPENAI_API_KEY = "test-key";
     let prompt = "";
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {

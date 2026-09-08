@@ -14,6 +14,7 @@ export interface PaperMetadata {
   journalRef?: string;
   acceptedVenue?: string;
   doi?: string;
+  isbn?: string;
   sourceUrl?: string;
   /** A downloadable PDF URL used transiently during metadata lookup. */
   pdfUrl?: string;
@@ -44,6 +45,7 @@ export interface PaperDraftInput {
   journalRef?: string;
   acceptedVenue?: string;
   doi?: string;
+  isbn?: string;
   sourceUrl?: string;
   arxivUrl?: string;
   metadataSource?: MetadataSource;

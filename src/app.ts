@@ -19,6 +19,7 @@ import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
+import { lookupOpenLibrary } from "./services/openlibrary.js";
 import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
@@ -34,7 +35,7 @@ import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { parseBibtex } from "./services/bibtex.js";
 import { suggestTags } from "./services/tag-suggestions.js";
-import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
+import { isbnFromInput, normalizeIsbn, parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
@@ -73,7 +74,7 @@ function errorMessage(error: unknown): string {
 }
 
 function isClientValidationError(message: string): boolean {
-  return ["TITLE_REQUIRED", "TITLE_TOO_LONG", "INVALID_YEAR", "INVALID_ARXIV_ID", "INVALID_DATE", "INVALID_URL", "INVALID_DOI"].includes(message);
+  return ["TITLE_REQUIRED", "TITLE_TOO_LONG", "INVALID_YEAR", "INVALID_ARXIV_ID", "INVALID_DATE", "INVALID_URL", "INVALID_DOI", "INVALID_ISBN"].includes(message);
 }
 
 function parsePageSize(value: unknown): number {
@@ -297,6 +298,7 @@ function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
     journalRef: typeof body.journalRef === "string" ? body.journalRef : undefined,
     acceptedVenue: typeof body.acceptedVenue === "string" ? body.acceptedVenue : undefined,
     doi: parseOptionalDoi(body.doi),
+    isbn: normalizeIsbn(body.isbn),
     sourceUrl: body.sourceUrl ? parseOptionalUrl(body.sourceUrl) : normalized?.abstractUrl,
     arxivUrl: body.arxivUrl ? parseOptionalUrl(body.arxivUrl) : normalized?.abstractUrl,
     metadataSource: body.metadataSource === "mixed" || body.metadataSource === "manual" || body.metadataSource === "arxiv" ? body.metadataSource : normalized ? "arxiv" : "manual",
@@ -361,7 +363,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   }
 
   async function fillMissingMetadataAbstract(metadata: PaperMetadata, title: string, parsedCitation?: ParsedCitationInput, pdfPath?: string): Promise<PaperMetadata> {
-    if (!metadata.abstract?.trim() || !metadata.authors.length || !metadata.year || !metadata.doi) {
+    if (!metadata.abstract?.trim() || !metadata.authors.length || !metadata.year || (!metadata.doi && !metadata.isbn)) {
       const alternateLookups = [
         () => lookupOpenAlex(title, fetcher),
         () => lookupSemanticScholar(title, fetcher),
@@ -382,7 +384,7 @@ export function createApp(dependencies: AppDependencies = {}) {
             categories: metadata.categories.length ? metadata.categories : alternate.categories,
             journalRef: metadata.journalRef || alternate.journalRef,
             acceptedVenue: metadata.acceptedVenue || alternate.acceptedVenue,
-            doi: metadata.doi || alternate.doi,
+            doi: metadata.doi || (metadata.isbn ? undefined : alternate.doi),
             sourceUrl: metadata.sourceUrl || alternate.sourceUrl,
             pdfUrl: metadata.pdfUrl || alternate.pdfUrl,
             arxivId: metadata.arxivId || alternate.arxivId,
@@ -708,7 +710,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     try {
       const body = await c.req.json<{ input?: string }>();
       const input = body.input?.trim() || "";
-      if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter a paper title, DOI, URL, or identifier.");
+      if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter a paper title, DOI, ISBN, URL, or identifier.");
 
       const normalized = normalizeArxivInput(input) || normalizeArxivDoi(input);
       if (normalized) {
@@ -726,6 +728,14 @@ export function createApp(dependencies: AppDependencies = {}) {
           warnings.push(errorMessage(error) === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
         }
         return c.json({ paper: metadata, pdf, warnings });
+      }
+
+      const isbn = isbnFromInput(input);
+      if (isbn) {
+        const existing = repo.findDuplicate({ isbn, title: "" });
+        if (existing) return c.json({ existing, duplicate: true });
+        const metadata = await lookupOpenLibrary(isbn, fetcher);
+        return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings: [] });
       }
 
       const parsedCitation = await parseCitationForLookup(input);
@@ -777,7 +787,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation, stagedPath);
       return c.json({ paper: metadata, pdf: downloaded.pdf, warnings });
     } catch (error) {
-      return jsonError(c, 502, "IMPORT_FAILED", errorMessage(error));
+      const message = errorMessage(error);
+      return jsonError(c, isClientValidationError(message) ? 400 : 502, "IMPORT_FAILED", message);
     }
   };
 
@@ -786,12 +797,17 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/metadata/lookup", async (c) => {
     try {
-      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean }>();
+      const body = await c.req.json<{ title?: string; doi?: string; isbn?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean }>();
       let metadata: PaperMetadata;
       let provider: string;
       let parsedCitation: ParsedCitationInput | undefined;
       let lookupTitle = body.title || "";
-      if (body.arxivId) {
+      if (body.isbn) {
+        const isbn = normalizeIsbn(body.isbn);
+        if (!isbn) return jsonError(c, 400, "INVALID_ISBN", "Enter a valid ISBN-10 or ISBN-13.");
+        metadata = await lookupOpenLibrary(isbn, fetcher);
+        provider = "open-library";
+      } else if (body.arxivId) {
         const normalized = normalizeArxivInput(body.arxivId);
         if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
         metadata = await fetchArxivMetadata(normalized, fetcher);
@@ -847,7 +863,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       metadata = await fillMissingMetadataAbstract(metadata, metadata.title || lookupTitle, parsedCitation, pdfPath);
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
-      return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
+      const message = errorMessage(error);
+      return jsonError(c, isClientValidationError(message) ? 400 : 404, message, "No matching citation metadata was found.");
     }
   });
 

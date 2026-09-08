@@ -31,6 +31,7 @@ export interface WorkerAnalysisEnvironment {
 type ExtractedPaper = { text: string; sha256?: string };
 type SelectedLlm = { client: LlmClient; provider: "openai"; model: string };
 const SUMMARY_CHUNK_CONCURRENCY = 4;
+const MIN_EXTRACTED_TEXT_CHARACTERS = 200;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -77,6 +78,7 @@ async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r
   );
   if (result.format === "error" || !result.data?.trim()) throw new Error(result.error || "PDF_TEXT_EMPTY");
   const text = result.data.trim();
+  if (text.length < MIN_EXTRACTED_TEXT_CHARACTERS) throw new Error("PDF_TEXT_INSUFFICIENT");
   if (cacheKey) await env.PAPER_PDFS.put(cacheKey, text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
   return { text, sha256: paper.pdfSha256 };
 }

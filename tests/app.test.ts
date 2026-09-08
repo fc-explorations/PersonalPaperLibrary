@@ -16,9 +16,9 @@ const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "embeddingClient" | "pdfTextExtractor" | "pdfExcerptTextExtractor" | "keychain"> = {}) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
-  db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
+  db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, isbn TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
   const migrationInsert = db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)");
-  ["0001_initial.sql", "0002_ai_analysis.sql", "0003_custom_questions.sql", "0004_analysis_duration.sql", "0005_accepted_venue.sql", "0006_question_definition_hash.sql", "0007_question_activity.sql", "0008_library_search.sql"].forEach((name) => migrationInsert.run(name, new Date().toISOString()));
+  ["0001_initial.sql", "0002_ai_analysis.sql", "0003_custom_questions.sql", "0004_analysis_duration.sql", "0005_accepted_venue.sql", "0006_question_definition_hash.sql", "0007_question_activity.sql", "0008_library_search.sql", "0009_isbn.sql"].forEach((name) => migrationInsert.run(name, new Date().toISOString()));
   const defaultFetcher = async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: ["Test arXiv Paper"], author: [{ given: "Test", family: "Author" }], DOI: "10.1000/test", "container-title": ["Test Journal"], published: { "date-parts": [[2024]] } }] } }), { status: 200 });
@@ -333,6 +333,30 @@ describe("HTTP application", () => {
     const result = await response.json();
     expect(result.provider).toBe("crossref");
     expect(result.paper.authors).toEqual(["Test Author"]);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("looks up and persists a book by ISBN", async () => {
+    const context = testApp(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("openlibrary.org/search.json")) return new Response(JSON.stringify({ docs: [{ title: "Learning Theory from First Principles", author_name: ["Francis Bach"], first_publish_year: 2024, publisher: ["MIT Press"] }] }), { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    const importResponse = await context.app.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "ISBN: 978-0-262-38136-9" }) });
+    expect(importResponse.status).toBe(200);
+    const imported = await importResponse.json();
+    expect(imported.paper).toMatchObject({ title: "Learning Theory from First Principles", isbn: "9780262381369" });
+    expect(imported.pdf.status).toBe("not_found");
+
+    const saveResponse = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(imported.paper) });
+    expect(saveResponse.status).toBe(201);
+    const saved = await saveResponse.json();
+    expect(saved.paper.isbn).toBe("9780262381369");
+
+    const lookupResponse = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ isbn: "9780262381369" }) });
+    expect(lookupResponse.status).toBe(200);
+    expect((await lookupResponse.json()).provider).toBe("open-library");
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

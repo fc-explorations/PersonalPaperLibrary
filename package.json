@@ -15,9 +15,14 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "metadata:backfill": "npm run build && node dist/src/db/backfill-metadata.js",
     "cf:dev": "wrangler dev",
+    "cf:dev:preview": "wrangler dev --env preview",
     "cf:deploy": "wrangler deploy",
+    "cf:deploy:preview": "wrangler deploy --env preview",
     "cf:migrate": "wrangler d1 migrations apply personal-paper-library --remote",
-    "cf:tail": "wrangler tail"
+    "cf:migrate:preview": "wrangler d1 migrations apply personal-paper-library-preview --remote --env preview",
+    "cf:tail": "wrangler tail",
+    "cf:tail:preview": "wrangler tail --env preview",
+    "cf:test-pdf-extractor": "node scripts/test-worker-pdf-extractor.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

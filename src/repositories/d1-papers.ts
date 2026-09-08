@@ -60,6 +60,7 @@ function rowToPaper(row: PaperRow, tags: string[], authors: string[]): PaperReco
     journalRef: row.journal_ref ? String(row.journal_ref) : undefined,
     acceptedVenue: row.accepted_venue ? String(row.accepted_venue) : undefined,
     doi: row.doi ? String(row.doi) : undefined,
+    isbn: row.isbn ? String(row.isbn) : undefined,
     sourceUrl: row.source_url ? String(row.source_url) : undefined,
     arxivUrl: row.arxiv_url ? String(row.arxiv_url) : undefined,
     r2Key: row.r2_key ? String(row.r2_key) : undefined,
@@ -80,7 +81,7 @@ function paperValues(id: string, input: PaperDraftInput, file: { key: string; sh
     id, arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null,
     input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null,
     input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null,
-    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null,
+    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null,
     file?.key || null, file?.sha256 || null, input.metadataSource || (arxivId ? "arxiv" : "manual"), now, now,
     authors,
   ];
@@ -106,7 +107,7 @@ function insertStatements(entry: InsertEntry): Array<{ query: string; values: un
   const values = paperValues(id, entry.input, entry.file, now);
   values.pop();
   return [
-    { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(20)})`, values },
+    { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, isbn, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(21)})`, values },
     ...authorStatements(id, authors),
     ...tags.flatMap((tag) => {
       const normalized = tag.trim().toLocaleLowerCase();
@@ -138,6 +139,7 @@ export class D1PaperRepository {
     if (arxivBaseId) row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE lower(arxiv_base_id) = ? AND id != COALESCE(?, '')", arxivBaseId, exclude);
     if (!row && input.sourceUrl) row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE source_url = ? AND id != COALESCE(?, '')", normalizeUrl(input.sourceUrl), exclude);
     if (!row && input.doi) row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE lower(doi) = lower(?) AND id != COALESCE(?, '')", input.doi.trim(), exclude);
+    if (!row && input.isbn) row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE isbn = ? AND id != COALESCE(?, '')", input.isbn.trim(), exclude);
     if (!row && pdfSha256) row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE pdf_sha256 = ? AND id != COALESCE(?, '')", pdfSha256, exclude);
     if (!row && input.title) {
       const title = normalizeTitle(input.title);
@@ -168,6 +170,7 @@ export class D1PaperRepository {
     if (arxivBaseId) checks.push(["SELECT id FROM papers WHERE lower(arxiv_base_id) = ? AND id != COALESCE(?, '')", arxivBaseId]);
     if (input.sourceUrl) checks.push(["SELECT id FROM papers WHERE source_url = ? AND id != COALESCE(?, '')", normalizeUrl(input.sourceUrl)]);
     if (input.doi) checks.push(["SELECT id FROM papers WHERE lower(doi) = lower(?) AND id != COALESCE(?, '')", input.doi.trim()]);
+    if (input.isbn) checks.push(["SELECT id FROM papers WHERE isbn = ? AND id != COALESCE(?, '')", input.isbn.trim()]);
     if (pdfSha256) checks.push(["SELECT id FROM papers WHERE pdf_sha256 = ? AND id != COALESCE(?, '')", pdfSha256]);
     for (const [query, value] of checks) {
       const row = await first<{ id: string }>(this.db, query, value, exclude);
@@ -184,21 +187,24 @@ export class D1PaperRepository {
       const arxiv = [...new Set(chunk.map(({ input }) => input.arxivId?.replace(/v\d+$/i, "").toLowerCase()).filter(Boolean))] as string[];
       const sourceUrls = [...new Set(chunk.map(({ input }) => normalizeUrl(input.sourceUrl)).filter(Boolean))] as string[];
       const dois = [...new Set(chunk.map(({ input }) => input.doi?.trim().toLowerCase()).filter(Boolean))] as string[];
+      const isbns = [...new Set(chunk.map(({ input }) => input.isbn?.trim()).filter(Boolean))] as string[];
       const hashes = [...new Set(chunk.map(({ pdfSha256 }) => pdfSha256).filter(Boolean))] as string[];
       const clauses: string[] = [];
       const values: string[] = [];
       if (arxiv.length) { clauses.push(`lower(arxiv_base_id) IN (${placeholders(arxiv.length)})`); values.push(...arxiv); }
       if (sourceUrls.length) { clauses.push(`source_url IN (${placeholders(sourceUrls.length)})`); values.push(...sourceUrls); }
       if (dois.length) { clauses.push(`lower(doi) IN (${placeholders(dois.length)})`); values.push(...dois); }
+      if (isbns.length) { clauses.push(`isbn IN (${placeholders(isbns.length)})`); values.push(...isbns); }
       if (hashes.length) { clauses.push(`pdf_sha256 IN (${placeholders(hashes.length)})`); values.push(...hashes); }
       if (!clauses.length) continue;
-      const rows = await all<{ id: string; arxiv_base_id?: string; source_url?: string; doi?: string; pdf_sha256?: string }>(this.db, `SELECT id, arxiv_base_id, source_url, doi, pdf_sha256 FROM papers WHERE ${clauses.join(" OR ")}`, ...values);
+      const rows = await all<{ id: string; arxiv_base_id?: string; source_url?: string; doi?: string; isbn?: string; pdf_sha256?: string }>(this.db, `SELECT id, arxiv_base_id, source_url, doi, isbn, pdf_sha256 FROM papers WHERE ${clauses.join(" OR ")}`, ...values);
       for (let index = 0; index < chunk.length; index += 1) {
         const { input, pdfSha256 } = chunk[index];
         const arxivBaseId = input.arxivId?.replace(/v\d+$/i, "").toLowerCase();
         const sourceUrl = normalizeUrl(input.sourceUrl);
         const doi = input.doi?.trim().toLowerCase();
-        const row = rows.find((candidate) => (arxivBaseId && String(candidate.arxiv_base_id || "").toLowerCase() === arxivBaseId) || (sourceUrl && candidate.source_url === sourceUrl) || (doi && String(candidate.doi || "").toLowerCase() === doi) || (pdfSha256 && candidate.pdf_sha256 === pdfSha256));
+        const isbn = input.isbn?.trim();
+        const row = rows.find((candidate) => (arxivBaseId && String(candidate.arxiv_base_id || "").toLowerCase() === arxivBaseId) || (sourceUrl && candidate.source_url === sourceUrl) || (doi && String(candidate.doi || "").toLowerCase() === doi) || (isbn && candidate.isbn === isbn) || (pdfSha256 && candidate.pdf_sha256 === pdfSha256));
         if (row) duplicates.set(start + index, String(row.id));
       }
     }
@@ -240,7 +246,7 @@ export class D1PaperRepository {
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
     const arxivBaseId = arxivId?.replace(/v\d+$/i, "");
     await batch(this.db, [
-      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null, file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
+      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, isbn = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null, file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
       { query: "DELETE FROM paper_authors WHERE paper_id = ?", values: [id] },
       { query: "DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM paper_authors)" },
       ...authorStatements(id, authors),

@@ -12,7 +12,7 @@ The main workflow is:
 
 PDFs can also be uploaded manually when a local copy is already available, either individually or as a folder of PDFs.
 
-Paper lookup accepts arXiv identifiers, arXiv URLs, DOIs, DOI URLs, and paper titles. Title metadata lookup tries Crossref first, then OpenAlex, then Semantic Scholar. When a matched record exposes an arXiv, open-access, or publisher PDF URL, the PDF is downloaded and staged automatically for saving with the reviewed metadata. A title import that cannot be resolved remains editable as a title-only record.
+Paper lookup accepts arXiv identifiers, arXiv URLs, DOIs, DOI URLs, ISBNs, and paper titles. ISBN lookup uses Open Library’s public catalog API and preserves the normalized ISBN on the paper record. Title metadata lookup tries Crossref first, then OpenAlex, then Semantic Scholar. When a matched record exposes an arXiv, open-access, or publisher PDF URL, the PDF is downloaded and staged automatically for saving with the reviewed metadata. A title import that cannot be resolved remains editable as a title-only record.
 
 ## Local development
 
@@ -67,9 +67,9 @@ This directory is intentionally ignored by Git. The Settings page provides **Dow
 
 ## Scope
 
-Version 1 focuses on arXiv and title/DOI imports, individual and bulk local PDF uploads, metadata editing, grouping tags, multi-tag AND filtering, bulk tag/delete actions, search, sorting, PDF viewing, bulk PDF ZIP export, BibTeX copying, and appearance settings. It does not include reading states, priorities, notes, annotations, nested collection folders, full-text search, or multiple users.
+Version 1 focuses on arXiv, ISBN, and title/DOI imports, individual and bulk local PDF uploads, metadata editing, grouping tags, multi-tag AND filtering, bulk tag/delete actions, search, sorting, PDF viewing, bulk PDF ZIP export, BibTeX copying, and appearance settings. It does not include reading states, priorities, notes, annotations, nested collection folders, full-text search, or multiple users.
 
-Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv page, then the DOI resolver, then a publisher landing page, over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
+Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, ISBN, and source URL from arXiv, Open Library, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, ISBN, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv page, then the DOI resolver, then a publisher landing page, over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
 
 The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker has a separate D1/R2 application with keyword/semantic library search, multi-PDF upload, bulk deletion, paper editing, arXiv/DOI/title import through Crossref, OpenAlex, and Semantic Scholar fallback, Worker-native PDF analysis, hosted settings, summaries/questions, and versioned backup/restore. Local ZIP64 snapshots remain unchanged; hosted backups store a JSON manifest and protected PDF copies in R2. Hosted restores are bounded and resumable; merge is the default, while explicit replace mode creates a safety backup, prunes only after successful target batches, and attempts rollback if pruning fails.
 
@@ -100,7 +100,40 @@ npm run cf:dev       # Run the Worker locally with Wrangler
 npm run cf:deploy    # Deploy after configuring Access variables
 npm run cf:migrate   # Apply migrations/cloudflare migrations remotely
 npm run cf:tail      # Tail deployed Worker logs
+npm run cf:test-pdf-extractor # Probe Workers AI PDF conversion with representative fixtures
 ```
+
+The PDF extractor probe downloads public test fixtures into a temporary directory,
+submits them to the Workers AI Markdown Conversion API, and prints only sizes,
+timings, output shape, and errors. It covers a text paper with appendices,
+truncated input, AES-256 encrypted input, an image-only scan, and an oversized
+valid PDF. Run it with a Workers AI API token and account ID in the environment:
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... npm run cf:test-pdf-extractor
+```
+
+The `preview` Wrangler environment is isolated from production: it uses a
+separate Worker name, D1 database, R2 bucket, and analysis queue. Configure the
+preview Access application values in `wrangler.jsonc` (the placeholders are
+intentional), then provision and migrate the preview resources before the
+first deployment:
+
+```bash
+npm run cf:deploy:preview
+npm run cf:migrate:preview
+npx wrangler secret put OPENAI_API_KEY --env preview
+npm run cf:tail:preview
+```
+
+The first preview deploy provisions the named preview resources when they do
+not exist; subsequent deploys reuse them. If automatic provisioning is not
+available for the account, create the D1 database, R2 bucket, and Queue with
+the names in `wrangler.jsonc`, then add the resulting D1 ID before running the
+migration command.
+
+Preview-only local secrets belong in `.dev.vars.preview`, which is ignored by
+git. Never put `OPENAI_API_KEY` in `wrangler.jsonc` or any committed file.
 
 Hosted analysis requires an OpenAI Worker Secret. Set it without committing the
 credential:

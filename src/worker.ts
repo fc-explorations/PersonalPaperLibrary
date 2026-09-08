@@ -11,11 +11,12 @@ import { fetchArxivMetadata, fetchArxivPdf, lookupArxivByTitle, normalizeArxivDo
 import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
+import { lookupOpenLibrary } from "./services/openlibrary.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { parseBibtex } from "./services/bibtex.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupManifest } from "./services/cloud-backup.js";
-import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
+import { DEFAULT_MAX_PDF_BYTES, isbnFromInput, normalizeIsbn, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
 import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput, PaperMetadata } from "./types.js";
 import { OpenAiEmbeddingClient } from "./services/embeddings.js";
@@ -230,7 +231,7 @@ async function fillHostedMetadataAbstract(metadata: PaperMetadata, title: string
         categories: metadata.categories.length ? metadata.categories : alternate.categories,
         journalRef: metadata.journalRef || alternate.journalRef,
         acceptedVenue: metadata.acceptedVenue || alternate.acceptedVenue,
-        doi: metadata.doi || alternate.doi,
+        doi: metadata.doi || (metadata.isbn ? undefined : alternate.doi),
         sourceUrl: metadata.sourceUrl || alternate.sourceUrl,
         pdfUrl: metadata.pdfUrl || alternate.pdfUrl,
         arxivId: metadata.arxivId || alternate.arxivId,
@@ -286,6 +287,8 @@ function arxivFromMetadata(metadata: PaperMetadata): ReturnType<typeof normalize
 async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsedCitation?: ParsedCitationInput): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[] }> {
   const normalized = normalizeArxivInput(input) || normalizeArxivDoi(input);
   if (normalized) return { metadata: await fetchArxivMetadata(normalized, fetcher), arxiv: normalized, warnings: [] };
+  const isbn = isbnFromInput(input);
+  if (isbn) return { metadata: await lookupOpenLibrary(isbn, fetcher), warnings: [] };
   const doi = normalizeDoiInput(input);
   const title = parsedCitation?.title || input.trim();
   const warnings: string[] = [];
@@ -404,6 +407,7 @@ function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
     journalRef: typeof body.journalRef === "string" ? body.journalRef : undefined,
     acceptedVenue: typeof body.acceptedVenue === "string" ? body.acceptedVenue : undefined,
     doi: parseOptionalDoi(body.doi),
+    isbn: normalizeIsbn(body.isbn),
     sourceUrl: parseOptionalUrl(body.sourceUrl),
     arxivUrl: parseOptionalUrl(body.arxivUrl),
     metadataSource,
@@ -480,11 +484,11 @@ app.get("/", (c) => c.html(hostedShell("Library", "library", `<main class="shell
 </main>`)));
 
 app.get("/add", (c) => c.html(hostedShell("Add paper", "add", `<main class="shell cloud-library">
-  <section class="add-grid add-options"><div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form id="import-form" class="cloud-form"><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL" autocomplete="off"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find</span></button></div><p id="import-status" class="form-status" role="status"></p></form></div>
+  <section class="add-grid add-options"><div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, ISBN, URL, or identifier.</p><form id="import-form" class="cloud-form"><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, ISBN, or URL" autocomplete="off"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find</span></button></div><p id="import-status" class="form-status" role="status"></p></form></div>
     <div class="add-file-options"><div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="single-pdf-input"><span class="material-symbols-outlined" aria-hidden="true">upload</span><span>Choose file</span></label><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required class="sr-only" data-single-pdf-input></div></div><p class="form-status" role="status"></p></form></div>
     <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. Choose a folder or ZIP archive, and whether its name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="folder-import-pickers"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input"><span class="material-symbols-outlined" aria-hidden="true">folder_open</span><span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple class="sr-only" data-folder-pdf-input></div><div class="file-picker"><label class="button button-secondary" for="folder-zip-input"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span><span>Choose ZIP</span></label><input id="folder-zip-input" name="files" type="file" accept="application/zip,.zip" class="sr-only" data-folder-zip-input></div></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-progress" data-bulk-progress hidden role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-bulk-progress-fill></span></div><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
-  <section id="import-preview" class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" id="import-pdf-status" data-pdf-status></span><div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="paper-form-new" data-lookup-metadata><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find metadata</span></button><button class="button button-secondary" type="submit" form="paper-form-new"><span class="material-symbols-outlined" aria-hidden="true">save</span><span>Save paper</span></button></div></div><span class="form-status" data-form-status-for="paper-form-new" role="status"></span></div></div></div><div data-preview-form><form id="paper-form-new" class="paper-form" data-paper-form data-mode="add"><input type="hidden" name="stagingToken" value=""><div class="form-grid"><label>Title<div class="field-with-action title-field"><input name="title" type="text" value="" placeholder="Paper title"><a class="button button-secondary button-small form-utility-button" data-paper-pdf-link target="_blank" rel="noreferrer" aria-label="Open PDF" title="Open PDF" hidden><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>Open</span></a></div></label><label>Authors<textarea name="authors" rows="3" placeholder="One author per line"></textarea></label><div class="form-row"><label>Year<input name="year" type="number" placeholder="2025"></label><label>Published date<input name="publishedDate" type="text" placeholder="2025-01-01"></label></div><label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6"></textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>From PDF</span></button></div></label><div class="form-row"><label>Primary category<input name="primaryCategory" type="text" placeholder="cs.AI"></label><label>Categories<input name="categories" type="text" placeholder="cs.AI, cs.LG"></label></div><div class="form-row"><label>Journal reference<input name="journalRef" type="text"></label><label>Accepted venue<input name="acceptedVenue" type="text"></label></div><div class="form-row"><label>DOI<input name="doi" type="text"></label><label>arXiv ID<input name="arxivId" type="text" placeholder="2401.12345"></label></div><label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text"><a class="button button-secondary button-small form-utility-button" data-source-url-go target="_blank" rel="noreferrer" hidden><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span><span>Go</span></a></div></label><div class="tag-field"><label>Tags<input name="tags" type="text" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list"></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div></div></form></div><div class="warnings" data-warnings></div></section>
+  <section id="import-preview" class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" id="import-pdf-status" data-pdf-status></span><div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="paper-form-new" data-lookup-metadata><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find metadata</span></button><button class="button button-secondary" type="submit" form="paper-form-new"><span class="material-symbols-outlined" aria-hidden="true">save</span><span>Save paper</span></button></div></div><span class="form-status" data-form-status-for="paper-form-new" role="status"></span></div></div></div><div data-preview-form><form id="paper-form-new" class="paper-form" data-paper-form data-mode="add"><input type="hidden" name="stagingToken" value=""><div class="form-grid"><label>Title<div class="field-with-action title-field"><input name="title" type="text" value="" placeholder="Paper title"><a class="button button-secondary button-small form-utility-button" data-paper-pdf-link target="_blank" rel="noreferrer" aria-label="Open PDF" title="Open PDF" hidden><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>Open</span></a></div></label><label>Authors<textarea name="authors" rows="3" placeholder="One author per line"></textarea></label><div class="form-row"><label>Year<input name="year" type="number" placeholder="2025"></label><label>Published date<input name="publishedDate" type="text" placeholder="2025-01-01"></label></div><label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6"></textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>From PDF</span></button></div></label><div class="form-row"><label>Primary category<input name="primaryCategory" type="text" placeholder="cs.AI"></label><label>Categories<input name="categories" type="text" placeholder="cs.AI, cs.LG"></label></div><div class="form-row"><label>Journal reference<input name="journalRef" type="text"></label><label>Accepted venue<input name="acceptedVenue" type="text"></label></div><div class="form-row"><label>DOI<input name="doi" type="text"></label><label>ISBN<input name="isbn" type="text" placeholder="9780262381369"></label></div><label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text"><a class="button button-secondary button-small form-utility-button" data-source-url-go target="_blank" rel="noreferrer" hidden><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span><span>Go</span></a></div></label><div class="tag-field"><label>Tags<input name="tags" type="text" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list"></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div></div></form></div><div class="warnings" data-warnings></div></section>
 </main>`)));
 
 app.get("/import", (c) => c.redirect("/add"));
@@ -493,10 +497,10 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
   try {
     const body = await c.req.json<{ input?: string; paperId?: string; stagingToken?: string }>();
     const input = body.input?.trim() || "";
-    if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter an arXiv identifier, DOI, or paper title.");
+    if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter an arXiv identifier, DOI, ISBN, or paper title.");
     const repo = new D1PaperRepository(c.env.DB);
     const fetcher = (request: RequestInfo | URL, init?: RequestInit) => fetch(request, init);
-    const parsedCitation = await parseHostedCitationForLookup(c.env, input);
+    const parsedCitation = isbnFromInput(input) ? undefined : await parseHostedCitationForLookup(c.env, input);
     const lookup = await lookupHostedMetadata(input, fetcher, parsedCitation);
     let metadata = lookup.metadata;
     const existing = await repo.findDuplicate(metadata);
@@ -545,7 +549,8 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
     }
     return c.json({ paper: metadata, pdf, warnings });
   } catch (error) {
-    return jsonError(c, 502, errorMessage(error), "The paper could not be imported.");
+    const code = errorMessage(error);
+    return jsonError(c, code === "INVALID_ISBN" ? 400 : 502, code, "The paper could not be imported.");
   }
 };
 
@@ -811,6 +816,7 @@ app.get("/papers/:id", async (c) => {
     paper.journalRef ? `<dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef)}</dd>` : "",
     paper.acceptedVenue ? `<dt>Accepted venue</dt><dd>${escapeHtml(paper.acceptedVenue)}</dd>` : "",
     paper.doi ? `<dt>DOI</dt><dd>${escapeHtml(paper.doi)}</dd>` : "",
+    paper.isbn ? `<dt>ISBN</dt><dd>${escapeHtml(paper.isbn)}</dd>` : "",
     `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
     `<dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd>`,
   ].filter(Boolean).join("");

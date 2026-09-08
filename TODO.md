@@ -10,7 +10,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing seams: injectable app dependencies, `FileStorage`, `LlmClient`/embedding clients, SQLite migrations, and snapshot backup/restore.
 - Existing local auth: optional `APP_PASSWORD` login gate with session cookies and origin checks for state-changing requests.
 - Existing analysis behavior: summaries, questions, embeddings, bounded concurrency, stale-analysis tracking, and provider selection.
-- Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
+- Existing schema: SQLite migrations `0001` through `0009`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
 - Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a hosted UI for keyword/semantic library search, multi-PDF/folder/ZIP upload, paper selection/deletion, detail/edit, settings, arXiv/DOI/title import, PDF viewing, metadata export, summaries, questions, and merge-based backup/restore are deployed at `https://personal-paper-library.xfcosta.workers.dev`; large-library restore hardening and some citation-management features remain pending.
@@ -28,7 +28,7 @@ Checklist status: `[x]` is implemented and evidenced, `[~]` is partially impleme
 ## Definition of done
 
 - [x] Local `npm run verify` remains green and the local app still uses SQLite, filesystem storage, `pdftotext`, and Keychain as before. Verified locally: typecheck plus 103 tests passed.
-- [ ] A preview Worker can be deployed from a clean checkout with no committed secrets.
+- [~] A preview Worker configuration exists with isolated D1/R2/Queue bindings and preview commands; first authenticated provisioning/deployment from a clean checkout remains to be verified.
 - [x] Cloudflare Access protects every hosted route except the minimum static bootstrap surface; the current Worker hostname is already protected by the owner-only Access application.
 - [ ] A representative local snapshot can be imported into D1/R2 and verified by paper count, PDF hashes, tags, summaries, and questions.
 - [x] The hosted app can add, replace, view, search, analyze, back up, and restore papers within documented limits.
@@ -42,7 +42,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [~] Audit the Worker bundle and list every Node-only import reachable from hosted routes. The Worker entry point is separated from the Node app and uses cloud-safe adapters, but a repeatable bundle audit and written import inventory are still missing.
 - [x] Build a minimal Worker/Hono entry point that serves the current health check and static assets. This grew into the deployed hosted Worker.
 - [~] Prototype the D1 repository contract against the current schema, including transactions and the queries used by library search, tags, analysis, and snapshots. Async D1 repositories and focused tests exist; snapshot/restore still performs some orchestration directly in the Worker and D1 batching is not a full transaction abstraction.
-- [ ] Test the Workers AI `toMarkdown` PDF extractor against representative papers: text PDF, malformed PDF, encrypted PDF, scanned/image-only PDF, large PDF, and a paper with appendices; compare a second option if coverage is insufficient.
+- [~] Test the Workers AI `toMarkdown` PDF extractor against representative papers: the live matrix accepted the 2.2 MB text/appendix PDF in 6.3s and the 10.6 MB oversized PDF in 25.2s, rejected malformed input, and returned only 15/22 characters for encrypted/scanned fixtures. Hosted analysis now rejects those short results as `PDF_TEXT_INSUFFICIENT`; a second OCR option remains unassessed.
 - [ ] Measure the largest expected upload, extracted text, prompt, and analysis duration against Worker request/body/CPU/memory/subrequest limits.
 - [x] Compare analysis execution designs: synchronous/streamed request, Durable Objects state, and Queues/Workflows. Cloudflare Queues with D1 job state was selected and implemented for resumable dispatch.
 - [x] Decide whether hosted uploads are proxied through the Worker or use browser-to-R2 upload for large files. Hosted uploads currently use Worker-proxied staging; direct browser-to-R2 uploads remain a follow-up if measured limits require them.
@@ -64,6 +64,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Serve compiled browser assets through Worker Static Assets.
 - [x] Add `wrangler.jsonc` with a pinned compatibility date, Worker name, assets, D1 binding, and R2 binding. Add environment-specific configuration later.
 - [x] Add a clean D1 baseline migration containing the final schema represented by local migrations `0001`–`0008`; validate it against an empty local D1 database.
+- [~] Add ISBN metadata support with Open Library lookup; local and hosted code paths are implemented, but the new hosted migration still needs to be applied remotely.
 - [x] Validate the D1 baseline against an empty local D1 database and apply it to the remote database after Wrangler authentication.
 - [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
 - [x] Add an initial Worker API slice for D1 paper/tag operations and R2 PDF staging, reading, and deletion with focused tests.
@@ -80,8 +81,8 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Persist hosted AI settings, summaries, custom questions, answer-compatible records, and durable analysis job state in D1.
 - [x] Add Cloudflare Queue dispatch and a fail-safe consumer for hosted analysis jobs, with Worker-compatible PDF extraction and OpenAI execution.
 - [ ] Add safe handling and repair/reporting for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements. Individual missing PDFs and failed writes return errors, but there is no reconciliation path yet.
-- [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
-- [ ] Add separate local, preview, and production bindings without committing secrets. The current Wrangler configuration is effectively one hosted environment.
+- [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`, including preview-environment variants.
+- [~] Add separate local, preview, and production bindings without committing secrets. A Wrangler `preview` environment with isolated resource names and ignored environment-local secrets now exists; authenticated provisioning and deployment remain to be verified.
 
 ## Phase 3 — Access, authentication, and security
 

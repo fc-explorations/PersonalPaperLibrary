@@ -35,6 +35,33 @@ export function parseOptionalDoi(value: unknown): string | undefined {
   return clean;
 }
 
+function isbn10Checksum(value: string): boolean {
+  const total = value.split("").reduce((sum, digit, index) => sum + (digit === "X" ? 10 : Number(digit)) * (10 - index), 0);
+  return total % 11 === 0;
+}
+
+function isbn13Checksum(value: string): boolean {
+  const total = value.split("").reduce((sum, digit, index) => sum + Number(digit) * (index % 2 === 0 ? 1 : 3), 0);
+  return total % 10 === 0;
+}
+
+export function normalizeIsbn(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") throw new Error("INVALID_ISBN");
+  const clean = value.trim().replace(/[\s-]/g, "").toUpperCase();
+  const valid = (clean.length === 10 && /^\d{9}[\dX]$/.test(clean) && isbn10Checksum(clean))
+    || (clean.length === 13 && /^97[89]\d{10}$/.test(clean) && isbn13Checksum(clean));
+  if (!valid) throw new Error("INVALID_ISBN");
+  return clean;
+}
+
+export function isbnFromInput(input: string): string | undefined {
+  const candidate = input.trim().replace(/^isbn(?:-?1[03])?\s*[:#]?\s*/i, "");
+  const compact = candidate.replace(/[\s-]/g, "");
+  if (!/^(?:\d{9}[\dX]|\d{13})$/i.test(compact)) return undefined;
+  return normalizeIsbn(compact);
+}
+
 export function validatePdf(bytes: Uint8Array, filename = "paper.pdf", maxBytes = DEFAULT_MAX_PDF_BYTES): void {
   if (!filename.toLowerCase().endsWith(".pdf")) throw new Error("PDF_EXTENSION_REQUIRED");
   if (bytes.byteLength > maxBytes) throw new Error("PDF_TOO_LARGE");

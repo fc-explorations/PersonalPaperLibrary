@@ -1,47 +1,90 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "personal-paper-library",
-  "main": "src/worker.ts",
-  "compatibility_date": "2026-09-07",
-  "vars": {
-    "ACCESS_REQUIRED": "true",
-    "ACCESS_TEAM_DOMAIN": "https://solitary-hill-9851.cloudflareaccess.com",
-    "ACCESS_AUDIENCE": "bb75838868b273ef73219c7d2aa79e8fc9bbbb948ad991a49459989a6e513b8c"
-  },
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS"
-  },
-  "ai": {
-    "binding": "AI"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "personal-paper-library",
-      "database_id": "125f7459-7799-4ece-b407-ef4152b93460",
-      "migrations_dir": "migrations/cloudflare"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "PAPER_PDFS",
-      "bucket_name": "personal-paper-library"
-    }
-  ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "ANALYSIS_QUEUE",
-        "queue": "personal-paper-library-analysis"
-      }
-    ],
-    "consumers": [
-      {
-        "queue": "personal-paper-library-analysis",
-        "max_batch_size": 20,
-        "max_batch_timeout": 5
-      }
-    ]
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "personal-paper-library",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-09-07",
+	"vars": {
+		"ACCESS_REQUIRED": "true",
+		"ACCESS_TEAM_DOMAIN": "https://solitary-hill-9851.cloudflareaccess.com",
+		"ACCESS_AUDIENCE": "bb75838868b273ef73219c7d2aa79e8fc9bbbb948ad991a49459989a6e513b8c"
+	},
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "personal-paper-library-preview",
+			"database_id": "d39ba8be-e9fe-4d64-8b76-5870cc58a2b3",
+			"migrations_dir": "migrations/cloudflare"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "PAPER_PDFS",
+			"bucket_name": "personal-paper-library-preview"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "ANALYSIS_QUEUE",
+				"queue": "personal-paper-library-analysis-preview"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "personal-paper-library-analysis",
+				"max_batch_size": 20,
+				"max_batch_timeout": 5
+			}
+		]
+	},
+	"env": {
+		"preview": {
+			"name": "personal-paper-library-preview",
+			"vars": {
+				"ACCESS_REQUIRED": "true",
+				"ACCESS_TEAM_DOMAIN": "https://<preview-team-domain>.cloudflareaccess.com",
+				"ACCESS_AUDIENCE": "<preview-access-audience>",
+				"MAX_PDF_BYTES": "52428800",
+				"MAX_REQUEST_BYTES": "268435456"
+			},
+			"ai": {
+				"binding": "AI"
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "personal-paper-library-preview",
+					"migrations_dir": "migrations/cloudflare"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "PAPER_PDFS",
+					"bucket_name": "personal-paper-library-preview"
+				}
+			],
+			"queues": {
+				"producers": [
+					{
+						"binding": "ANALYSIS_QUEUE",
+						"queue": "personal-paper-library-analysis-preview"
+					}
+				],
+				"consumers": [
+					{
+						"queue": "personal-paper-library-analysis-preview",
+						"max_batch_size": 20,
+						"max_batch_timeout": 5
+					}
+				]
+			}
+		}
+	}
 }

@@ -330,6 +330,7 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "journalRef", paper.journalRef);
   setValue(form, "acceptedVenue", paper.acceptedVenue);
   setValue(form, "doi", paper.doi);
+  setValue(form, "isbn", paper.isbn);
   setValue(form, "arxivId", paper.arxivId);
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue(form, "tags", (paper.tags || []).join(", "));
@@ -357,6 +358,31 @@ async function jsonRequest(url, options) {
     throw new Error(body.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
   }
   return body;
+}
+
+function jsonRequestWithUploadProgress(url, options, { onProgress, onUploadComplete } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(options?.method || "GET", url);
+    if (options?.headers) Object.entries(options.headers).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(event.loaded, event.total);
+    };
+    xhr.upload.onload = () => onUploadComplete?.();
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText || "{}"); } catch { /* The normal error below is more useful than a parse error. */ }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const message = body.error?.message || "Request failed";
+        reject(new Error(body.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message));
+        return;
+      }
+      resolve(body);
+    };
+    xhr.onerror = () => reject(new Error("The library server connection failed. Check that it is running, then retry."));
+    xhr.ontimeout = () => reject(new Error("Request timed out."));
+    xhr.send(options?.body);
+  });
 }
 
 function renderLibraryQueryResults(body) {
@@ -669,7 +695,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const files = source === "folder" ? pdfFiles : zipFiles;
   const progress = form.querySelector("[data-bulk-progress]");
   setStatus(form, isZip ? "Uploading and extracting ZIP archive…" : `Importing 0 of ${pdfFiles.length} PDFs… ETA calculating…`);
-  progress?.classList.toggle("is-indeterminate", isZip);
+  progress?.classList.remove("is-indeterminate");
   updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
@@ -686,9 +712,21 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       formData.set("folderTag", folderTag || archiveTag);
       formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
       try {
-        const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
+        const body = isZip
+          ? await jsonRequestWithUploadProgress("/api/bulk-upload", { method: "POST", body: formData }, {
+            onProgress: (loaded, total) => {
+              const percent = Math.round((loaded / total) * 100);
+              setStatus(form, `Uploading ZIP archive… ${percent}%`);
+              updateOperationProgress(progress, percent, 100);
+            },
+            onUploadComplete: () => {
+              setStatus(form, "Upload complete. Extracting ZIP archive…");
+              progress?.classList.add("is-indeterminate");
+            },
+          })
+          : await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
         imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
-        if (isZip) setStatus(form, `Extracted ${body.discovered ?? imported.length} PDFs from ZIP; imported ${body.imported.length}…`);
+        if (isZip) setStatus(form, `Loaded ${body.discovered ?? imported.length} PDFs from ZIP; preparing metadata…`);
       } catch (error) {
         failed.push({ filename: file.name, reason: clientErrorMessage(error) });
       }
@@ -726,7 +764,7 @@ async function savePaperForm(form, { redirect = false, statusMessage = "Saved." 
     title: value(form, "title"), authors: value(form, "authors").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
     year: value(form, "year") || undefined, publishedDate: value(form, "publishedDate"), abstract: value(form, "abstract"),
     primaryCategory: value(form, "primaryCategory"), categories: commaValues(value(form, "categories")), journalRef: value(form, "journalRef"), acceptedVenue: value(form, "acceptedVenue"),
-    doi: value(form, "doi"), arxivId: value(form, "arxivId"), sourceUrl: value(form, "sourceUrl"), tags: commaValues(value(form, "tags")),
+    doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), sourceUrl: value(form, "sourceUrl"), tags: commaValues(value(form, "tags")),
     stagingToken: value(form, "stagingToken"), metadataSource: value(form, "arxivId") ? "mixed" : "manual",
   };
   const id = form.dataset.paperId;
@@ -766,7 +804,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   const form = button.form || button.closest("[data-paper-form]");
   setStatus(form, "Looking up citation metadata…");
   try {
-    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) });
+    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) });
     setValue(form, "title", result.paper.title);
     setValue(form, "authors", (result.paper.authors || []).join("\n"));
     setValue(form, "year", result.paper.year);
@@ -777,6 +815,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "journalRef", result.paper.journalRef);
     setValue(form, "acceptedVenue", result.paper.acceptedVenue);
     setValue(form, "doi", result.paper.doi);
+    setValue(form, "isbn", result.paper.isbn);
     setValue(form, "arxivId", result.paper.arxivId);
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
     if (result.pdf?.stagingToken) {
@@ -823,6 +862,7 @@ document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.add
     if (metadata.journalRef) setValue(form, "journalRef", metadata.journalRef);
     if (metadata.acceptedVenue) setValue(form, "acceptedVenue", metadata.acceptedVenue);
     if (metadata.doi) setValue(form, "doi", metadata.doi);
+    if (metadata.isbn) setValue(form, "isbn", metadata.isbn);
     if (metadata.arxivId) setValue(form, "arxivId", metadata.arxivId);
     if (metadata.sourceUrl || metadata.arxivUrl) setValue(form, "sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
     updateWebResource(form, metadata);
@@ -1299,7 +1339,7 @@ async function enrichLocalPaperMetadata(id) {
   const lookup = await jsonRequest("/api/metadata/lookup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: current.title, doi: current.doi, arxivId: current.arxivId, paperId: id, preservePdf: Boolean(current.r2Key) }),
+    body: JSON.stringify({ title: current.title, doi: current.doi, isbn: current.isbn, arxivId: current.arxivId, paperId: id, preservePdf: Boolean(current.r2Key) }),
   });
   const metadata = lookup.paper || {};
   await jsonRequest(`/api/papers/${encodeURIComponent(id)}`, {
@@ -1316,6 +1356,7 @@ async function enrichLocalPaperMetadata(id) {
       journalRef: metadata.journalRef || current.journalRef,
       acceptedVenue: metadata.acceptedVenue || current.acceptedVenue,
       doi: metadata.doi || current.doi,
+      isbn: metadata.isbn || current.isbn,
       arxivId: metadata.arxivId || current.arxivId,
       arxivUrl: metadata.arxivUrl || current.arxivUrl,
       sourceUrl: metadata.sourceUrl || metadata.arxivUrl || current.sourceUrl,

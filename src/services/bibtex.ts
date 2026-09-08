@@ -101,6 +101,7 @@ export function parseBibtex(input: string): BibtexMetadata {
     journalRef: journal,
     acceptedVenue: venue,
     doi: doi || undefined,
+    isbn: fields.isbn || undefined,
     arxivId,
     arxivUrl: arxivId ? `https://arxiv.org/abs/${arxivId}` : undefined,
     sourceUrl: fields.url || (arxivId ? `https://arxiv.org/abs/${arxivId}` : undefined),

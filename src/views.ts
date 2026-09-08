@@ -245,6 +245,7 @@ function bibtexEntry(paper: PaperRecord): string {
     paper.journalRef ? ["journal", paper.journalRef] : null,
     paper.acceptedVenue ? ["booktitle", paper.acceptedVenue] : null,
     paper.doi ? ["doi", paper.doi] : null,
+    paper.isbn ? ["isbn", paper.isbn] : null,
     paper.arxivId ? ["eprint", paper.arxivId] : null,
     paper.arxivId ? ["archivePrefix", "arXiv"] : null,
     paper.sourceUrl || paper.arxivUrl ? ["url", paper.sourceUrl || paper.arxivUrl || ""] : null,
@@ -486,7 +487,8 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
     ${abstractField(data.abstract)}
     <div class="form-row">${field("Primary category", "primaryCategory", data.primaryCategory, { placeholder: "cs.AI" })}${field("Categories", "categories", (data.categories || []).join(", "), { placeholder: "cs.AI, cs.LG" })}</div>
     <div class="form-row">${field("Journal reference", "journalRef", data.journalRef)}${field("Accepted venue", "acceptedVenue", data.acceptedVenue)}</div>
-    <div class="form-row">${field("DOI", "doi", data.doi)}${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}</div>
+    <div class="form-row">${field("DOI", "doi", data.doi)}${field("ISBN", "isbn", data.isbn, { placeholder: "9780262381369" })}</div>
+    ${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}
     ${sourceUrlField(data.sourceUrl)}
     ${tagsField}`;
   const actions = formActions(data, isEdit, formId);
@@ -499,7 +501,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
 
 export function renderAddPage(): string {
   const body = `<section class="add-grid add-options">
-    <div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form></div>
+    <div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, ISBN, URL, or identifier.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, ISBN, URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form></div>
     <div class="add-file-options"><div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="single-pdf-input">${uploadIcon()}<span>Choose file</span></label><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required class="sr-only" data-single-pdf-input></div></div><p class="form-status" role="status"></p></form></div>
     <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. Choose a folder or ZIP archive, and whether its name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="folder-import-pickers"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple class="sr-only" data-folder-pdf-input></div><div class="file-picker"><label class="button button-secondary" for="folder-zip-input"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span><span>Choose ZIP</span></label><input id="folder-zip-input" name="files" type="file" accept="application/zip,.zip" class="sr-only" data-folder-zip-input></div></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-progress" data-bulk-progress hidden role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-bulk-progress-fill></span></div><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
@@ -549,6 +551,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
     metadataRow("Journal reference", paper.journalRef),
     metadataRow("Accepted venue", paper.acceptedVenue),
     metadataRow("DOI", paper.doi),
+    metadataRow("ISBN", paper.isbn),
     metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/api/papers/${escapeHtml(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`),
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
   ].join("");

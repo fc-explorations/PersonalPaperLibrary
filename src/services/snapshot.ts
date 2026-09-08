@@ -23,7 +23,7 @@ const SNAPSHOT_MANIFEST_MAX_BYTES = 1024 * 1024;
 const DATABASE_ARTIFACTS = ["library.sqlite", "library.sqlite-wal", "library.sqlite-shm", "library.sqlite-journal"];
 const REQUIRED_SCHEMA: Record<string, string[]> = {
   schema_migrations: ["name", "applied_at"],
-  papers: ["id", "arxiv_id", "arxiv_base_id", "title", "abstract", "published_date", "updated_date", "year", "primary_category", "categories", "journal_ref", "accepted_venue", "doi", "source_url", "arxiv_url", "r2_key", "pdf_sha256", "metadata_source", "created_at", "updated_at"],
+  papers: ["id", "arxiv_id", "arxiv_base_id", "title", "abstract", "published_date", "updated_date", "year", "primary_category", "categories", "journal_ref", "accepted_venue", "doi", "isbn", "source_url", "arxiv_url", "r2_key", "pdf_sha256", "metadata_source", "created_at", "updated_at"],
   authors: ["id", "display_name"],
   paper_authors: ["paper_id", "author_id", "author_order"],
   tags: ["id", "name", "created_at"],
@@ -44,6 +44,7 @@ const REQUIRED_MIGRATIONS = [
   "0006_question_definition_hash.sql",
   "0007_question_activity.sql",
   "0008_library_search.sql",
+  "0009_isbn.sql",
 ];
 
 type SnapshotArchive = {

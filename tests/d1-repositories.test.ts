@@ -12,6 +12,7 @@ class MemoryD1 implements D1Database {
   constructor() {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0001_initial.sql", import.meta.url), "utf8"));
+    this.db.exec(readFileSync(new URL("../migrations/cloudflare/0004_isbn.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {
