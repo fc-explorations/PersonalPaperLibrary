@@ -59,6 +59,34 @@ function htmlAuthor(value: string): string {
   return parts.length === 2 ? `${parts[1]} ${parts[0]}` : value.trim();
 }
 
+function titleKey(title: string): string {
+  return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function titleSimilarity(left: string, right: string): number {
+  const leftWords = new Set(titleKey(left).split(/\s+/).filter(Boolean));
+  const rightWords = new Set(titleKey(right).split(/\s+/).filter(Boolean));
+  if (!leftWords.size || !rightWords.size) return 0;
+  return [...leftWords].filter((word) => rightWords.has(word)).length / new Set([...leftWords, ...rightWords]).size;
+}
+
+function searchResultTitle(value: string): string {
+  return decodeXml(value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function arxivIdFromSearch(html: string, title: string): NormalizedArxivInput | undefined {
+  const matches: Array<{ score: number; id: string }> = [];
+  for (const result of html.matchAll(/<li\b[^>]*class=["'][^"']*\barxiv-result\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)) {
+    const block = result[1];
+    const id = block.match(/href=["']https?:\/\/arxiv\.org\/abs\/([^"'?#]+)["']/i)?.[1];
+    const resultTitle = [...block.matchAll(/<p\b[^>]*class=["']([^"']+)["'][^>]*>([\s\S]*?)<\/p>/gi)]
+      .find((paragraph) => paragraph[1].split(/\s+/).includes("title"))?.[2];
+    if (id && resultTitle) matches.push({ id, score: titleSimilarity(title, searchResultTitle(resultTitle)) });
+  }
+  const best = matches.sort((left, right) => right.score - left.score)[0];
+  return best && best.score >= 0.8 ? normalizeArxivInput(best.id) || undefined : undefined;
+}
+
 function parseArxivHtmlMetadata(html: string, normalized: NormalizedArxivInput): PaperMetadata {
   const title = htmlMetaValues(html, "citation_title")[0] || htmlMetaValues(html, "og:title")[0];
   if (!title) throw new Error("ARXIV_METADATA_INCOMPLETE");
@@ -191,6 +219,19 @@ export async function fetchArxivMetadata(normalized: NormalizedArxivInput, fetch
       throw apiError;
     }
   }
+}
+
+export async function lookupArxivByTitle(title: string, fetcher: typeof fetch = fetch): Promise<PaperMetadata> {
+  const value = title.trim();
+  if (!value) throw new Error("METADATA_LOOKUP_INPUT_REQUIRED");
+  const url = "https://arxiv.org/search/?query=" + encodeURIComponent(value) + "&searchtype=title&abstracts=hide&order=-announced_date_first&size=50";
+  const response = await fetchWithTimeout(fetcher, url, {
+    headers: { "User-Agent": "PersonalArxivPaperLibrary/1.0" },
+  });
+  if (!response.ok) throw new Error("ARXIV_SEARCH_HTTP_" + response.status);
+  const normalized = arxivIdFromSearch(await readResponseText(response), value);
+  if (!normalized) throw new Error("ARXIV_TITLE_NO_MATCH");
+  return fetchArxivMetadata(normalized, fetcher);
 }
 
 export async function fetchArxivPdf(

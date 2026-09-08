@@ -7,7 +7,7 @@ import { D1PaperRepository, type D1TagFilterMode } from "./repositories/d1-paper
 import { D1LibrarySearchRepository } from "./repositories/d1-library-search.js";
 import { R2Storage, type R2BucketLike } from "./services/r2-storage.js";
 import { executeAnalysisJob, type WorkersAiMarkdownBinding } from "./services/worker-analysis.js";
-import { fetchArxivMetadata, fetchArxivPdf, normalizeArxivDoi, normalizeArxivInput } from "./services/arxiv.js";
+import { fetchArxivMetadata, fetchArxivPdf, lookupArxivByTitle, normalizeArxivDoi, normalizeArxivInput } from "./services/arxiv.js";
 import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
@@ -227,19 +227,27 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
     return candidate;
   };
   try {
-    metadata = verify(await lookupCrossref(doi ? { doi } : { title }, fetcher));
+    metadata = doi
+      ? verify(await lookupCrossref({ doi }, fetcher))
+      : verify(await lookupArxivByTitle(title, fetcher));
   } catch {
-    if (!doi) {
+    if (doi) {
+      warnings.push("Citation metadata was not found. You can save this DOI-only record or edit it manually.");
+    } else {
       try {
-        metadata = verify(await lookupOpenAlex(title, fetcher));
+        metadata = verify(await lookupCrossref({ title }, fetcher));
       } catch {
         try {
-          metadata = verify(await lookupSemanticScholar(title, fetcher));
+          metadata = verify(await lookupOpenAlex(title, fetcher));
         } catch {
-          warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+          try {
+            metadata = verify(await lookupSemanticScholar(title, fetcher));
+          } catch {
+            warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
+          }
         }
       }
-    } else warnings.push("Citation metadata was not found. You can save this DOI-only record or edit it manually.");
+    }
   }
   metadata ||= { title: doi ? "Untitled paper" : title, authors: [], categories: [], metadataSource: "manual" };
   if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;

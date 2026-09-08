@@ -14,7 +14,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openDatabase } from "./db/database.js";
 import { PaperRepository, type TagFilterMode } from "./repositories/papers.js";
 import { normalizeTagName } from "./repositories/tags.js";
-import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf } from "./services/arxiv.js";
+import { normalizeArxivDoi, normalizeArxivInput, fetchArxivMetadata, fetchArxivPdf, lookupArxivByTitle } from "./services/arxiv.js";
 import { extractPdfMetadata } from "./services/pdf-metadata.js";
 import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
@@ -779,18 +779,28 @@ export function createApp(dependencies: AppDependencies = {}) {
           parsedCitation = await parseCitationForLookup(body.title || "");
           lookupTitle = parsedCitation.title || body.title || "";
           try {
-            const doi = body.doi ? doiFromInput(body.doi) : undefined;
-            metadata = await lookupCrossref({ title: lookupTitle, doi }, fetcher);
+            metadata = await lookupArxivByTitle(lookupTitle, fetcher);
             metadata = verifyCitationMatch(metadata, parsedCitation);
-            provider = "crossref";
+            provider = "arxiv";
           } catch (error) {
-            if (body.doi || !body.title?.trim()) throw error;
-            try {
-              metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
-              provider = "openalex";
-            } catch {
-              metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
-              provider = "semantic-scholar";
+            if (body.doi || !body.title?.trim()) {
+              const doi = body.doi ? doiFromInput(body.doi) : undefined;
+              metadata = await lookupCrossref({ title: lookupTitle, doi }, fetcher);
+              metadata = verifyCitationMatch(metadata, parsedCitation);
+              provider = "crossref";
+            } else {
+              try {
+                metadata = verifyCitationMatch(await lookupCrossref({ title: lookupTitle }, fetcher), parsedCitation);
+                provider = "crossref";
+              } catch {
+                try {
+                  metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
+                  provider = "openalex";
+                } catch {
+                  metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
+                  provider = "semantic-scholar";
+                }
+              }
             }
           }
         }

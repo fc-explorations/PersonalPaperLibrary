@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchArxivMetadata, normalizeArxivDoi, normalizeArxivInput, parseAcceptedVenue, parseAcceptedVenueYear, parseArxivMetadata } from "../src/services/arxiv.js";
+import { fetchArxivMetadata, lookupArxivByTitle, normalizeArxivDoi, normalizeArxivInput, parseAcceptedVenue, parseAcceptedVenueYear, parseArxivMetadata } from "../src/services/arxiv.js";
 
 const atom = `<?xml version="1.0"?><feed><entry>
   <title>  A &amp; Useful Paper  </title>
@@ -69,6 +69,17 @@ describe("arXiv metadata", () => {
       year: 2026,
       abstract: "A useful abstract.",
     });
+  });
+
+  it("finds an arXiv paper by its exact title", async () => {
+    const search = "<li class=\"arxiv-result\"><p class=\"list-title\"><a href=\"https://arxiv.org/abs/2510.18120\">arXiv:2510.18120</a></p><p class=\"title is-5\">Generalization Below the Edge of Stability: The Role of Data Geometry</p></li>";
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("arxiv.org/search")) return new Response(search, { status: 200 });
+      return new Response(atom, { status: 200 });
+    });
+    const result = await lookupArxivByTitle("GENERALIZATION BELOW THE EDGE OF STABILITY: THE ROLE OF DATA GEOMETRY", fetcher);
+    expect(result.arxivId).toBe("2510.18120");
   });
 
   it("recognizes published conference venues from the journal reference", () => {
