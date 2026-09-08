@@ -34,7 +34,7 @@ import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
-import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
+import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderPdfViewerPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 import { APP_VERSION } from "./version.js";
@@ -683,6 +683,13 @@ export function createApp(dependencies: AppDependencies = {}) {
     const paper = repo.findById(c.req.param("id"));
     if (!paper) return pageError(c, 404, "Paper not found", "That paper does not exist.");
     return c.html(renderPaperPage(paper, analysis.getSummary(paper.id), analysis.listQuestions(paper.id)));
+  });
+
+  app.get("/papers/:id/pdf", (c) => {
+    const paper = repo.findById(c.req.param("id"));
+    if (!paper) return pageError(c, 404, "Paper not found", "That paper does not exist.");
+    if (!paper.r2Key || !existsSync(storage.getPath(paper.id))) return pageError(c, 404, "PDF not found", "This paper does not have a stored PDF.");
+    return c.html(renderPdfViewerPage(paper));
   });
 
   app.get("/papers/:id/edit", (c) => {

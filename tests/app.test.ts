@@ -117,7 +117,7 @@ describe("HTTP application", () => {
     const selectedTagResponse = await context.app.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: [saved.paper.id], name: "Selected", action: "add" }) });
     expect(selectedTagResponse.status).toBe(200);
     expect((await (await context.app.request(`/api/papers/${saved.paper.id}`)).json()).paper.tags).toContain("selected");
-    expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/api/papers/${saved.paper.id}/pdf" target="_blank" rel="noreferrer">PDF</a></dd>`);
+    expect(paperPage).toContain(`<dt>Document</dt><dd><a href="/papers/${saved.paper.id}/pdf" target="_blank" rel="noopener noreferrer">PDF</a></dd>`);
     expect(paperPage).toContain('<summary>Paper information</summary>');
     expect(paperPage.indexOf(">Tags</h2>")).toBeLessThan(paperPage.indexOf("<summary>Paper information</summary>"));
     expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS</dd>");
@@ -126,7 +126,7 @@ describe("HTTP application", () => {
     expect(paperPage).not.toContain('aria-label="Open PDF"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
     const editHtml = await editPage.text();
-    expect(editHtml).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
+    expect(editHtml).toContain(`href="/papers/${saved.paper.id}/pdf"`);
     expect(editHtml).toContain("data-extract-abstract");
     expect(editHtml).toContain(">From PDF</span>");
     expect(editHtml).toContain(">Suggest</span>");

@@ -339,7 +339,7 @@ function applyHostedMetadata(form, data) {
     const storedPdf = form.dataset.mode === "edit" && data.pdf?.status === "preserved" && form.dataset.paperId;
     stagedPdfLink.hidden = !activeStagingToken && !storedPdf;
     if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
-    else if (storedPdf) stagedPdfLink.href = `/api/papers/${encodeURIComponent(form.dataset.paperId)}/pdf`;
+    else if (storedPdf) stagedPdfLink.href = `/papers/${encodeURIComponent(form.dataset.paperId)}/pdf`;
   }
   const sourceUrl = form.querySelector("[data-source-url-go]");
   const source = paper.sourceUrl || paper.arxivUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");

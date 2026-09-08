@@ -246,28 +246,31 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
     if (parsedCitation && !citationMatchesMetadata(parsedCitation, candidate)) throw new Error("CITATION_METADATA_MISMATCH");
     return candidate;
   };
-  try {
-    metadata = doi
-      ? verify(await lookupCrossref({ doi }, fetcher))
-      : verify(await lookupArxivByTitle(title, fetcher));
-  } catch {
-    if (doi) {
+  if (doi) {
+    try {
+      metadata = verify(await lookupCrossref({ doi }, fetcher));
+    } catch {
       warnings.push("Citation metadata was not found. You can save this DOI-only record or edit it manually.");
-    } else {
-      try {
-        metadata = verify(await lookupCrossref({ title }, fetcher));
-      } catch {
-        try {
-          metadata = verify(await lookupOpenAlex(title, fetcher));
-        } catch {
-          try {
-            metadata = verify(await lookupSemanticScholar(title, fetcher));
-          } catch {
-            warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
-          }
-        }
-      }
     }
+  } else {
+    // Provider latency is highly variable, especially for arXiv search and
+    // Crossref. Run the title lookups together so one slow provider does not
+    // block the providers that can already identify the paper.
+    const candidates = await Promise.all([
+      ["arxiv", () => lookupArxivByTitle(title, fetcher)],
+      ["crossref", () => lookupCrossref({ title }, fetcher)],
+      ["openalex", () => lookupOpenAlex(title, fetcher)],
+      ["semantic-scholar", () => lookupSemanticScholar(title, fetcher)],
+    ].map(async ([provider, lookup]) => {
+      try {
+        return verify(await (lookup as () => Promise<PaperMetadata>)());
+      } catch (error) {
+        console.warn("hosted metadata provider failed", provider, errorMessage(error));
+        return undefined;
+      }
+    }));
+    metadata = candidates.find((candidate): candidate is PaperMetadata => Boolean(candidate));
+    if (!metadata) warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
   }
   metadata ||= { title: doi ? "Untitled paper" : title, authors: [], categories: [], metadataSource: "manual" };
   if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
@@ -751,13 +754,30 @@ app.get("/papers/:id", async (c) => {
     paper.journalRef ? `<dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef)}</dd>` : "",
     paper.acceptedVenue ? `<dt>Accepted venue</dt><dd>${escapeHtml(paper.acceptedVenue)}</dd>` : "",
     paper.doi ? `<dt>DOI</dt><dd>${escapeHtml(paper.doi)}</dd>` : "",
-    `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
+    `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
     `<dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd>`,
   ].filter(Boolean).join("");
   const citeSection = renderCitationSection(paper);
   return c.html(hostedShell(paper.title, "paper", `<main class="shell cloud-library paper-detail-page" data-paper-id="${escapeHtml(paper.id)}">
     <section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${encodeURIComponent(paper.id)}/edit" aria-label="Edit paper" title="Edit paper"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit</span></a><button id="paper-delete" class="icon-button icon-button-danger" type="button" aria-label="Delete paper" title="Delete paper"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Del</span></button></div></section>
     <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1 id="paper-title">${escapeHtml(paper.title)}</h1><p id="paper-meta" class="muted">${paperMeta}</p></header>${paper.abstract ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p id="paper-abstract" class="abstract">${escapeHtml(paper.abstract)}</p></section>` : `<section id="paper-abstract-section" class="detail-section abstract-section" hidden><h2>Abstract</h2><p id="paper-abstract" class="abstract"></p></section>`}${paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div id="paper-tags" class="paper-tags large">${paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" ")}</div></section>` : `<section id="paper-tags-section" class="detail-section detail-tags" hidden><h2>Tags</h2><div id="paper-tags" class="paper-tags large"></div></section>`}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadataRows}</dl></details>${citeSection}<details class="detail-section analysis-section" data-summary-section><summary><span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body"><div id="paper-summary">${summaryContent}${summaryMeta}</div><div class="analysis-actions summary-actions"><div class="summary-action-buttons"><button class="button button-secondary button-small" type="button" data-summary-mode="quick"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>${summaryComplete ? "Regenerate summary" : "Generate summary"}</span></button><button class="button button-secondary button-small" type="button" data-summary-mode="full"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Full summary</span></button></div><span id="analysis-status" class="form-status" role="status"></span></div></div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse summary" title="Collapse summary"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button></div></details>${renderQuestionsSection(questions)}</div></article>
+  </main>`));
+});
+
+app.get("/papers/:id/pdf", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return c.html(hostedShell("Paper not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>Paper not found</h1><p><a href="/">Return to the library</a></p></section></main>`), 404);
+  if (!paper.r2Key) return c.html(hostedShell("PDF not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>PDF not found</h1><p>This paper does not have a stored PDF.</p><p><a href="/papers/${encodeURIComponent(paper.id)}">Back to paper</a></p></section></main>`), 404);
+  const pdfUrl = `/api/papers/${encodeURIComponent(paper.id)}/pdf`;
+  return c.html(hostedShell(`Read ${paper.title}`, "pdf", `<main class="shell cloud-library pdf-reader-page">
+    <nav class="pdf-reader-toolbar" aria-label="PDF navigation">
+      <a class="button button-secondary" href="/">Library</a>
+      <a class="button button-secondary" href="/papers/${encodeURIComponent(paper.id)}">Back to paper</a>
+      <a class="button button-secondary" href="${pdfUrl}?download=1">Download PDF</a>
+    </nav>
+    <header class="pdf-reader-heading"><p class="eyebrow">PDF reader</p><h1>${escapeHtml(paper.title)}</h1></header>
+    <div class="pdf-reader-frame-wrap"><iframe class="pdf-reader-frame" src="${pdfUrl}" title="${escapeHtml(paper.title)} PDF"></iframe></div>
+    <p class="pdf-reader-fallback muted">If the PDF does not appear, <a href="${pdfUrl}">open it directly</a> or use Download PDF.</p>
   </main>`));
 });
 

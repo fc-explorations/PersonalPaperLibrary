@@ -117,6 +117,12 @@ describe("Cloudflare Worker API", () => {
     expect(pdfResponse.status).toBe(200);
     expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
 
+    const viewer = await worker.request(`/papers/${paper.id}/pdf`, {}, env);
+    expect(viewer.status).toBe(200);
+    const viewerHtml = await viewer.text();
+    expect(viewerHtml).toContain(`href="/papers/${paper.id}"`);
+    expect(viewerHtml).toContain(`src="/api/papers/${paper.id}/pdf"`);
+
     const deleted = await worker.request(`/api/papers/${paper.id}`, { method: "DELETE" }, env);
     expect(deleted.status).toBe(200);
     expect((await worker.request(`/api/papers/${paper.id}`, {}, env)).status).toBe(404);
