@@ -64,18 +64,21 @@ function renderHostedMarkdown(value) {
 }
 
 function typesetHostedMath(elements) {
-  let attempts = 0;
-  const typeset = () => {
-    const mathJax = window.MathJax;
-    if (typeof mathJax?.typesetPromise !== "function") {
-      if (attempts++ < 200) window.setTimeout(typeset, 50);
-      return;
-    }
-    const run = () => { void mathJax.typesetPromise(elements).catch(() => {}); };
-    if (mathJax.startup?.promise) void mathJax.startup.promise.then(run).catch(() => {});
-    else run();
-  };
-  typeset();
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const typeset = () => {
+      const mathJax = window.MathJax;
+      if (typeof mathJax?.typesetPromise !== "function") {
+        if (attempts++ < 200) window.setTimeout(typeset, 50);
+        else resolve();
+        return;
+      }
+      const run = () => { void mathJax.typesetPromise(elements).then(resolve, resolve); };
+      if (mathJax.startup?.promise) void mathJax.startup.promise.then(run, resolve);
+      else run();
+    };
+    typeset();
+  });
 }
 
 typesetHostedMath([...document.querySelectorAll(".analysis-content")]);
@@ -135,7 +138,15 @@ async function runSummary(paperId, onUpdate, mode = "quick") {
   );
   if (!progress.job || progress.job.status !== "complete") throw new Error(progress.job?.errorMessage || "Summary generation failed.");
   const summary = await request(`/api/papers/${encodeURIComponent(paperId)}/summary`);
-  onUpdate("Summary", summary.summary?.content || "The summary completed without content.", summary.summary);
+  await onUpdate("Summary", summary.summary?.content || "The summary completed without content.", summary.summary);
+}
+
+function markHostedSummaryComplete() {
+  const dot = document.querySelector("[data-summary-section] .analysis-progress-dot");
+  if (!dot) return;
+  dot.classList.add("is-complete");
+  dot.setAttribute("aria-label", "Summary available");
+  dot.setAttribute("title", "Summary available");
 }
 
 async function runQuestion(paperId, question, onUpdate) {
@@ -880,6 +891,7 @@ async function initPaper() {
     const existing = await request(`/api/papers/${encodeURIComponent(id)}/summary`);
     if (existing.summary?.status === "complete") {
       summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(existing.summary.content)}</div>${renderHostedAnalysisMeta(existing.summary)}`;
+      markHostedSummaryComplete();
       typesetHostedMath([summary]);
     }
   } catch (error) { setStatus(paperStatus, error.message, true); }
@@ -893,7 +905,7 @@ async function initPaper() {
   });
   document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, (heading, content, record) => { summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
+    try { await runSummary(id, async (heading, content, record) => { summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
     catch (error) { setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
   }));
