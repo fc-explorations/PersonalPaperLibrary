@@ -329,7 +329,8 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "arxivId", paper.arxivId);
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue(form, "tags", (paper.tags || []).join(", "));
-  const activeStagingToken = stagingToken || data.pdf?.stagingToken || "";
+  const existingStagingToken = form?.elements.namedItem("stagingToken")?.value || "";
+  const activeStagingToken = stagingToken || data.pdf?.stagingToken || existingStagingToken;
   setValue(form, "stagingToken", activeStagingToken);
   updateWebResource(form, paper, data.pdf);
   const stagedPdfLink = form?.querySelector("[data-paper-pdf-link]");

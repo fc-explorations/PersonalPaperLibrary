@@ -423,8 +423,8 @@ describe("HTTP application", () => {
     expect(page).toContain('<dt>Document</dt><dd><span class="muted">Not stored</span></dd>');
     expect(page).not.toContain('aria-label="Open web resource"');
     const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();
-    expect(editPage).toContain('data-web-resource-for="paper-form-');
-    expect(editPage).toContain('href="https://doi.org/10.1000%2Fweb-resource"');
+    expect(editPage).not.toContain('data-web-resource-for="paper-form-');
+    expect(editPage).not.toContain('href="https://doi.org/10.1000%2Fweb-resource"');
     expect(editPage).toContain('data-source-url-go');
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });

@@ -95,6 +95,10 @@ describe("Cloudflare Worker API", () => {
     expect(upload.status).toBe(201);
     const staged = (await upload.json() as { pdf: { stagingToken: string } }).pdf.stagingToken;
 
+    const stagedPdfResponse = await worker.request(`/api/staging/${staged}/pdf`, {}, env);
+    expect(stagedPdfResponse.status).toBe(200);
+    expect(new Uint8Array(await stagedPdfResponse.arrayBuffer())).toEqual(pdf);
+
     const create = await worker.request("/api/papers", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -214,7 +218,7 @@ describe("Cloudflare Worker API", () => {
     expect(html).toContain('data-paper-form data-mode="add"');
     expect(html).toContain('data-lookup-metadata');
     expect(html).toContain("Primary category");
-    expect(html).toContain("Open web resource");
+    expect(html).not.toContain("Open web resource");
     const library = await worker.request("/", {}, env);
     expect(await library.text()).toMatch(/id="library-search-form"[\s\S]*id="library-tags"[\s\S]*id="bulk-actions"/);
     const paper = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ui-edit-paper", title: "UI edit paper", metadataSource: "manual" }) }, env);

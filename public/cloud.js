@@ -32,8 +32,12 @@ async function request(url, options = {}) {
 
 function setStatus(element, message, error = false) {
   if (!element) return;
-  element.textContent = message;
-  element.classList.toggle("status-error", error);
+  const status = element.matches?.(".form-status, [role='status']")
+    ? element
+    : element.querySelector?.(".form-status, [role='status']");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("status-error", error);
 }
 
 function sleep(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
@@ -55,9 +59,9 @@ function showAnalysisResult(element, heading, content, error = false) {
   element.hidden = false;
 }
 
-async function runSummary(paperId, onUpdate) {
+async function runSummary(paperId, onUpdate, mode = "quick") {
   onUpdate("Summary", "Queued…");
-  await request(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "quick" }) });
+  await request(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
   const progress = await pollUntil(
     () => request(`/api/papers/${encodeURIComponent(paperId)}/summary/progress`),
     (value) => !value.job || ["complete", "error", "cancelled"].includes(value.job.status),
@@ -216,12 +220,19 @@ function renderHostedPreview(data) {
   setValue("arxivId", paper.arxivId);
   setValue("sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue("tags", (paper.tags || []).join(", "));
-  setValue("stagingToken", data.pdf?.stagingToken);
+  const existingStagingToken = form?.elements.namedItem("stagingToken")?.value || "";
+  const activeStagingToken = data.pdf?.stagingToken || existingStagingToken;
+  setValue("stagingToken", activeStagingToken);
+  const stagedPdfLink = form?.querySelector("[data-paper-pdf-link]");
+  if (stagedPdfLink) {
+    stagedPdfLink.hidden = !activeStagingToken;
+    if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
+  }
   const sourceUrl = form?.querySelector("[data-source-url-go]");
   const source = paper.sourceUrl || paper.arxivUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");
   if (sourceUrl) { sourceUrl.hidden = !/^https?:\/\//i.test(source); if (!sourceUrl.hidden) sourceUrl.href = source; }
   const webResource = preview.querySelector("[data-web-resource]");
-  if (webResource) { webResource.hidden = Boolean(data.pdf?.stagingToken) || !/^https?:\/\//i.test(source); if (!webResource.hidden) webResource.href = source; }
+  if (webResource) { webResource.hidden = Boolean(activeStagingToken) || !/^https?:\/\//i.test(source); if (!webResource.hidden) webResource.href = source; }
   const pdfStatus = document.querySelector("#import-pdf-status");
   if (pdfStatus) pdfStatus.textContent = data.pdf?.status === "staged" ? "PDF staged" : "Metadata only";
   const warnings = preview.querySelector("[data-warnings]");
@@ -541,12 +552,12 @@ async function initPaper() {
       document.querySelector("#paper-title").textContent = updated.paper.title; setStatus(paperStatus, "Metadata saved.");
     } catch (error) { setStatus(paperStatus, error.message, true); }
   });
-  document.querySelector("#paper-summary-button")?.addEventListener("click", async (event) => {
+  document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, (heading, content) => { summary.innerHTML = `<pre>${escapeHtml(content)}</pre>`; setStatus(analysisStatus, `${heading} ready.`); }); }
+    try { await runSummary(id, (heading, content) => { summary.innerHTML = `<pre>${escapeHtml(content)}</pre>`; setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
     catch (error) { setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
-  });
+  }));
   document.querySelector("#paper-question-button")?.addEventListener("click", async (event) => {
     const input = document.querySelector("#paper-question-input");
     const question = input?.value || window.prompt("What would you like to ask about this paper?");
