@@ -62,7 +62,8 @@ export async function lookupSemanticScholar(title: string, fetcher: typeof fetch
   url.searchParams.set("limit", "5");
   url.searchParams.set("fields", "title,authors,year,publicationDate,abstract,venue,journal,externalIds,url,openAccessPdf");
   const headers: Record<string, string> = { "User-Agent": "PersonalPaperLibrary/1.0" };
-  if (process.env.SEMANTIC_SCHOLAR_API_KEY) headers["x-api-key"] = process.env.SEMANTIC_SCHOLAR_API_KEY;
+  const apiKey = typeof process !== "undefined" ? process.env.SEMANTIC_SCHOLAR_API_KEY : undefined;
+  if (apiKey) headers["x-api-key"] = apiKey;
   const response = await fetchWithTimeout(fetcher, url, { headers });
   if (!response.ok) throw new Error(`SEMANTICSCHOLAR_HTTP_${response.status}`);
   const payload = await readResponseJson<{ data?: SemanticScholarPaper[] }>(response);

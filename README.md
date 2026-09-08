@@ -71,7 +71,7 @@ Version 1 focuses on arXiv and title/DOI imports, individual and bulk local PDF 
 
 Use **Find metadata** on the add/edit form to look up authors, year, venue, abstract, DOI, and source URL from arXiv, Crossref, OpenAlex, or Semantic Scholar using the current arXiv ID, DOI, or corrected title. For title searches, providers are tried in order: Crossref, OpenAlex, then Semantic Scholar. If the result provides a usable PDF URL, it is downloaded and staged automatically; saving the form commits the staged PDF. If automatic retrieval fails but a web resource is known, **Open web resource** appears beside **Find metadata** so the paper can be located manually. It prefers an arXiv page, then the DOI resolver, then a publisher landing page, over a failed direct PDF URL. PDF retrieval is best-effort, so unavailable PDFs are reported as warnings and can still be uploaded manually.
 
-The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker now has a separate D1/R2 API slice; the full browser application, PDF extraction, analysis execution, backup/restore, and remaining production hardening are separate deployment phases.
+The current runtime is local Node.js with Hono, SQLite, and filesystem PDF storage. The hosted Worker has a separate D1/R2 application with keyword/semantic library search, multi-PDF upload, bulk deletion, paper editing, arXiv/DOI/title import through Crossref, OpenAlex, and Semantic Scholar fallback, Worker-native PDF analysis, hosted settings, summaries/questions, and versioned merge-based backup/restore. Local ZIP64 snapshots remain unchanged; hosted backups store a JSON manifest and protected PDF copies in R2. Hosted merge restores are bounded and resumable; full replace-mode rollback and remaining production hardening are still separate phases.
 
 ## Cloudflare scaffold
 
@@ -86,6 +86,14 @@ provider when its Worker Secret is present; hosted Ollama is intentionally
 rejected until a secured reachable endpoint is supplied. The
 hosted API requires Cloudflare Access when `ACCESS_REQUIRED=true` and verifies
 the Access JWT against the configured team domain and audience.
+
+Hosted Settings provides **Create hosted backup**, which creates a 30-day
+versioned manifest and copies each stored PDF into a protected R2 backup
+namespace. Download the manifest and keep its backup ID. **Restore backup** is
+merge-based: matching paper IDs are updated, missing papers are added, PDFs
+and analysis records are restored, and unrelated current papers are retained.
+The hosted backup format never includes the OpenAI Worker Secret or Cloudflare
+configuration values.
 
 ```bash
 npm run cf:dev       # Run the Worker locally with Wrangler

@@ -175,6 +175,12 @@ export class D1PaperRepository {
     return (await this.findById(id))!;
   }
 
+  async clearPdf(id: string): Promise<PaperRecord> {
+    const result = await this.db.prepare("UPDATE papers SET r2_key = NULL, pdf_sha256 = NULL, updated_at = ? WHERE id = ?").bind(new Date().toISOString(), id).run();
+    if (Number(result.meta?.changes || 0) === 0) throw new Error("PAPER_NOT_FOUND");
+    return (await this.findById(id))!;
+  }
+
   async delete(id: string): Promise<void> {
     await this.deleteMany([id]);
   }

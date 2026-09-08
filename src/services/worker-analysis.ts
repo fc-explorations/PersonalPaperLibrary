@@ -38,7 +38,7 @@ function selectedLlm(env: WorkerAnalysisEnvironment, settings: AiSettings): Sele
   if (settings.provider !== "openai") throw new Error("OLLAMA_HOSTED_UNSUPPORTED");
   if (!env.OPENAI_API_KEY?.trim()) throw new Error("OPENAI_KEY_NOT_CONFIGURED");
   return {
-    client: new OpenAiLlmClient({ openaiApiKey: async () => env.OPENAI_API_KEY, fetcher: fetch }),
+    client: new OpenAiLlmClient({ openaiApiKey: async () => env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) }),
     provider: "openai",
     model: settings.openaiModel,
   };

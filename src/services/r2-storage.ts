@@ -36,9 +36,11 @@ export interface R2StoredPdf {
 }
 
 const PDF_CONTENT_TYPE = "application/pdf";
+const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const STAGING_PREFIX = "staging/";
 const PAPER_PREFIX = "papers/";
 const TRASH_PREFIX = "trash/";
+const BACKUP_PREFIX = "backups/";
 
 async function sha256(bytes: Uint8Array): Promise<string> {
   const copy = new Uint8Array(bytes);
@@ -52,6 +54,10 @@ function assertPaperId(paperId: string): void {
 
 function assertToken(token: string): void {
   if (!/^[a-f0-9-]{36}$/i.test(token)) throw new Error("INVALID_STAGING_TOKEN");
+}
+
+function assertBackupId(backupId: string): void {
+  if (!/^[a-f0-9-]{36}$/i.test(backupId)) throw new Error("INVALID_BACKUP_ID");
 }
 
 function asBytes(buffer: ArrayBuffer): Uint8Array {
@@ -109,6 +115,46 @@ export class R2Storage {
     return this.bucket.get(this.paperKey(paperId));
   }
 
+  async putBackupPdf(backupId: string, paperId: string, bytes: Uint8Array): Promise<R2StoredPdf> {
+    assertBackupId(backupId);
+    assertPaperId(paperId);
+    const key = this.backupPdfKey(backupId, paperId);
+    await this.bucket.put(key, bytes, { httpMetadata: { contentType: PDF_CONTENT_TYPE } });
+    return { key, sha256: await sha256(bytes), sizeBytes: bytes.byteLength };
+  }
+
+  async getBackupPdf(backupId: string, paperId: string): Promise<Uint8Array | null> {
+    assertBackupId(backupId);
+    assertPaperId(paperId);
+    const object = await this.bucket.get(this.backupPdfKey(backupId, paperId));
+    return object ? asBytes(await object.arrayBuffer()) : null;
+  }
+
+  async putBackupManifest(backupId: string, manifest: string): Promise<string> {
+    assertBackupId(backupId);
+    const key = this.backupManifestKey(backupId);
+    await this.bucket.put(key, manifest, { httpMetadata: { contentType: JSON_CONTENT_TYPE } });
+    return key;
+  }
+
+  async getBackupManifest(backupId: string): Promise<string | null> {
+    assertBackupId(backupId);
+    const object = await this.bucket.get(this.backupManifestKey(backupId));
+    return object ? new TextDecoder().decode(await object.arrayBuffer()) : null;
+  }
+
+  async deleteBackup(backupId: string): Promise<void> {
+    assertBackupId(backupId);
+    const keys: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.bucket.list({ prefix: `${BACKUP_PREFIX}${backupId}/`, cursor, limit: 1_000 });
+      keys.push(...page.objects.map((object) => object.key));
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    if (keys.length) await this.bucket.delete(keys);
+  }
+
   async delete(paperId: string): Promise<void> {
     assertPaperId(paperId);
     await this.bucket.delete(this.paperKey(paperId));
@@ -161,5 +207,16 @@ export class R2Storage {
   stagingKey(token: string): string {
     assertToken(token);
     return `${STAGING_PREFIX}${token}.pdf`;
+  }
+
+  backupPdfKey(backupId: string, paperId: string): string {
+    assertBackupId(backupId);
+    assertPaperId(paperId);
+    return `${BACKUP_PREFIX}${backupId}/papers/${paperId}.pdf`;
+  }
+
+  backupManifestKey(backupId: string): string {
+    assertBackupId(backupId);
+    return `${BACKUP_PREFIX}${backupId}/manifest.json`;
   }
 }

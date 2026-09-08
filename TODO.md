@@ -13,7 +13,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a small hosted paper-library UI are deployed at `https://personal-paper-library.xfcosta.workers.dev`; the full browser application and remaining adapters are still pending.
+- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a hosted UI for keyword/semantic library search, multi-PDF upload, paper selection/deletion, detail/edit, settings, arXiv/DOI/title import, PDF viewing, metadata export, summaries, questions, and merge-based backup/restore are deployed at `https://personal-paper-library.xfcosta.workers.dev`; large-library restore hardening and some citation-management features remain pending.
 - Remote migration status: the cloud baseline and `0002_analysis_jobs.sql` have been applied to the remote D1 database after Wrangler authentication and verified with read-only table queries.
 
 ## Non-goals
@@ -66,10 +66,15 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
 - [x] Add an initial Worker API slice for D1 paper/tag operations and R2 PDF staging, reading, and deletion with focused tests.
 - [x] Add an initial hosted UI for search, PDF upload, metadata save, PDF viewing, and deletion.
+- [x] Extend the hosted UI with paper detail/edit, hosted AI settings, arXiv metadata import with PDF staging, summaries, and questions.
+- [x] Extend hosted uploads with multi-PDF selection and add safe bulk paper deletion.
+- [x] Add hosted Ask the library search with D1 indexing, OpenAI embeddings, semantic ranking, and keyword fallback.
+- [x] Extend hosted import to DOI and title lookup with Crossref, OpenAlex, Semantic Scholar fallback, and best-effort PDF staging.
+- [x] Add a hosted metadata JSON export; keep full PDF backup/restore for the versioned archive phase.
 - [ ] Replace `better-sqlite3` repositories with asynchronous D1 repositories and preserve query semantics, ordering, filtering, and pagination.
 - [x] Store PDFs in R2 under stable paper IDs for the hosted API slice; keep only object keys and SHA-256 hashes in D1.
 - [x] Persist hosted AI settings, summaries, custom questions, answer-compatible records, and durable analysis job state in D1.
-- [x] Add Cloudflare Queue dispatch and a fail-safe consumer for hosted analysis jobs; execution remains pending a Worker-compatible PDF extractor and provider path.
+- [x] Add Cloudflare Queue dispatch and a fail-safe consumer for hosted analysis jobs, with Worker-compatible PDF extraction and OpenAI execution.
 - [ ] Add safe handling for missing R2 objects, orphaned D1 rows, duplicate object keys, and failed replacements.
 - [x] Add scripts for `cf:dev`, `cf:deploy`, `cf:migrate`, and `cf:tail`; add preview deployment configuration later.
 - [ ] Add separate local, preview, and production bindings without committing secrets.
@@ -112,7 +117,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Select Cloudflare Queues with D1 job state for hosted analysis dispatch.
 - [x] Implement the Worker-compatible analysis executor so queued jobs reach `complete` or actionable `error` after extraction/provider wiring.
 - [x] Configure the hosted OpenAI Worker Secret.
-- [ ] Run an authenticated live summary/question smoke test.
+- [x] Run an authenticated live summary/question smoke test against the deployed Worker using the first four extracted pages; remove the temporary paper and R2 object afterward.
 - [ ] Extend job state and UI coverage so reloads show `queued`, `running`, `complete`, `stale`, `cancelled`, or `error`.
 - [ ] Preserve bounded digest/chunk parallelism while respecting provider and Worker subrequest limits.
 - [ ] Make progress resumable after transient failures; persist each completed answer immediately.
@@ -122,15 +127,18 @@ These spikes should happen before a large migration. Record the result of each d
 
 ## Phase 6 — Backup, restore, and recovery
 
-- [ ] Replace the local JSON-with-PDF-base64 approach for hosted use; retain local snapshot compatibility.
-- [ ] Define a cloud backup version, including D1 metadata, tags, summaries, questions, answers, hashes, and R2 object manifest.
-- [ ] Keep API keys and Cloudflare secrets out of every backup format.
-- [ ] Choose between a manifest plus R2 object export and a streamed archive; do not load an entire library into Worker memory.
-- [ ] Add authenticated, expiring backup download links.
+- [x] Replace the local JSON-with-PDF-base64 approach for hosted use; retain local snapshot compatibility.
+- [x] Define cloud backup version 1, including D1 metadata, tags, summaries, questions, answers, hashes, and an R2 PDF manifest.
+- [x] Keep API keys and Cloudflare secrets out of every backup format.
+- [x] Use a versioned manifest plus protected R2 PDF copies for hosted backups; keep the local ZIP64 snapshot path unchanged.
+- [x] Add authenticated, expiring backup manifest downloads.
 - [ ] Preserve version-1 and version-2 local backup import compatibility where practical.
-- [ ] Add restore validation, duplicate handling, size limits, hash verification, resumability, and rollback/cleanup behavior.
+- [x] Add restore validation, duplicate handling, paper-count limits, hash verification, idempotent merge semantics, and backup cleanup on creation failure.
+- [x] Add bounded, resumable, idempotent merge batches with restore progress offsets.
+- [ ] Add full replace-mode rollback for destructive restores.
 - [ ] Document what happens when metadata exists but an R2 object is missing, and vice versa.
-- [ ] Complete a restore drill in preview before production.
+- [x] Complete an automated hosted restore drill with PDF hash verification.
+- [ ] Complete a production backup/restore drill and document retention cleanup.
 
 ## Phase 7 — Testing and operations
 

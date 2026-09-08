@@ -118,6 +118,41 @@ describe("Cloudflare Worker API", () => {
     env.d1.db.close();
   });
 
+  it("creates, downloads, and restores a versioned hosted backup", async () => {
+    const env = bindings();
+    const form = new FormData();
+    form.set("file", new File([pdf], "backup.pdf", { type: "application/pdf" }));
+    const upload = await worker.request("/api/uploads", { method: "POST", body: form }, env);
+    const stagingToken = (await upload.json() as { pdf: { stagingToken: string } }).pdf.stagingToken;
+    const create = await worker.request("/api/papers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "backup-paper", title: "Backup paper", authors: ["Grace Hopper"], tags: ["backup"], stagingToken, metadataSource: "manual" }),
+    }, env);
+    expect(create.status).toBe(201);
+
+    const backup = await worker.request("/api/backups", { method: "POST" }, env);
+    expect(backup.status).toBe(201);
+    const backupDetails = await backup.json() as { backupId: string; papers: number; pdfs: number };
+    expect(backupDetails).toMatchObject({ papers: 1, pdfs: 1 });
+
+    const manifestResponse = await worker.request(`/api/backups/${backupDetails.backupId}`, {}, env);
+    expect(manifestResponse.status).toBe(200);
+    expect(manifestResponse.headers.get("content-disposition")).toContain("personal-paper-library-backup-");
+    const manifest = await manifestResponse.json() as { format: string; version: number; papers: Array<{ paper: { title: string }; pdf?: { sha256: string } }> };
+    expect(manifest).toMatchObject({ format: "personal-paper-library-cloud-backup", version: 1 });
+    expect(manifest.papers[0]).toMatchObject({ paper: { title: "Backup paper" }, pdf: { sha256: expect.any(String) } });
+
+    await worker.request("/api/papers/backup-paper", { method: "DELETE" }, env);
+    expect((await worker.request("/api/papers/backup-paper", {}, env)).status).toBe(404);
+    const restore = await worker.request(`/api/backups/${backupDetails.backupId}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "merge" }) }, env);
+    expect(restore.status).toBe(200);
+    expect(await restore.json()).toMatchObject({ ok: true, restoredPapers: 1, restoredPdfs: 1, mode: "merge" });
+    const restoredPdf = await worker.request("/api/papers/backup-paper/pdf", {}, env);
+    expect(new Uint8Array(await restoredPdf.arrayBuffer())).toEqual(pdf);
+    env.d1.db.close();
+  });
+
   it("requires configured Access authentication when enabled", async () => {
     const env = bindings();
     env.ACCESS_REQUIRED = "true";
@@ -126,6 +161,104 @@ describe("Cloudflare Worker API", () => {
     expect((await worker.request("/api/health", {}, env)).status).toBe(200);
     expect((await worker.request("/api/papers", {}, env)).status).toBe(401);
     env.d1.db.close();
+  });
+
+  it("restores hosted backups in resumable merge batches", async () => {
+    const env = bindings();
+    for (const title of ["Batch paper one", "Batch paper two"]) {
+      const response = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, metadataSource: "manual" }) }, env);
+      expect(response.status).toBe(201);
+    }
+    const backup = await worker.request("/api/backups", { method: "POST" }, env);
+    const backupId = (await backup.json() as { backupId: string }).backupId;
+    const papers = await worker.request("/api/papers?q=Batch&limit=10", {}, env);
+    const ids = (await papers.json() as { papers: Array<{ id: string }> }).papers.map((paper) => paper.id);
+    for (const id of ids) await worker.request(`/api/papers/${id}`, { method: "DELETE" }, env);
+
+    const first = await worker.request(`/api/backups/${backupId}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ offset: 0, limit: 1 }) }, env);
+    expect(await first.json()).toMatchObject({ complete: false, offset: 0, nextOffset: 1, restoredPapers: 1 });
+    const second = await worker.request(`/api/backups/${backupId}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ offset: 1, limit: 1 }) }, env);
+    expect(await second.json()).toMatchObject({ complete: true, offset: 1, nextOffset: 2, restoredPapers: 1 });
+    env.d1.db.close();
+  });
+
+  it("exposes hosted bulk upload and deletion controls", async () => {
+    const env = bindings();
+    const response = await worker.request("/", {}, env);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('input name="file" type="file" accept="application/pdf" multiple');
+    expect(html).toContain('id="delete-selected"');
+    env.d1.db.close();
+  });
+
+  it("supports hosted library search with keyword fallback and index coverage", async () => {
+    const env = bindings();
+    const create = await worker.request("/api/papers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Distribution shift evaluation", abstract: "A study of robust evaluation under distribution shift.", tags: ["robustness"], metadataSource: "manual" }),
+    }, env);
+    expect(create.status).toBe(201);
+
+    const coverage = await worker.request("/api/search/coverage", {}, env);
+    expect(coverage.status).toBe(200);
+    expect((await coverage.json() as { coverage: { totalPapers: number; pendingPapers: number } }).coverage).toMatchObject({ totalPapers: 1, pendingPapers: 1 });
+    const search = await worker.request("/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "robust evaluation" }) }, env);
+    expect(search.status).toBe(200);
+    expect(await search.json()).toMatchObject({ hits: [expect.objectContaining({ matchType: "keyword" })], warnings: expect.arrayContaining([expect.stringContaining("Semantic retrieval is unavailable")]) });
+    env.d1.db.close();
+  });
+
+  it("indexes and ranks hosted semantic search with the configured OpenAI embedding path", async () => {
+    const env = bindings();
+    env.OPENAI_API_KEY = "test-key";
+    const create = await worker.request("/api/papers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Embeddings paper", abstract: "A paper about model calibration.", metadataSource: "manual" }),
+    }, env);
+    expect(create.status).toBe(201);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ data: [{ index: 0, embedding: [1, 0, 0] }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const indexed = await worker.request("/api/search/index", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) }, env);
+      expect((await indexed.json() as { coverage: { indexedPapers: number } }).coverage.indexedPapers).toBe(1);
+      const search = await worker.request("/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "unrelated topic" }) }, env);
+      expect((await search.json() as { hits: Array<{ matchType: string }> }).hits[0].matchType).toBe("semantic");
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
+  });
+
+  it("imports hosted DOI and title metadata with provider fallback and PDF staging", async () => {
+    const env = bindings();
+    const doiWork = {
+      title: ["Hosted DOI Paper"],
+      author: [{ given: "Ada", family: "Lovelace" }],
+      DOI: "10.1000/hosted",
+      URL: "https://doi.org/10.1000/hosted",
+      link: [{ URL: "https://publisher.example/hosted.pdf", type: "application/pdf" }],
+      published: { "date-parts": [[2024]] },
+    };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org/works/10.1000%2Fhosted")) return new Response(JSON.stringify({ message: doiWork }), { status: 200 });
+      if (url.includes("api.crossref.org/works?query.title=")) return new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+      if (url.includes("api.openalex.org")) return new Response(JSON.stringify({ results: [{ title: "Hosted title fallback", publication_year: 2023, authorships: [{ author: { display_name: "Grace Hopper" } }], ids: {}, primary_location: { landing_page_url: "https://example.org/fallback" } }] }), { status: 200 });
+      return new Response("%PDF-1.7\nhosted", { status: 200 });
+    });
+    try {
+      const doi = await worker.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "10.1000/hosted" }) }, env);
+      expect(doi.status).toBe(200);
+      expect(await doi.json()).toMatchObject({ paper: { title: "Hosted DOI Paper", doi: "10.1000/hosted" }, pdf: { status: "staged" } });
+      const title = await worker.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "Hosted title fallback" }) }, env);
+      expect(title.status).toBe(200);
+      expect(await title.json()).toMatchObject({ paper: { title: "Hosted title fallback", authors: ["Grace Hopper"] }, pdf: { status: "not_found" } });
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
   });
 
   it("persists hosted AI settings and custom questions without enabling generation", async () => {

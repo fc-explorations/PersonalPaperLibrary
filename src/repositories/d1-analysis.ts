@@ -89,8 +89,8 @@ export class D1AnalysisRepository {
     await batch(this.db, statements);
   }
 
-  async listQuestions(paperId: string, includeInactive = false): Promise<StoredQuestion[]> {
-    await this.ensureQuestions(paperId);
+  async listQuestions(paperId: string, includeInactive = false, syncCatalog = true): Promise<StoredQuestion[]> {
+    if (syncCatalog) await this.ensureQuestions(paperId);
     const rows = await all<D1Row>(this.db, "SELECT q.*, a.content AS answer_content, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id WHERE q.paper_id = ? AND (? = 1 OR q.is_active = 1) ORDER BY q.question_order, q.created_at", paperId, includeInactive ? 1 : 0);
     return rows.map((row) => {
       const questionDefinitionHash = optional(row.answer_question_definition_hash);

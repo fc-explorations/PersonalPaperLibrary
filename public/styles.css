@@ -11,12 +11,27 @@ a { color: var(--accent); }
 .cloud-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: .9rem; font-weight: 700; }
 .cloud-form-grid input { min-width: 0; color: var(--text); font-weight: 400; }
 .cloud-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.paper-select { display: inline-block; margin: 0 8px 0 0; }
+.paper-select input { width: auto; }
 .analysis-result { max-width: 78ch; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--section-surface); }
 .analysis-result strong { display: block; margin-bottom: 6px; color: var(--accent); }
 .analysis-result pre { margin: 0; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.55; }
+.paper-detail-page .page-heading { padding-top: 22px; }
+.paper-detail-page .page-heading h1 { overflow-wrap: anywhere; }
+.paper-detail-page .panel + .panel { margin-top: 22px; }
+.hosted-index-panel { margin-top: 22px; }
+.hosted-ask-results { display: grid; gap: 14px; margin-top: 22px; }
+.hosted-ask-result { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--section-surface); }
+.hosted-ask-result h2 { margin: 0 0 5px; font-size: 1.08rem; }
+.hosted-ask-result h2 a { color: var(--text); }
+.hosted-ask-result p { margin: 7px 0 0; }
+.hosted-search-warning { color: var(--muted); }
 @media (max-width: 720px) { .cloud-form-grid { grid-template-columns: 1fr; } }
 .site-header { background: transparent; }
 .site-header .shell { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.cloud-nav { display: flex; align-items: center; gap: 16px; font-weight: 700; }
+.cloud-nav a { color: var(--muted); text-decoration: none; }
+.cloud-nav a:hover { color: var(--accent); }
 .site-header .brand { font-size: clamp(2rem, 5vw, 3.3rem); line-height: 1.15; }
 .site-header .wordmark-paper { -webkit-text-stroke-width: 4px; }
 .brand { color: var(--text); font-weight: 700; letter-spacing: -.02em; text-decoration: none; }

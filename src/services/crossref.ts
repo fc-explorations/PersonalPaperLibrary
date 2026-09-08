@@ -73,7 +73,7 @@ function mapWork(work: CrossrefWork): PaperMetadata {
 }
 
 async function requestCrossref(url: string, fetcher: typeof fetch): Promise<CrossrefWork | CrossrefWork[]> {
-  const mailto = process.env.CROSSREF_MAILTO;
+  const mailto = typeof process !== "undefined" ? process.env.CROSSREF_MAILTO : undefined;
   const target = new URL(url);
   if (mailto) target.searchParams.set("mailto", mailto);
   const response = await fetchWithTimeout(fetcher, target, { headers: { "User-Agent": "PersonalPaperLibrary/1.0" } });
