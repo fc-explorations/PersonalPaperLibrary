@@ -296,6 +296,8 @@ select { width: auto; min-width: 150px; }
 .field-with-action .button { flex: 0 0 auto; }
 .field-with-action .button { gap: 6px; }
 .form-utility-button { width: 140px; min-width: 140px; }
+form[data-import-form] .inline-form > .button, #import-form .inline-form > .button { width: 140px; min-width: 140px; }
+@media (max-width: 720px) { form[data-import-form] .inline-form > .button, #import-form .inline-form > .button { align-self: flex-end; } }
 .tag-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; }
 .tag-field > label { grid-column: 1; }
 .tag-field > [data-suggest-tags] { grid-column: 2; grid-row: 1; }

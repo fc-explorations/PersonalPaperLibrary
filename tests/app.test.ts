@@ -311,6 +311,7 @@ describe("HTTP application", () => {
     const context = testApp();
     const archive = createZip([
       { name: "papers/first_paper.pdf", data: pdf },
+      { name: "papers/nested/second_paper.pdf", data: new TextEncoder().encode("%PDF-1.7\\nsecond paper") },
       { name: "papers/notes.txt", data: new TextEncoder().encode("ignore this") },
     ]);
     const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
@@ -319,8 +320,10 @@ describe("HTTP application", () => {
     const response = await context.app.request("/api/bulk-upload", { method: "POST", body: form });
     expect(response.status).toBe(200);
     const result = await response.json();
-    expect(result.imported).toHaveLength(1);
+    expect(result.imported).toHaveLength(2);
     expect(result.imported[0].filename).toBe("papers/first_paper.pdf");
+    expect(result.imported[0].tags).toEqual(["papers"]);
+    expect(result.imported[1]).toMatchObject({ filename: "papers/nested/second_paper.pdf", tags: ["nested"] });
     expect(result.failed).toEqual([]);
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });

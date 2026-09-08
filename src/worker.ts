@@ -133,6 +133,11 @@ function folderTagFromInput(value: unknown): string | undefined {
   return clean ? parseTags(clean).at(0)?.slice(0, 100) : undefined;
 }
 
+function enclosingFolderFromPath(value: string): string | undefined {
+  const parts = value.split(/[\\/]/).filter(Boolean);
+  return parts.length > 1 ? parts.at(-2) : undefined;
+}
+
 function booleanInput(value: unknown, fallback: boolean): boolean {
   if (typeof value !== "string") return fallback;
   if (/^(false|0|off|no)$/i.test(value.trim())) return false;
@@ -914,9 +919,10 @@ app.post("/api/abstract/extract", async (c) => {
 });
 
 app.post("/api/bulk-upload", async (c) => {
-  const imported: Array<{ id: string; title: string; filename: string }> = [];
+  const imported: Array<{ id: string; title: string; filename: string; tags: string[] }> = [];
   const skipped: Array<{ filename: string; reason: string; existingId?: string }> = [];
   const failed: Array<{ filename: string; reason: string }> = [];
+  const folderTags = new Set<string>();
   const pending: Array<{ file: WorkerZipFile; draft: PaperDraftInput; id: string; staged: { token: string; sha256: string }; promoted?: { key: string; sha256: string } }> = [];
   try {
     const form = await c.req.raw.formData();
@@ -946,6 +952,8 @@ app.post("/api/bulk-upload", async (c) => {
     for (const file of files) {
       let stagingToken = "";
       try {
+        const fileTag = useFolderAsTag ? folderTagFromInput(enclosingFolderFromPath(file.name || "") || folderTag) : undefined;
+        if (fileTag) folderTags.add(fileTag);
         validatePdf(file.bytes, file.name || "paper.pdf", configuredPdfLimit(c.env.MAX_PDF_BYTES));
         const title = titleFromFilename(file.name || "paper.pdf");
         const embeddedArxivId = await extractHostedArxivId(c.env, { arrayBuffer: async () => file.bytes.slice().buffer as ArrayBuffer });
@@ -956,7 +964,7 @@ app.post("/api/bulk-upload", async (c) => {
           arxivUrl: embeddedArxivId ? `https://arxiv.org/abs/${embeddedArxivId}` : undefined,
           sourceUrl: embeddedArxivId ? `https://arxiv.org/abs/${embeddedArxivId}` : undefined,
           metadataSource: embeddedArxivId ? "mixed" : "manual",
-          tags: folderTag ? [folderTag] : [],
+          tags: fileTag ? [fileTag] : [],
         };
         const staged = await storage.stage(file.bytes);
         stagingToken = staged.token;
@@ -987,8 +995,8 @@ app.post("/api/bulk-upload", async (c) => {
       }
     }
     await repo.insertMany(toInsert.map(({ pending: item }) => ({ input: { ...item.draft, id: item.id }, file: item.promoted })));
-    for (const { pending: item, title } of toInsert) imported.push({ id: item.id, title, filename: item.file.name });
-    return c.json({ imported, skipped, failed, folderTag, discovered: files.length, processed: imported.length + skipped.length + failed.length });
+    for (const { pending: item, title } of toInsert) imported.push({ id: item.id, title, filename: item.file.name, tags: item.draft.tags || [] });
+    return c.json({ imported, skipped, failed, folderTag, folderTags: [...folderTags], discovered: files.length, processed: imported.length + skipped.length + failed.length });
   } catch (error) {
     const code = errorMessage(error);
     if (isD1DailyLimitError(code)) {

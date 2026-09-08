@@ -703,13 +703,17 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
     const archiveTag = zipFiles[0]?.name.replace(/\.zip$/i, "") || "";
     const useFolderAsTag = form.querySelector("[data-folder-tag-toggle]");
     const imported = [], skipped = [], failed = [];
+    const appliedFolderTags = new Set();
     const startedAt = performance.now();
     const formatEta = (milliseconds) => { const seconds = Math.max(1, Math.ceil(milliseconds / 1000)); if (seconds < 60) return `${seconds}s`; const minutes = Math.floor(seconds / 60); const remaining = seconds % 60; return `${minutes}m${remaining ? ` ${remaining}s` : ""}`; };
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       const formData = new FormData();
-      formData.append("files", file, file.name);
-      formData.set("folderTag", folderTag || archiveTag);
+      const filePath = file.webkitRelativePath || file.name;
+      const pathParts = filePath.split(/[\\/]/).filter(Boolean);
+      const immediateFolder = source === "folder" && pathParts.length > 1 ? pathParts[pathParts.length - 2] : "";
+      formData.append("files", file, filePath);
+      formData.set("folderTag", immediateFolder || folderTag || archiveTag);
       formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
       try {
         const body = isZip
@@ -726,6 +730,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
           })
           : await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
         imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
+        (body.folderTags || (body.folderTag ? [body.folderTag] : [])).forEach((tag) => appliedFolderTags.add(tag));
         if (isZip) setStatus(form, `Loaded ${body.discovered ?? imported.length} PDFs from ZIP; preparing metadata…`);
       } catch (error) {
         failed.push({ filename: file.name, reason: clientErrorMessage(error) });
@@ -744,7 +749,8 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
     const metadata = imported.length
       ? await runLocalMetadataBatch(imported.map((item) => item.id), { statusElement: form.querySelector(".form-status"), progress })
       : { succeeded: 0, failed: 0 };
-    setStatus(form, `Imported ${imported.length}; metadata found for ${metadata.succeeded}; skipped ${skipped.length}; failed ${failed.length + metadata.failed}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
+    const tagSummary = [...appliedFolderTags].join("\", \"");
+    setStatus(form, `Imported ${imported.length}; metadata found for ${metadata.succeeded}; skipped ${skipped.length}; failed ${failed.length + metadata.failed}${tagSummary ? `; tagged as “${tagSummary}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
     results.innerHTML = [...imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
   } catch (error) {

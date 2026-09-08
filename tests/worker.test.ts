@@ -240,9 +240,11 @@ describe("Cloudflare Worker API", () => {
     form.append("useFolderAsTag", "true");
     const response = await worker.request("/api/bulk-upload", { method: "POST", body: form }, env);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ imported: [{ filename: "folder-paper.pdf" }, { filename: "papers/zipped-paper.pdf" }], skipped: [], failed: [], folderTag: "hosted imports" });
+    expect(await response.json()).toMatchObject({ imported: [{ filename: "folder-paper.pdf", tags: ["hosted imports"] }, { filename: "papers/zipped-paper.pdf", tags: ["papers"] }], skipped: [], failed: [], folderTag: "hosted imports" });
     const papers = await worker.request("/api/papers?tag=hosted%20imports&limit=10", {}, env);
-    expect((await papers.json() as { papers: Array<{ tags: string[] }> }).papers).toHaveLength(2);
+    expect((await papers.json() as { papers: Array<{ tags: string[] }> }).papers).toHaveLength(1);
+    const nestedPapers = await worker.request("/api/papers?tag=papers&limit=10", {}, env);
+    expect((await nestedPapers.json() as { papers: Array<{ tags: string[] }> }).papers).toHaveLength(1);
     env.d1.db.close();
   });
 

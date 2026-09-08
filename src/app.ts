@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamText } from "hono/streaming";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -64,6 +65,20 @@ const LIBRARY_PAGE_SIZE = 50;
 const LIBRARY_PAGE_SIZES = [10, 25, 50, 100] as const;
 const SUMMARY_CHUNK_CONCURRENCY = 4;
 const SUMMARY_OPENAI_MODEL = "gpt-4.1-mini";
+
+type LookupProgressEvent = { phase: "sources" | "enrichment" | "pdf"; current: number; total: number; source?: string; message: string };
+type LookupProgressReporter = (event: LookupProgressEvent) => Promise<void> | void;
+
+function progressStream(c: Context, operation: (report: LookupProgressReporter) => Promise<Response>): Response {
+  return streamText(c, async (stream) => {
+    const report: LookupProgressReporter = (event) => stream.write(`${JSON.stringify({ type: "progress", ...event })}\n`);
+    const response = await operation(report);
+    const body = await response.json().catch(() => ({}));
+    await stream.write(`${JSON.stringify({ type: "result", ok: response.ok, status: response.status, body })}\n`);
+  }, async (error, stream) => {
+    await stream.write(`${JSON.stringify({ type: "result", ok: false, status: 502, body: { error: { message: error instanceof Error ? error.message : "Request failed" } } })}\n`);
+  });
+}
 
 function jsonError(c: Context, status: number, code: string, message: string) {
   return c.json({ error: { code, message } }, status as ContentfulStatusCode);
@@ -154,6 +169,11 @@ function folderTagFromInput(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const clean = value.replace(/[\r\n,]+/g, " ").replace(/\s+/g, " ").trim();
   return clean ? normalizeTagName(clean).slice(0, 100) : undefined;
+}
+
+function enclosingFolderFromPath(value: string): string | undefined {
+  const parts = value.split(/[\\/]/).filter(Boolean);
+  return parts.length > 1 ? parts.at(-2) : undefined;
 }
 
 function booleanInput(value: unknown, fallback: boolean): boolean {
@@ -939,9 +959,10 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.post("/api/bulk-upload", async (c) => {
-    const imported: Array<{ id: string; title: string; filename: string; warning?: string }> = [];
+    const imported: Array<{ id: string; title: string; filename: string; tags: string[]; warning?: string }> = [];
     const skipped: Array<{ filename: string; reason: string; existingId?: string }> = [];
     const failed: Array<{ filename: string; reason: string }> = [];
+    const folderTags = new Set<string>();
     try {
       const body = await c.req.parseBody({ all: true }) as Record<string, unknown>;
       const useFolderAsTag = booleanInput(body.useFolderAsTag, true);
@@ -964,6 +985,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (files.reduce((total, file) => total + file.size, 0) > maxRequestBytes) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The folder exceeds the configured request limit.");
       for (const file of files) {
         try {
+          const fileTag = useFolderAsTag ? folderTagFromInput(enclosingFolderFromPath(file.name || "") || folderTag) : undefined;
+          if (fileTag) folderTags.add(fileTag);
           const bytes = new Uint8Array(await file.arrayBuffer());
           validatePdf(bytes, file.name || "paper.pdf", maxPdfBytes);
           const title = titleFromFilename(file.name || "paper.pdf");
@@ -996,7 +1019,7 @@ export function createApp(dependencies: AppDependencies = {}) {
             arxivUrl: arxivMetadata?.arxivUrl,
             sourceUrl: arxivMetadata?.sourceUrl || (extracted.arxivId ? `https://arxiv.org/abs/${extracted.arxivId}` : undefined),
             metadataSource: arxivMetadata ? "arxiv" : "mixed",
-            tags: folderTag ? [folderTag] : [],
+            tags: fileTag ? [fileTag] : [],
           };
           const duplicate = repo.findDuplicate(draft, staged.sha256);
           if (duplicate) {
@@ -1008,7 +1031,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           const promoted = await storage.promoteStagedFile(staged.token, id);
           try {
             repo.create({ ...draft, id }, promoted);
-            imported.push({ id, title, filename: file.name, warning: extracted.warning });
+            imported.push({ id, title, filename: file.name, tags: fileTag ? [fileTag] : [], warning: extracted.warning });
           } catch (error) {
             await storage.delete(id);
             throw error;
@@ -1017,7 +1040,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           failed.push({ filename: file.name || "unknown file", reason: errorMessage(error) });
         }
       }
-      return c.json({ imported, skipped, failed, folderTag, discovered: files.length, processed: imported.length + skipped.length + failed.length });
+      return c.json({ imported, skipped, failed, folderTag, folderTags: [...folderTags], discovered: files.length, processed: imported.length + skipped.length + failed.length });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), "The folder could not be imported.");
     }
