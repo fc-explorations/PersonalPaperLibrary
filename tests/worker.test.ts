@@ -328,6 +328,55 @@ describe("Cloudflare Worker API", () => {
     }
   });
 
+  it("retries missing metadata after a PDF is staged", async () => {
+    const env = bindings();
+    const form = new FormData();
+    form.set("file", new File([pdf], "lstm.pdf", { type: "application/pdf" }));
+    const upload = await worker.request("/api/uploads", { method: "POST", body: form }, env);
+    const stagingToken = (await upload.json() as { pdf: { stagingToken: string } }).pdf.stagingToken;
+    let openAlexCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("arxiv.org/search")) return new Response("not found", { status: 404 });
+      if (url.includes("api.crossref.org/works?query.title=")) return new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+      if (url.includes("api.openalex.org")) {
+        openAlexCalls += 1;
+        if (openAlexCalls < 3) return new Response("temporary failure", { status: 503 });
+        return new Response(JSON.stringify({
+          results: [{
+            title: "Long Short-Term Memory",
+            publication_year: 1997,
+            publication_date: "1997-11-01",
+            authorships: [{ author: { display_name: "Sepp Hochreiter" } }, { author: { display_name: "Jürgen Schmidhuber" } }],
+            abstract_inverted_index: { Learning: [0], "long-term": [1], memory: [2] },
+            ids: { doi: "https://doi.org/10.1162/neco.1997.9.8.1735" },
+            primary_location: { landing_page_url: "https://doi.org/10.1162/neco.1997.9.8.1735" },
+          }],
+        }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      const response = await worker.request("/api/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: "Long Short-Term Memory", stagingToken }),
+      }, env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        paper: {
+          authors: ["Sepp Hochreiter", "Jürgen Schmidhuber"],
+          year: 1997,
+          doi: "10.1162/neco.1997.9.8.1735",
+        },
+      });
+      expect(openAlexCalls).toBe(3);
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
+  });
+
   it("parses hosted pasted citations before looking up metadata", async () => {
     const env = bindings();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

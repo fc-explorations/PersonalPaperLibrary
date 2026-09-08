@@ -166,11 +166,31 @@ async function extractHostedAbstract(env: CloudflareBindings, source: { arrayBuf
 }
 
 async function fillHostedMetadataAbstract(metadata: PaperMetadata, title: string, fetcher: typeof fetch): Promise<PaperMetadata> {
-  if (metadata.abstract?.trim() || !title.trim()) return metadata;
+  if (metadata.abstract?.trim() && metadata.authors.length && metadata.year) return metadata;
   for (const lookup of [() => lookupOpenAlex(title, fetcher), () => lookupSemanticScholar(title, fetcher)]) {
     try {
       const alternate = await lookup();
-      if (alternate.abstract?.trim()) return { ...metadata, abstract: alternate.abstract };
+      const merged = {
+        ...metadata,
+        title: metadata.title || alternate.title,
+        authors: metadata.authors.length ? metadata.authors : alternate.authors,
+        abstract: metadata.abstract?.trim() ? metadata.abstract : alternate.abstract,
+        publishedDate: metadata.publishedDate || alternate.publishedDate,
+        updatedDate: metadata.updatedDate || alternate.updatedDate,
+        year: metadata.year ?? alternate.year,
+        primaryCategory: metadata.primaryCategory || alternate.primaryCategory,
+        categories: metadata.categories.length ? metadata.categories : alternate.categories,
+        journalRef: metadata.journalRef || alternate.journalRef,
+        acceptedVenue: metadata.acceptedVenue || alternate.acceptedVenue,
+        doi: metadata.doi || alternate.doi,
+        sourceUrl: metadata.sourceUrl || alternate.sourceUrl,
+        pdfUrl: metadata.pdfUrl || alternate.pdfUrl,
+        arxivId: metadata.arxivId || alternate.arxivId,
+        arxivBaseId: metadata.arxivBaseId || alternate.arxivBaseId,
+        arxivUrl: metadata.arxivUrl || alternate.arxivUrl,
+        metadataSource: metadata.metadataSource === "manual" ? alternate.metadataSource : metadata.metadataSource,
+      };
+      if (merged.abstract?.trim() || merged.authors.length || merged.year) return merged;
     } catch {
       // Continue to the next provider; PDF extraction is attempted after staging.
     }
@@ -454,6 +474,11 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
       pdf = { status: code === "PDF_TOO_LARGE" ? "too_large" : "not_found" };
       warnings.push(code === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
     }
+    // A title-only fallback can happen when a provider is temporarily
+    // unavailable. Retry metadata enrichment after the PDF has been staged;
+    // the abstract may come from the PDF, but the remaining fields should
+    // still be recovered from the metadata providers when they return.
+    metadata = await fillHostedMetadataAbstract(metadata, metadata.title || input, fetcher);
     if (!metadata.abstract?.trim()) {
       const source = pdf.status === "staged"
         ? await storage.getStagedFile(pdf.stagingToken as string)

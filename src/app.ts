@@ -352,7 +352,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   }
 
   async function fillMissingMetadataAbstract(metadata: PaperMetadata, title: string, parsedCitation?: ParsedCitationInput, pdfPath?: string): Promise<PaperMetadata> {
-    if (!metadata.abstract?.trim()) {
+    if (!metadata.abstract?.trim() || !metadata.authors.length || !metadata.year || !metadata.doi) {
       const alternateLookups = [
         () => lookupOpenAlex(title, fetcher),
         () => lookupSemanticScholar(title, fetcher),
@@ -361,10 +361,27 @@ export function createApp(dependencies: AppDependencies = {}) {
         try {
           const alternate = await lookup();
           if (parsedCitation) verifyCitationMatch(alternate, parsedCitation);
-          if (alternate.abstract?.trim()) {
-            metadata = { ...metadata, abstract: alternate.abstract };
-            break;
-          }
+          metadata = {
+            ...metadata,
+            title: metadata.title || alternate.title,
+            authors: metadata.authors.length ? metadata.authors : alternate.authors,
+            abstract: metadata.abstract?.trim() ? metadata.abstract : alternate.abstract,
+            publishedDate: metadata.publishedDate || alternate.publishedDate,
+            updatedDate: metadata.updatedDate || alternate.updatedDate,
+            year: metadata.year ?? alternate.year,
+            primaryCategory: metadata.primaryCategory || alternate.primaryCategory,
+            categories: metadata.categories.length ? metadata.categories : alternate.categories,
+            journalRef: metadata.journalRef || alternate.journalRef,
+            acceptedVenue: metadata.acceptedVenue || alternate.acceptedVenue,
+            doi: metadata.doi || alternate.doi,
+            sourceUrl: metadata.sourceUrl || alternate.sourceUrl,
+            pdfUrl: metadata.pdfUrl || alternate.pdfUrl,
+            arxivId: metadata.arxivId || alternate.arxivId,
+            arxivBaseId: metadata.arxivBaseId || alternate.arxivBaseId,
+            arxivUrl: metadata.arxivUrl || alternate.arxivUrl,
+            metadataSource: metadata.metadataSource === "manual" ? alternate.metadataSource : metadata.metadataSource,
+          };
+          if (metadata.abstract?.trim()) break;
         } catch {
           // Try the next metadata provider, then the stored PDF if available.
         }
