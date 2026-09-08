@@ -797,6 +797,42 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   }
 }));
 
+document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.addEventListener("click", async () => {
+  const panel = button.closest(".bibtex-import");
+  const form = button.closest("[data-paper-form]");
+  const input = panel?.querySelector("[data-bibtex-import]");
+  const status = panel?.querySelector("[data-bibtex-status]");
+  if (!form || !input || !status) return;
+  if (!input.value.trim()) { status.textContent = "Paste a BibTeX entry first."; status.classList.add("status-error"); return; }
+  button.disabled = true;
+  status.classList.remove("status-error");
+  status.textContent = "Parsing BibTeX…";
+  try {
+    const result = await jsonRequest("/api/metadata/bibtex", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bibtex: input.value }) });
+    const metadata = result.metadata || {};
+    if (metadata.title) setValue(form, "title", metadata.title);
+    if (metadata.authors?.length) setValue(form, "authors", metadata.authors.join("\n"));
+    if (metadata.year) setValue(form, "year", metadata.year);
+    if (metadata.publishedDate) setValue(form, "publishedDate", metadata.publishedDate);
+    if (metadata.abstract) setValue(form, "abstract", metadata.abstract);
+    if (metadata.primaryCategory) setValue(form, "primaryCategory", metadata.primaryCategory);
+    if (metadata.categories?.length) setValue(form, "categories", metadata.categories.join(", "));
+    if (metadata.journalRef) setValue(form, "journalRef", metadata.journalRef);
+    if (metadata.acceptedVenue) setValue(form, "acceptedVenue", metadata.acceptedVenue);
+    if (metadata.doi) setValue(form, "doi", metadata.doi);
+    if (metadata.arxivId) setValue(form, "arxivId", metadata.arxivId);
+    if (metadata.sourceUrl || metadata.arxivUrl) setValue(form, "sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
+    updateWebResource(form, metadata);
+    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: "BibTeX imported and saved." });
+    else status.textContent = "BibTeX imported. Review the fields, then save.";
+  } catch (error) {
+    status.textContent = clientErrorMessage(error);
+    status.classList.add("status-error");
+  } finally {
+    button.disabled = false;
+  }
+}));
+
 document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.addEventListener("click", async () => {
   const form = button.closest("[data-paper-form]");
   if (!form) return;

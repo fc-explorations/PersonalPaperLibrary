@@ -315,6 +315,12 @@ select { width: auto; min-width: 150px; }
 .form-actions .form-status { width: 100%; text-align: center; }
 .form-status { height: 1.4em; min-height: 1.4em; overflow: visible; color: var(--accent); font-size: .9rem; }
 .paper-form > .form-actions { margin-top: 0; margin-bottom: 22px; }
+.bibtex-import { margin: 0 0 22px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.bibtex-import > summary { cursor: pointer; color: var(--section-color); font-weight: 700; }
+.bibtex-import-body { display: grid; gap: 10px; padding-top: 14px; }
+.bibtex-import textarea { min-height: 130px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .88rem; line-height: 1.45; }
+.bibtex-import-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bibtex-import-actions .form-status { margin: 0; }
 .edit-actions-top .form-actions { position: relative; }
 .edit-actions-top .form-actions .form-status { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: min(70vw, 520px); text-align: right; }
 .status-error, .result-error { color: #9d493a; }

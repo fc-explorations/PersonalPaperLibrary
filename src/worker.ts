@@ -12,6 +12,7 @@ import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
+import { parseBibtex } from "./services/bibtex.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupManifest } from "./services/cloud-backup.js";
 import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
@@ -92,7 +93,7 @@ function hostedShell(title: string, page: string, body: string): string {
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
     .replace(/styles\.css\?v=33/g, "styles.css?v=39")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=18")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=19")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -535,6 +536,16 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
 
 app.post("/api/import", hostedImport);
 app.post("/api/import/arxiv", hostedImport);
+
+app.post("/api/metadata/bibtex", async (c) => {
+  try {
+    const body = await c.req.json<{ bibtex?: string }>();
+    if (typeof body.bibtex !== "string" || !body.bibtex.trim()) return jsonError(c, 400, "BIBTEX_REQUIRED", "Paste a BibTeX entry first.");
+    return c.json({ metadata: parseBibtex(body.bibtex) });
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The BibTeX entry could not be parsed.");
+  }
+});
 
 app.get("/api/export/metadata", async (c) => {
   const papers = [];

@@ -477,6 +477,26 @@ function applyHostedMetadata(form, data) {
   if (sourceUrl) { sourceUrl.hidden = !/^https?:\/\//i.test(source); if (!sourceUrl.hidden) sourceUrl.href = source; }
 }
 
+function applyHostedBibtex(form, metadata) {
+  if (!form) return;
+  const setIfPresent = (name, value) => { const input = form.elements.namedItem(name); if (input && value) input.value = value; };
+  setIfPresent("title", metadata.title);
+  if (metadata.authors?.length) setIfPresent("authors", metadata.authors.join("\n"));
+  setIfPresent("year", metadata.year);
+  setIfPresent("publishedDate", metadata.publishedDate);
+  setIfPresent("abstract", metadata.abstract);
+  setIfPresent("primaryCategory", metadata.primaryCategory);
+  if (metadata.categories?.length) setIfPresent("categories", metadata.categories.join(", "));
+  setIfPresent("journalRef", metadata.journalRef);
+  setIfPresent("acceptedVenue", metadata.acceptedVenue);
+  setIfPresent("doi", metadata.doi);
+  setIfPresent("arxivId", metadata.arxivId);
+  setIfPresent("sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
+  const sourceUrl = form.querySelector("[data-source-url-go]");
+  const source = metadata.sourceUrl || metadata.arxivUrl || (metadata.doi ? `https://doi.org/${encodeURIComponent(metadata.doi)}` : "");
+  if (sourceUrl) { sourceUrl.hidden = !/^https?:\/\//i.test(source); if (!sourceUrl.hidden) sourceUrl.href = source; }
+}
+
 function renderHostedPreview(data) {
   const preview = document.querySelector("#import-preview");
   if (!preview) return;
@@ -571,6 +591,29 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     }
   } catch (error) {
     setStatus(status, error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}));
+
+document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.addEventListener("click", async () => {
+  const panel = button.closest(".bibtex-import");
+  const form = button.closest("[data-paper-form]");
+  const input = panel?.querySelector("[data-bibtex-import]");
+  const status = panel?.querySelector("[data-bibtex-status]");
+  if (!form || !input || !status) return;
+  if (!input.value.trim()) { status.textContent = "Paste a BibTeX entry first."; status.classList.add("status-error"); return; }
+  button.disabled = true;
+  status.classList.remove("status-error");
+  status.textContent = "Parsing BibTeX…";
+  try {
+    const result = await request("/api/metadata/bibtex", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bibtex: input.value }) });
+    applyHostedBibtex(form, result.metadata || {});
+    if (form.dataset.paperId) await saveHostedPaperForm(form, { statusMessage: "BibTeX imported and saved." });
+    else status.textContent = "BibTeX imported. Review the fields, then save.";
+  } catch (error) {
+    status.textContent = error.message;
+    status.classList.add("status-error");
   } finally {
     button.disabled = false;
   }

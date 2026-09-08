@@ -137,7 +137,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-  <script src="/app.js?v=34" defer></script>
+  <script src="/app.js?v=35" defer></script>
 </body>
 </html>`;
 }
@@ -460,6 +460,10 @@ function abstractField(value: unknown): string {
   return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract>${analysisIcon()}<span>From PDF</span></button></div></label>`;
 }
 
+function bibtexImportField(): string {
+  return `<details class="bibtex-import"><summary>Import from BibTeX</summary><div class="bibtex-import-body"><textarea data-bibtex-import rows="7" placeholder="Paste one BibTeX entry here"></textarea><div class="bibtex-import-actions"><button class="button button-secondary button-small" type="button" data-import-bibtex>${searchIcon()}<span>Use BibTeX</span></button><span class="form-status" data-bibtex-status role="status"></span></div></div></details>`;
+}
+
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
   const saveButton = isEdit ? "" : `<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>Save paper</span></button>`;
   return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
@@ -488,6 +492,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <input type="hidden" name="stagingToken" value="">
     ${actionsOutside ? "" : actions}
+    ${bibtexImportField()}
     <div class="form-grid">${fields}</div>
   </form>`;
 }

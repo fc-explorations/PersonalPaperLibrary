@@ -32,6 +32,7 @@ import { createZipStream, extractPdfFiles, type ExtractedZipFile } from "./servi
 import { createSnapshotArchive, receiveSnapshotUpload, stageSnapshotRestore } from "./services/snapshot.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
+import { parseBibtex } from "./services/bibtex.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
@@ -847,6 +848,16 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");
+    }
+  });
+
+  app.post("/api/metadata/bibtex", async (c) => {
+    try {
+      const body = await c.req.json<{ bibtex?: string }>();
+      if (typeof body.bibtex !== "string" || !body.bibtex.trim()) return jsonError(c, 400, "BIBTEX_REQUIRED", "Paste a BibTeX entry first.");
+      return c.json({ metadata: parseBibtex(body.bibtex) });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The BibTeX entry could not be parsed.");
     }
   });
 
