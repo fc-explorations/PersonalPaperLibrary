@@ -48,6 +48,78 @@ function createOperationProgress(anchor) {
   return progress;
 }
 
+function operationEta(durations, remaining) {
+  if (!remaining || !durations.length) return "";
+  const average = durations.reduce((sum, value) => sum + value, 0) / durations.length;
+  const seconds = Math.max(1, Math.ceil((average * remaining) / 1000));
+  return seconds < 60 ? ` ETA ~${seconds}s remaining` : ` ETA ~${Math.floor(seconds / 60)}m${seconds % 60 ? ` ${seconds % 60}s` : ""} remaining`;
+}
+
+async function enrichHostedPaperMetadata(current) {
+  const paper = (await request(`/api/papers/${encodeURIComponent(current.id)}`)).paper;
+  const input = paper.arxivId || paper.doi || paper.title;
+  const lookup = await request("/api/import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input, paperId: paper.id }),
+  });
+  const metadata = lookup.paper || {};
+  await request(`/api/papers/${encodeURIComponent(paper.id)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: metadata.title || paper.title,
+      authors: metadata.authors?.length ? metadata.authors : paper.authors || [],
+      year: metadata.year || paper.year,
+      publishedDate: metadata.publishedDate || paper.publishedDate,
+      abstract: metadata.abstract || paper.abstract,
+      primaryCategory: metadata.primaryCategory || paper.primaryCategory,
+      categories: metadata.categories?.length ? metadata.categories : paper.categories || [],
+      journalRef: metadata.journalRef || paper.journalRef,
+      acceptedVenue: metadata.acceptedVenue || paper.acceptedVenue,
+      doi: metadata.doi || paper.doi,
+      arxivId: metadata.arxivId || paper.arxivId,
+      arxivUrl: metadata.arxivUrl || paper.arxivUrl,
+      sourceUrl: metadata.sourceUrl || metadata.arxivUrl || paper.sourceUrl,
+      tags: paper.tags || [],
+      metadataSource: metadata.metadataSource || "mixed",
+      stagingToken: lookup.pdf?.stagingToken,
+    }),
+  });
+  return lookup;
+}
+
+async function runHostedMetadataBatch(papers, { statusElement, progress, reload = false } = {}) {
+  const uniquePapers = [...new Map(papers.filter(Boolean).map((paper) => [paper.id, paper])).values()];
+  if (!uniquePapers.length) return { succeeded: 0, failed: 0 };
+  const durations = [];
+  let cursor = 0;
+  let finished = 0;
+  let succeeded = 0;
+  let failed = 0;
+  const update = () => {
+    const remaining = uniquePapers.length - finished;
+    if (statusElement) statusElement.textContent = `Finding metadata ${Math.min(finished + 1, uniquePapers.length)} of ${uniquePapers.length}…${operationEta(durations, remaining)}`;
+    updateOperationProgress(progress, finished, uniquePapers.length);
+  };
+  update();
+  const worker = async () => {
+    while (cursor < uniquePapers.length) {
+      const index = cursor++;
+      const started = performance.now();
+      try { await enrichHostedPaperMetadata(uniquePapers[index]); succeeded += 1; } catch { failed += 1; }
+      durations.push(performance.now() - started);
+      finished += 1;
+      update();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, uniquePapers.length) }, () => worker()));
+  updateOperationProgress(progress, uniquePapers.length, uniquePapers.length);
+  if (statusElement) statusElement.textContent = `Metadata found for ${succeeded} of ${uniquePapers.length}${failed ? `; ${failed} failed.` : "."}`;
+  if (reload) window.location.reload();
+  return { succeeded, failed };
+}
+
 document.addEventListener("click", (event) => {
   const target = event.target;
   const link = target instanceof Element ? target.closest("[data-paper-pdf-link]") : null;
@@ -325,6 +397,17 @@ function initLibrary() {
     const ids = [...list.querySelectorAll("[data-select-paper]:checked")].map((input) => input.dataset.selectPaper).filter(Boolean);
     const target = event.target.closest("button");
     if (!target) return;
+    if (target.matches("[data-batch-metadata]")) {
+      const selectedPapers = JSON.parse(target.dataset.batchMetadataIds || "[]").map((id) => hostedLibraryView.body?.papers.find((paper) => paper.id === id)).filter(Boolean);
+      target.disabled = true;
+      try {
+        await runHostedMetadataBatch(selectedPapers, { statusElement: document.querySelector("#list-status"), progress: createOperationProgress(document.querySelector("#list-status")), reload: true });
+      } catch (error) {
+        setStatus(document.querySelector("#list-status"), error.message, true);
+        target.disabled = false;
+      }
+      return;
+    }
     if (target.matches("[data-toggle-bulk-tags]")) {
       const editor = document.querySelector("[data-bulk-tag-editor]");
       const toolbar = document.querySelector("[data-bulk-toolbar]");
@@ -660,9 +743,11 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const zipFiles = source === "zip" ? [...(form.querySelector("[data-folder-zip-input]")?.files || [])] : [];
   if (!pdfFiles.length && !zipFiles.length) return setStatus(form, "Choose a folder or ZIP archive containing PDF files.", true);
   const importLabel = source === "zip" ? "PDFs from ZIP" : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
+  const isZip = source === "zip";
   const files = source === "folder" ? pdfFiles : zipFiles;
   const progress = form.querySelector("[data-bulk-progress]");
-  setStatus(form, `Importing 0 of ${source === "folder" ? `${pdfFiles.length} PDFs` : "1 ZIP archive"}… ETA calculating…`);
+  setStatus(form, isZip ? "Uploading and extracting ZIP archive…" : `Importing 0 of ${pdfFiles.length} PDFs… ETA calculating…`);
+  progress?.classList.toggle("is-indeterminate", isZip);
   updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
@@ -680,17 +765,26 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       try {
         const body = await request("/api/bulk-upload", { method: "POST", body: formData });
         imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
+        if (isZip) setStatus(form, `Extracted ${body.discovered ?? imported.length} PDFs from ZIP; imported ${body.imported.length}…`);
       } catch (error) {
         failed.push({ filename: file.name, reason: error.message });
       }
       const finished = index + 1;
-      const remaining = files.length - finished;
-      const average = (performance.now() - startedAt) / finished;
-      const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
-      setStatus(form, `Importing ${finished} of ${files.length} ${source === "folder" ? "PDFs" : "ZIP archives"}…${eta}`);
+      if (!isZip) {
+        const remaining = files.length - finished;
+        const average = (performance.now() - startedAt) / finished;
+        const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
+        setStatus(form, `Importing ${finished} of ${files.length} PDFs…${eta}`);
+      }
       updateOperationProgress(progress, finished, files.length);
     }
-    setStatus(form, `Imported ${imported.length}; skipped ${skipped.length}; failed ${failed.length}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
+    progress?.classList.remove("is-indeterminate");
+    updateOperationProgress(progress, files.length, files.length);
+    const importedPapers = imported.map((item) => ({ id: item.id, title: item.title, authors: [], tags: folderTag || archiveTag ? [folderTag || archiveTag] : [] }));
+    const metadata = imported.length
+      ? await runHostedMetadataBatch(importedPapers, { statusElement: form.querySelector(".form-status"), progress })
+      : { succeeded: 0, failed: 0 };
+    setStatus(form, `Imported ${imported.length}; metadata found for ${metadata.succeeded}; skipped ${skipped.length}; failed ${failed.length + metadata.failed}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
     if (results) results.innerHTML = [...imported.map((item) => `<div class="result-success">Imported: ${escapeHtml(item.title)}</div>`), ...skipped.map((item) => `<div class="result-muted">Skipped: ${escapeHtml(item.filename)} (${escapeHtml(item.reason)})</div>`), ...failed.map((item) => `<div class="result-error">Failed: ${escapeHtml(item.filename)} (${escapeHtml(item.reason)})</div>`)].join("");
   } catch (error) {

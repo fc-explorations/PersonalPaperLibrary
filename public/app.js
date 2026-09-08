@@ -662,9 +662,11 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const importLabel = source === "zip"
     ? "PDFs from ZIP"
     : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
+  const isZip = source === "zip";
   const files = source === "folder" ? pdfFiles : zipFiles;
   const progress = form.querySelector("[data-bulk-progress]");
-  setStatus(form, `Importing 0 of ${source === "folder" ? `${pdfFiles.length} PDFs` : "1 ZIP archive"}… ETA calculating…`);
+  setStatus(form, isZip ? "Uploading and extracting ZIP archive…" : `Importing 0 of ${pdfFiles.length} PDFs… ETA calculating…`);
+  progress?.classList.toggle("is-indeterminate", isZip);
   updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
@@ -683,17 +685,25 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       try {
         const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
         imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
+        if (isZip) setStatus(form, `Extracted ${body.discovered ?? imported.length} PDFs from ZIP; imported ${body.imported.length}…`);
       } catch (error) {
         failed.push({ filename: file.name, reason: clientErrorMessage(error) });
       }
       const finished = index + 1;
-      const remaining = files.length - finished;
-      const average = (performance.now() - startedAt) / finished;
-      const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
-      setStatus(form, `Importing ${finished} of ${files.length} ${source === "folder" ? "PDFs" : "ZIP archives"}…${eta}`);
+      if (!isZip) {
+        const remaining = files.length - finished;
+        const average = (performance.now() - startedAt) / finished;
+        const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
+        setStatus(form, `Importing ${finished} of ${files.length} PDFs…${eta}`);
+      }
       updateOperationProgress(progress, finished, files.length);
     }
-    setStatus(form, `Imported ${imported.length}; skipped ${skipped.length}; failed ${failed.length}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
+    progress?.classList.remove("is-indeterminate");
+    updateOperationProgress(progress, files.length, files.length);
+    const metadata = imported.length
+      ? await runLocalMetadataBatch(imported.map((item) => item.id), { statusElement: form.querySelector(".form-status"), progress })
+      : { succeeded: 0, failed: 0 };
+    setStatus(form, `Imported ${imported.length}; metadata found for ${metadata.succeeded}; skipped ${skipped.length}; failed ${failed.length + metadata.failed}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
     results.innerHTML = [...imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
   } catch (error) {
@@ -1115,6 +1125,18 @@ document.querySelector("[data-delete-paper]")?.addEventListener("click", async (
   }
 });
 
+document.querySelector("[data-batch-metadata]")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const ids = JSON.parse(button.dataset.batchMetadataIds || "[]");
+  button.disabled = true;
+  try {
+    await runLocalMetadataBatch(ids, { statusElement: document.querySelector("#list-status"), progress: createOperationProgress(document.querySelector("#list-status")) , reload: true });
+  } catch (error) {
+    setStatus(document.querySelector("#list-status"), clientErrorMessage(error), true);
+    button.disabled = false;
+  }
+});
+
 document.querySelector("[data-delete-group]")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const all = button.dataset.deleteAll === "true";
@@ -1224,6 +1246,77 @@ function createOperationProgress(anchor) {
   progress.append(fill);
   anchor?.after(progress);
   return progress;
+}
+
+function operationEta(durations, remaining) {
+  if (!remaining || !durations.length) return "";
+  const average = durations.reduce((sum, value) => sum + value, 0) / durations.length;
+  const seconds = Math.max(1, Math.ceil((average * remaining) / 1000));
+  return seconds < 60 ? ` ETA ~${seconds}s remaining` : ` ETA ~${Math.floor(seconds / 60)}m${seconds % 60 ? ` ${seconds % 60}s` : ""} remaining`;
+}
+
+async function enrichLocalPaperMetadata(id) {
+  const current = (await jsonRequest(`/api/papers/${encodeURIComponent(id)}`)).paper;
+  const lookup = await jsonRequest("/api/metadata/lookup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: current.title, doi: current.doi, arxivId: current.arxivId, paperId: id, preservePdf: Boolean(current.r2Key) }),
+  });
+  const metadata = lookup.paper || {};
+  await jsonRequest(`/api/papers/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: metadata.title || current.title,
+      authors: metadata.authors?.length ? metadata.authors : current.authors || [],
+      year: metadata.year || current.year,
+      publishedDate: metadata.publishedDate || current.publishedDate,
+      abstract: metadata.abstract || current.abstract,
+      primaryCategory: metadata.primaryCategory || current.primaryCategory,
+      categories: metadata.categories?.length ? metadata.categories : current.categories || [],
+      journalRef: metadata.journalRef || current.journalRef,
+      acceptedVenue: metadata.acceptedVenue || current.acceptedVenue,
+      doi: metadata.doi || current.doi,
+      arxivId: metadata.arxivId || current.arxivId,
+      arxivUrl: metadata.arxivUrl || current.arxivUrl,
+      sourceUrl: metadata.sourceUrl || metadata.arxivUrl || current.sourceUrl,
+      tags: current.tags || [],
+      metadataSource: metadata.metadataSource || "mixed",
+      stagingToken: lookup.pdf?.stagingToken,
+    }),
+  });
+  return lookup;
+}
+
+async function runLocalMetadataBatch(ids, { statusElement, progress, reload = false } = {}) {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (!uniqueIds.length) return { succeeded: 0, failed: 0 };
+  const durations = [];
+  let cursor = 0;
+  let finished = 0;
+  let succeeded = 0;
+  let failed = 0;
+  const update = () => {
+    const remaining = uniqueIds.length - finished;
+    if (statusElement) statusElement.textContent = `Finding metadata ${Math.min(finished + 1, uniqueIds.length)} of ${uniqueIds.length}…${operationEta(durations, remaining)}`;
+    updateOperationProgress(progress, finished, uniqueIds.length);
+  };
+  update();
+  const worker = async () => {
+    while (cursor < uniqueIds.length) {
+      const index = cursor++;
+      const started = performance.now();
+      try { await enrichLocalPaperMetadata(uniqueIds[index]); succeeded += 1; } catch { failed += 1; }
+      durations.push(performance.now() - started);
+      finished += 1;
+      update();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, uniqueIds.length) }, () => worker()));
+  updateOperationProgress(progress, uniqueIds.length, uniqueIds.length);
+  if (statusElement) statusElement.textContent = `Metadata found for ${succeeded} of ${uniqueIds.length}${failed ? `; ${failed} failed.` : "."}`;
+  if (reload) window.location.reload();
+  return { succeeded, failed };
 }
 
 const libraryToolbar = document.querySelector(".toolbar");

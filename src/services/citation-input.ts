@@ -90,7 +90,8 @@ export async function parseCitationInput(input: string, client?: LlmClient, mode
 }
 
 export function citationMatchesMetadata(parsed: ParsedCitationInput, metadata: { title?: string; authors: string[]; year?: number }): boolean {
-  if (parsed.title && metadata.title && titleKey(parsed.title) !== titleKey(metadata.title) && titleSimilarity(parsed.title, metadata.title) < 0.6) return false;
+  const titleIsIdentifier = /^(?:10\.\d{4,9}\/|arxiv\s*[:\-]?\s*\d{4}\.\d{4,5}|https?:\/\/)/i.test(parsed.title);
+  if (parsed.title && !titleIsIdentifier && metadata.title && titleKey(parsed.title) !== titleKey(metadata.title) && titleSimilarity(parsed.title, metadata.title) < 0.6) return false;
   if (parsed.year !== undefined && metadata.year !== undefined && Math.abs(parsed.year - metadata.year) > 1) return false;
   if (!parsed.authors.length || !metadata.authors.length) return true;
   const expectedFamilies = parsed.authors.map(familyName).filter(Boolean);

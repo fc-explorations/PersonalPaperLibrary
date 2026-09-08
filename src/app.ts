@@ -137,12 +137,15 @@ function requestFilters(c: Context): { q?: string; tag?: string[]; tagMode: TagF
 
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
-  return basename.replace(/\.pdf$/i, "")
+  const withoutExtension = basename.replace(/\.pdf$/i, "");
+  const arxivMatch = withoutExtension.match(/^\s*(?:arxiv[-_ ]*)?(\d{4}\.\d{4,5}(?:v\d+)?)[-_ ]*(.*)$/i);
+  const title = withoutExtension
     .replace(/^\s*(?:paper|manuscript|preprint|submission|final|accepted|camera[-_ ]?ready)[-_ ]+/i, "")
     .replace(/^\s*(?:arxiv[-_ ]*)?\d{4}\.\d{4,5}(?:v\d+)?[-_ ]*/i, "")
     .replace(/[._]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim() || "Untitled paper";
+    .trim();
+  return title || arxivMatch?.[1] || "Untitled paper";
 }
 
 function folderTagFromInput(value: unknown): string | undefined {
@@ -928,7 +931,7 @@ export function createApp(dependencies: AppDependencies = {}) {
         }
       }
       if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
-      if (!files.length) return c.json({ imported, skipped, failed, folderTag });
+      if (!files.length) return c.json({ imported, skipped, failed, folderTag, discovered: 0, processed: failed.length });
       if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
       if (files.reduce((total, file) => total + file.size, 0) > maxRequestBytes) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The folder exceeds the configured request limit.");
       for (const file of files) {
@@ -986,7 +989,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           failed.push({ filename: file.name || "unknown file", reason: errorMessage(error) });
         }
       }
-      return c.json({ imported, skipped, failed, folderTag });
+      return c.json({ imported, skipped, failed, folderTag, discovered: files.length, processed: imported.length + skipped.length + failed.length });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), "The folder could not be imported.");
     }

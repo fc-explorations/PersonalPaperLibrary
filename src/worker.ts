@@ -91,8 +91,8 @@ function hostedShell(title: string, page: string, body: string): string {
   return withRenderScaleSettings
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=38")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=17")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=39")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=18")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -125,12 +125,15 @@ function booleanInput(value: unknown, fallback: boolean): boolean {
 
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
-  return basename.replace(/\.pdf$/i, "")
+  const withoutExtension = basename.replace(/\.pdf$/i, "");
+  const arxivMatch = withoutExtension.match(/^\s*(?:arxiv[-_ ]*)?(\d{4}\.\d{4,5}(?:v\d+)?)[-_ ]*(.*)$/i);
+  const title = withoutExtension
     .replace(/^\s*(?:paper|manuscript|preprint|submission|final|accepted|camera[-_ ]?ready)[-_ ]+/i, "")
     .replace(/^\s*(?:arxiv[-_ ]*)?\d{4}\.\d{4,5}(?:v\d+)?[-_ ]*/i, "")
     .replace(/[._]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim() || "Untitled paper";
+    .trim();
+  return title || arxivMatch?.[1] || "Untitled paper";
 }
 
 function hostedPdfFilename(title: string, used: Set<string>): string {
@@ -177,6 +180,21 @@ async function extractHostedAbstract(env: CloudflareBindings, source: { arrayBuf
   const abstract = cleanHostedAbstract(extracted);
   if (!abstract) throw new Error("ABSTRACT_NOT_FOUND");
   return abstract;
+}
+
+async function extractHostedArxivId(env: CloudflareBindings, source: { arrayBuffer(): Promise<ArrayBuffer> }): Promise<string | undefined> {
+  if (!env.AI) return undefined;
+  try {
+    const converted = await env.AI.toMarkdown(
+      { name: "paper.pdf", blob: new Blob([await source.arrayBuffer()], { type: "application/pdf" }) },
+      { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
+    );
+    if (converted.format === "error" || !converted.data?.trim()) return undefined;
+    const match = converted.data.slice(0, 30_000).match(/\barXiv\s*:\s*(\d{4}\.\d{4,5}(?:v\d+)?)/i);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
 }
 
 async function fillHostedMetadataAbstract(metadata: PaperMetadata, title: string, fetcher: typeof fetch): Promise<PaperMetadata> {
@@ -885,7 +903,7 @@ app.post("/api/bulk-upload", async (c) => {
       }
     }
     if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
-    if (!files.length) return c.json({ imported, skipped, failed, folderTag });
+    if (!files.length) return c.json({ imported, skipped, failed, folderTag, discovered: 0, processed: failed.length });
     if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
     const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
     if (totalBytes > configuredRequestLimit(c.env.MAX_REQUEST_BYTES)) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The folder exceeds the configured request limit.");
@@ -897,7 +915,16 @@ app.post("/api/bulk-upload", async (c) => {
       try {
         validatePdf(file.bytes, file.name || "paper.pdf", configuredPdfLimit(c.env.MAX_PDF_BYTES));
         const title = titleFromFilename(file.name || "paper.pdf");
-        const draft: PaperDraftInput = { title, authors: [], metadataSource: "manual", tags: folderTag ? [folderTag] : [] };
+        const embeddedArxivId = await extractHostedArxivId(c.env, { arrayBuffer: async () => file.bytes.slice().buffer as ArrayBuffer });
+        const draft: PaperDraftInput = {
+          title,
+          authors: [],
+          arxivId: embeddedArxivId,
+          arxivUrl: embeddedArxivId ? `https://arxiv.org/abs/${embeddedArxivId}` : undefined,
+          sourceUrl: embeddedArxivId ? `https://arxiv.org/abs/${embeddedArxivId}` : undefined,
+          metadataSource: embeddedArxivId ? "mixed" : "manual",
+          tags: folderTag ? [folderTag] : [],
+        };
         const staged = await storage.stage(file.bytes);
         stagingToken = staged.token;
         const duplicate = await repo.findDuplicate(draft, staged.sha256);
@@ -922,7 +949,7 @@ app.post("/api/bulk-upload", async (c) => {
         failed.push({ filename: file.name || "unknown file", reason: errorMessage(error) });
       }
     }
-    return c.json({ imported, skipped, failed, folderTag });
+    return c.json({ imported, skipped, failed, folderTag, discovered: files.length, processed: imported.length + skipped.length + failed.length });
   } catch (error) {
     const code = errorMessage(error);
     return jsonError(c, code === "REQUEST_TOO_LARGE" ? 413 : 400, code, "The folder could not be imported.");
