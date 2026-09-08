@@ -128,7 +128,7 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=39">
+  <link rel="stylesheet" href="/styles.css?v=41">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
@@ -137,7 +137,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-  <script src="/app.js?v=35" defer></script>
+  <script src="/app.js?v=37" defer></script>
 </body>
 </html>`;
 }
@@ -460,8 +460,8 @@ function abstractField(value: unknown): string {
   return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract>${analysisIcon()}<span>From PDF</span></button></div></label>`;
 }
 
-function bibtexImportField(): string {
-  return `<details class="bibtex-import"><summary>Import from BibTeX</summary><div class="bibtex-import-body"><textarea data-bibtex-import rows="7" placeholder="Paste one BibTeX entry here"></textarea><div class="bibtex-import-actions"><button class="button button-secondary button-small" type="button" data-import-bibtex>${searchIcon()}<span>Use BibTeX</span></button><span class="form-status" data-bibtex-status role="status"></span></div></div></details>`;
+export function bibtexImportField(formId: string): string {
+  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>Use BibTeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
 }
 
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
@@ -492,7 +492,6 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <input type="hidden" name="stagingToken" value="">
     ${actionsOutside ? "" : actions}
-    ${bibtexImportField()}
     <div class="form-grid">${fields}</div>
   </form>`;
 }
@@ -561,7 +560,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
 
 export function renderEditPage(paper: PaperRecord): string {
   const formId = `paper-form-${paper.id}`;
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary button-small form-utility-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {

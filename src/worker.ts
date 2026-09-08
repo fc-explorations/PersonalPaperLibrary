@@ -24,7 +24,7 @@ import { takeFirstPages } from "./services/pdf-analysis-core.js";
 import { OpenAiLlmClient } from "./services/llm.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { groupLibraryResults } from "./services/library-query.js";
-import { analysisMeta, renderCitationSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
+import { analysisMeta, bibtexImportField, renderCitationSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 
 interface AssetFetcher {
@@ -92,8 +92,8 @@ function hostedShell(title: string, page: string, body: string): string {
   return withRenderScaleSettings
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=39")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=19")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=41")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=21")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -810,7 +810,7 @@ app.get("/papers/:id/edit", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return c.html(hostedShell("Paper not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>Paper not found</h1><p><a href="/">Return to the library</a></p></section></main>`), 404);
   const formId = `paper-form-${paper.id}`;
-  return c.html(hostedShell(`Edit ${paper.title}`, "edit", `<main class="shell cloud-library edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${hostedEditActions(formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}<hr><h2>Replace PDF</h2><form id="replace-upload-form" class="cloud-form" data-replace-upload data-paper-id="${escapeHtml(paper.id)}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary button-small" type="submit">Replace</button></div><p id="replace-status" class="form-status" role="status"></p></form></section></main>`));
+  return c.html(hostedShell(`Edit ${paper.title}`, "edit", `<main class="shell cloud-library edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${hostedEditActions(formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form id="replace-upload-form" class="cloud-form" data-replace-upload data-paper-id="${escapeHtml(paper.id)}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">upload</span><span>Replace</span></button></div><p id="replace-status" class="form-status" role="status"></p></form></section></main>`));
 });
 
 app.get("/api/health", (c) => c.json({

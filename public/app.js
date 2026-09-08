@@ -573,7 +573,7 @@ document.querySelectorAll("[data-suggest-tags]").forEach((button) => button.addE
 }));
 
 document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => button.addEventListener("click", () => {
-  const form = button.closest("[data-paper-form]");
+  const form = document.querySelector(`#${button.getAttribute("form")}`) || button.closest("[data-paper-form]");
   const panel = button.closest("[data-tag-suggestions]");
   if (!form || !panel) return;
   const current = commaValues(value(form, "tags"));
@@ -799,7 +799,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
 
 document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.addEventListener("click", async () => {
   const panel = button.closest(".bibtex-import");
-  const form = button.closest("[data-paper-form]");
+  const form = document.querySelector(`#${button.getAttribute("form")}`) || button.closest("[data-paper-form]");
   const input = panel?.querySelector("[data-bibtex-import]");
   const status = panel?.querySelector("[data-bibtex-status]");
   if (!form || !input || !status) return;

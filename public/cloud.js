@@ -598,7 +598,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
 
 document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.addEventListener("click", async () => {
   const panel = button.closest(".bibtex-import");
-  const form = button.closest("[data-paper-form]");
+  const form = document.querySelector(`#${button.getAttribute("form")}`) || button.closest("[data-paper-form]");
   const input = panel?.querySelector("[data-bibtex-import]");
   const status = panel?.querySelector("[data-bibtex-status]");
   if (!form || !input || !status) return;
