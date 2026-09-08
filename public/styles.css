@@ -1,7 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap");
 :root { color-scheme: light; --content-width: 90%; --render-scale: 1; --render-width: 100%; --page-bg: #f7f6f2; --panel-bg: color-mix(in srgb, var(--page-bg) 25%, white 75%); --header-bg: var(--page-bg); --text: #25231f; --muted: #726e65; --section-color: #726e65; --section-surface: #faf9f7; --section-border: #d9d6ce; --accent: #315c52; --accent-dark: #264b43; --accent-soft: #eaf0ed; --accent-border: #aabbb4; --border: #d9d6ce; --type-section: 1.35rem; --type-subsection: 1.05rem; --type-kicker: .82rem; --type-meta: .9rem; --control-height: 48px; --analysis-action-width: 248px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--text); background: var(--page-bg); line-height: 1.55; }
 * { box-sizing: border-box; }
-body { width: var(--render-width); margin: 0; background: var(--page-bg); zoom: var(--render-scale); }
+body { margin: 0; background: var(--page-bg); overflow-x: hidden; }
+.render-root { width: var(--render-width); transform: scale(var(--render-scale)); transform-origin: top left; }
 a { color: var(--accent); }
 .shell { width: min(var(--content-width), calc(100% - 64px)); margin: 0 auto; }
 .cloud-library { padding-bottom: 80px; }

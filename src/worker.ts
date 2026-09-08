@@ -89,7 +89,9 @@ function hostedShell(title: string, page: string, body: string): string {
     '<div class="settings-group"><h2>Rendering scale</h2><p class="muted">Scale the complete interface to fit more content on smaller screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="renderScale" value="100" data-theme-setting="renderScale"><span>100%</span></label><label class="width-option"><input type="radio" name="renderScale" value="95" data-theme-setting="renderScale"><span>95%</span></label><label class="width-option"><input type="radio" name="renderScale" value="90" data-theme-setting="renderScale"><span>90%</span></label><label class="width-option"><input type="radio" name="renderScale" value="85" data-theme-setting="renderScale"><span>85%</span></label><label class="width-option"><input type="radio" name="renderScale" value="80" data-theme-setting="renderScale"><span>80%</span></label><label class="width-option"><input type="radio" name="renderScale" value="75" data-theme-setting="renderScale"><span>75%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2>',
   );
   return withRenderScaleSettings
-    .replace(/styles\.css\?v=33/g, "styles.css?v=34")
+    .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
+    .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=35")
     .replace(/cloud\.js\?v=10/g, "cloud.js?v=11")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }

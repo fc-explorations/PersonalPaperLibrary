@@ -128,13 +128,15 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=34">
+  <link rel="stylesheet" href="/styles.css?v=35">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
-  ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
-  <main class="shell">${body}</main>
+  <div class="render-root">
+    ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
+    <main class="shell">${body}</main>
+  </div>
   <script src="/app.js?v=30" defer></script>
 </body>
 </html>`;
