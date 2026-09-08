@@ -3,8 +3,8 @@ const page = document.body.dataset.hostedPage || "library";
 const themeStorageKey = "personal-paper-library-theme";
 const accentThemes = { forest: ["#315c52", "#264b43", "#eaf0ed", "#aabbb4"], blue: ["#3d5a80", "#2d4665", "#e8eef5", "#aab9cb"], terracotta: ["#9a4e36", "#7d3d2b", "#f5e9e4", "#d8b6aa"], plum: ["#6b4c73", "#553b5c", "#eee8f0", "#c4b5c8"], slate: ["#58606a", "#434a52", "#edf0f2", "#b7bec4"] };
 const backgroundThemes = { paper: "#f7f6f2", white: "#ffffff", "light-gray": "#eeeeec", warm: "#f3efe8", mint: "#f6fdfa" };
-const pageSizes = [10, 25, 50, 100];
-const renderScales = [100, 95, 90, 85, 80, 75];
+const pageSizes = [5, 7, 10, 25, 50, 100];
+const renderScales = [100, 90, 80, 70, 60, 50];
 function loadTheme() { try { return JSON.parse(localStorage.getItem(themeStorageKey) || "{}"); } catch { return {}; } }
 function applyTheme(theme) {
   const accent = theme.accent === "custom" ? (theme.customAccent || "#315c52") : (accentThemes[theme.accent] || accentThemes.forest)[0];
@@ -196,6 +196,79 @@ async function request(url, options = {}) {
     throw new Error(body?.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
   }
   return body;
+}
+
+async function requestWithLookupProgress(url, options = {}, onProgress) {
+  const response = await fetch(url, { credentials: "same-origin", ...options });
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/x-ndjson")) return requestResponse(response);
+  const reader = response.body?.getReader();
+  if (!reader) return requestResponse(response);
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result;
+  const consume = (line) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === "progress") onProgress?.(event);
+    if (event.type === "result") result = event;
+  };
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    lines.forEach(consume);
+  }
+  consume(buffer);
+  const body = result?.body || {};
+  if (!result?.ok) throw new Error(body.error?.message || "Request failed");
+  return body;
+}
+
+async function requestResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const body = contentType.includes("application/json") ? await response.json().catch(() => ({})) : {};
+  if (!response.ok) throw new Error(body?.error?.message || `Request failed (${response.status})`);
+  return body;
+}
+
+function setLookupBusy(button, busy) {
+  if (!button) return;
+  const label = button.querySelector("span:last-child");
+  if (busy) {
+    button.dataset.lookupLabel ||= label?.textContent || "Find";
+    if (label) label.textContent = "Finding…";
+  } else if (label) label.textContent = button.dataset.lookupLabel || "Find";
+  button.disabled = busy;
+  button.setAttribute("aria-busy", String(busy));
+}
+
+function updateLookupProgress(button, event, formOrStatus) {
+  const host = button?.closest(".form-actions") || button?.closest("form") || button?.parentElement;
+  if (!host) return;
+  let progress = host.querySelector("[data-lookup-progress]");
+  if (!progress) {
+    progress = createOperationProgress(host.querySelector(".form-status") || host.lastElementChild || host);
+    progress.dataset.lookupProgress = "";
+    progress.setAttribute("aria-label", "Metadata lookup progress");
+  }
+  progress.hidden = false;
+  if (event.total) {
+    progress.classList.remove("is-indeterminate");
+    const phaseRange = { sources: [0, 70], enrichment: [70, 85], pdf: [85, 100] }[event.phase] || [0, 100];
+    const percent = Math.min(100, Math.round(phaseRange[0] + (event.current / event.total) * (phaseRange[1] - phaseRange[0])));
+    progress.setAttribute("aria-valuenow", String(percent));
+    progress.querySelector("[data-operation-progress-fill]")?.style.setProperty("width", `${percent}%`);
+  } else progress.classList.add("is-indeterminate");
+  if (event.message) setStatus(formOrStatus, event.message);
+}
+
+function clearLookupProgress(button) {
+  const host = button?.closest(".form-actions") || button?.closest("form") || button?.parentElement;
+  const progress = host?.querySelector("[data-lookup-progress]");
+  if (progress) progress.hidden = true;
 }
 
 function requestWithUploadProgress(url, options = {}, { onProgress, onUploadComplete } = {}) {
@@ -479,6 +552,11 @@ function applyHostedMetadata(form, data) {
   if (!form) return;
   const paper = data.paper || {};
   const setValue = (name, value) => { const input = form.elements.namedItem(name); if (input) input.value = value || ""; };
+  if (data.partialMetadata) {
+    setValue("title", paper.title);
+    setValue("isbn", paper.isbn);
+    return;
+  }
   setValue("title", paper.title);
   setValue("authors", (paper.authors || []).join("\n"));
   setValue("year", paper.year);
@@ -609,14 +687,14 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   const get = (name) => form.elements.namedItem(name)?.value || "";
   const input = get("arxivId") || get("doi") || get("isbn") || get("title");
   if (!input.trim()) return setStatus(status, "Enter a title, DOI, ISBN, or arXiv ID first.", true);
-  button.disabled = true;
+  setLookupBusy(button, true);
   try {
     setStatus(status, "Looking up citation metadata…");
-    const body = await request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input, paperId: form.dataset.mode === "edit" ? form.dataset.paperId : undefined, stagingToken: get("stagingToken") || undefined }) });
+    const body = await requestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input, title: get("title"), paperId: form.dataset.mode === "edit" ? form.dataset.paperId : undefined, stagingToken: get("stagingToken") || undefined }) }, (progress) => updateLookupProgress(button, progress, status));
     if (body.duplicate) throw new Error("That paper is already in the library.");
     if (form.dataset.mode === "edit") {
       applyHostedMetadata(form, body);
-      await saveHostedPaperForm(form, { statusMessage: "Metadata found and saved." });
+      await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? `ISBN retained and saved. ${body.warnings.join(" ")}` : "Metadata found and saved." });
     } else {
       renderHostedPreview(body);
       setStatus(status, "Metadata found. Review it, then save.");
@@ -624,7 +702,8 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   } catch (error) {
     setStatus(status, error.message, true);
   } finally {
-    button.disabled = false;
+    clearLookupProgress(button);
+    setLookupBusy(button, false);
   }
 }));
 
@@ -1224,17 +1303,19 @@ async function initImport() {
   const status = document.querySelector("#import-status");
   const preview = document.querySelector("#import-preview");
   const pdfStatus = document.querySelector("#import-pdf-status");
+  const button = form.querySelector("button[type=submit]");
   let staged;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    setLookupBusy(button, true);
     try {
       setStatus(status, "Looking up arXiv metadata and PDF…");
-      staged = await request("/api/import", {
+      staged = await requestWithLookupProgress("/api/import?progress=1", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ input: form.elements.input.value }),
-      });
+      }, (progress) => updateLookupProgress(button, progress, form));
       renderHostedPreview(staged);
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");
       const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF staged." : "Metadata found; save will create a metadata-only paper.";
@@ -1243,6 +1324,9 @@ async function initImport() {
       staged = undefined;
       preview.hidden = true;
       setStatus(status, error.message, true);
+    } finally {
+      clearLookupProgress(button);
+      setLookupBusy(button, false);
     }
   });
 }

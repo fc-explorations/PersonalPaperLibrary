@@ -18,22 +18,22 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "personal-paper-library-preview",
-			"database_id": "d39ba8be-e9fe-4d64-8b76-5870cc58a2b3",
+			"database_name": "personal-paper-library",
+			"database_id": "125f7459-7799-4ece-b407-ef4152b93460",
 			"migrations_dir": "migrations/cloudflare"
 		}
 	],
 	"r2_buckets": [
 		{
 			"binding": "PAPER_PDFS",
-			"bucket_name": "personal-paper-library-preview"
+			"bucket_name": "personal-paper-library"
 		}
 	],
 	"queues": {
 		"producers": [
 			{
 				"binding": "ANALYSIS_QUEUE",
-				"queue": "personal-paper-library-analysis-preview"
+				"queue": "personal-paper-library-analysis"
 			}
 		],
 		"consumers": [

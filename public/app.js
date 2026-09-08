@@ -14,8 +14,8 @@ const backgroundThemes = {
   mint: "#f6fdfa",
 };
 const contentWidthOptions = ["50", "60", "70", "80", "90", "100"];
-const renderScaleOptions = ["100", "95", "90", "85", "80", "75"];
-const pageSizeOptions = ["10", "25", "50", "100"];
+const renderScaleOptions = ["100", "90", "80", "70", "60", "50"];
+const pageSizeOptions = ["5", "7", "10", "25", "50", "100"];
 
 function mixHexColors(hex, target, amount) {
   const value = hex.slice(1);
@@ -139,6 +139,43 @@ function setStatus(form, message, error = false) {
     status.textContent = message;
     status.classList.toggle("status-error", error);
   }
+}
+
+function setLookupBusy(button, busy) {
+  if (!button) return;
+  const label = button.querySelector("span:last-child");
+  if (busy) {
+    button.dataset.lookupLabel ||= label?.textContent || "Find";
+    if (label) label.textContent = "Finding…";
+  } else if (label) label.textContent = button.dataset.lookupLabel || "Find";
+  button.disabled = busy;
+  button.setAttribute("aria-busy", String(busy));
+}
+
+function updateLookupProgress(button, event, form) {
+  const host = button?.closest(".form-actions") || button?.closest("form") || button?.parentElement;
+  if (!host) return;
+  let progress = host.querySelector("[data-lookup-progress]");
+  if (!progress) {
+    progress = createOperationProgress(host.querySelector(".form-status") || host.lastElementChild || host);
+    progress.dataset.lookupProgress = "";
+    progress.setAttribute("aria-label", "Metadata lookup progress");
+  }
+  progress.hidden = false;
+  if (event.total) {
+    progress.classList.remove("is-indeterminate");
+    const phaseRange = { sources: [0, 70], enrichment: [70, 85], pdf: [85, 100] }[event.phase] || [0, 100];
+    const percent = Math.min(100, Math.round(phaseRange[0] + (event.current / event.total) * (phaseRange[1] - phaseRange[0])));
+    progress.setAttribute("aria-valuenow", String(percent));
+    progress.querySelector("[data-operation-progress-fill]")?.style.setProperty("width", `${percent}%`);
+  } else progress.classList.add("is-indeterminate");
+  if (event.message) setStatus(form, event.message);
+}
+
+function clearLookupProgress(button) {
+  const host = button?.closest(".form-actions") || button?.closest("form") || button?.parentElement;
+  const progress = host?.querySelector("[data-lookup-progress]");
+  if (progress) progress.hidden = true;
 }
 
 function clientErrorMessage(error) {
@@ -352,6 +389,47 @@ function renderPreview(data, stagingToken = "") {
 
 async function jsonRequest(url, options) {
   const response = await fetch(url, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = body.error?.message || "Request failed";
+    throw new Error(body.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
+  }
+  return body;
+}
+
+async function jsonRequestWithLookupProgress(url, options, onProgress) {
+  const response = await fetch(url, options);
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/x-ndjson")) return jsonRequestResponse(response);
+  const reader = response.body?.getReader();
+  if (!reader) return jsonRequestResponse(response);
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result;
+  const consume = (line) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === "progress") onProgress?.(event);
+    if (event.type === "result") result = event;
+  };
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    lines.forEach(consume);
+  }
+  consume(buffer);
+  const body = result?.body || {};
+  if (!result?.ok) {
+    const message = body.error?.message || "Request failed";
+    throw new Error(body.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
+  }
+  return body;
+}
+
+async function jsonRequestResponse(response) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = body.error?.message || "Request failed";
@@ -622,9 +700,11 @@ document.querySelectorAll("[data-folder-tag-toggle]").forEach((toggle) => toggle
 document.querySelector("[data-import-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  setLookupBusy(button, true);
   setStatus(form, "Looking up paper metadata…");
   try {
-    const body = await jsonRequest("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) });
+    const body = await jsonRequestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) }, (progress) => updateLookupProgress(button, progress, form));
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
       form.querySelector("[data-existing-paper]")?.remove();
@@ -637,6 +717,9 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
     }
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
+  } finally {
+    clearLookupProgress(button);
+    setLookupBusy(button, false);
   }
 });
 
@@ -808,9 +891,10 @@ document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach((form) 
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = button.form || button.closest("[data-paper-form]");
+  setLookupBusy(button, true);
   setStatus(form, "Looking up citation metadata…");
   try {
-    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) });
+    const result = await jsonRequestWithLookupProgress("/api/metadata/lookup?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) }, (progress) => updateLookupProgress(button, progress, form));
     setValue(form, "title", result.paper.title);
     setValue(form, "authors", (result.paper.authors || []).join("\n"));
     setValue(form, "year", result.paper.year);
@@ -842,6 +926,9 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     else setStatus(form, `Metadata found via ${result.provider}.${pdfMessage} Review it, then save.${warningMessage}`);
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
+  } finally {
+    clearLookupProgress(button);
+    setLookupBusy(button, false);
   }
 }));
 

@@ -62,7 +62,7 @@ const DEFAULT_MAX_BACKUP_BYTES = 64 * 1024 * 1024 * 1024;
 const SESSION_COOKIE = "ppl_session";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 const LIBRARY_PAGE_SIZE = 50;
-const LIBRARY_PAGE_SIZES = [10, 25, 50, 100] as const;
+const LIBRARY_PAGE_SIZES = [5, 7, 10, 25, 50, 100] as const;
 const SUMMARY_CHUNK_CONCURRENCY = 4;
 const SUMMARY_OPENAI_MODEL = "gpt-4.1-mini";
 
@@ -70,14 +70,18 @@ type LookupProgressEvent = { phase: "sources" | "enrichment" | "pdf"; current: n
 type LookupProgressReporter = (event: LookupProgressEvent) => Promise<void> | void;
 
 function progressStream(c: Context, operation: (report: LookupProgressReporter) => Promise<Response>): Response {
-  return streamText(c, async (stream) => {
-    const report: LookupProgressReporter = (event) => stream.write(`${JSON.stringify({ type: "progress", ...event })}\n`);
+  const response = streamText(c, async (stream) => {
+    const report: LookupProgressReporter = async (event) => {
+      await stream.write(`${JSON.stringify({ type: "progress", ...event })}\n`);
+    };
     const response = await operation(report);
     const body = await response.json().catch(() => ({}));
     await stream.write(`${JSON.stringify({ type: "result", ok: response.ok, status: response.status, body })}\n`);
   }, async (error, stream) => {
     await stream.write(`${JSON.stringify({ type: "result", ok: false, status: 502, body: { error: { message: error instanceof Error ? error.message : "Request failed" } } })}\n`);
   });
+  response.headers.set("Content-Type", "application/x-ndjson; charset=utf-8");
+  return response;
 }
 
 function jsonError(c: Context, status: number, code: string, message: string) {
@@ -600,7 +604,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method);
     const libraryMutation = mutating && c.req.path !== "/login" && c.req.path !== "/api/import/backup";
     const continueRequest = () => libraryMutation ? runTrackedMutation(next) : next();
-    if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js") {
+    if (!authPassword || c.req.path === "/login" || c.req.path === "/styles.css" || c.req.path === "/app.js" || c.req.path === "/pile.png") {
       if (mutating && snapshotMaintenance) return jsonError(c, 409, "SNAPSHOT_BUSY", `The library is temporarily unavailable while a snapshot ${snapshotMaintenance} is in progress.`);
       return continueRequest();
     }
@@ -619,6 +623,7 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.use("/styles.css", serveStatic({ root: publicRoot }));
   app.use("/app.js", serveStatic({ root: publicRoot }));
+  app.use("/pile.png", serveStatic({ root: publicRoot }));
 
   app.get("/login", (c) => c.html(renderLoginPage()));
   app.post("/login", async (c) => {
@@ -726,7 +731,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     return c.json({ papers: repo.list({ q, tag, tagMode, untagged, sort: parseSortOrder(c.req.query("sort")) }), tags: repo.tags.list() });
   });
 
-  const importPaper = async (c: Context) => {
+  const importPaper = async (c: Context, report?: LookupProgressReporter) => {
     try {
       const body = await c.req.json<{ input?: string }>();
       const input = body.input?.trim() || "";
@@ -736,10 +741,13 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (normalized) {
         const existing = repo.findDuplicate({ arxivId: normalized.id, title: "" });
         if (existing) return c.json({ existing, duplicate: true });
+        await report?.({ phase: "sources", current: 0, total: 1, source: "arxiv", message: "Checking arXiv…" });
         const metadata = await fetchArxivMetadata(normalized, fetcher);
+        await report?.({ phase: "sources", current: 1, total: 1, source: "arxiv", message: "arXiv metadata found." });
         metadata.sourceUrl = /^https?:\/\//i.test(input) ? input : normalized.abstractUrl;
         const warnings: string[] = [];
         let pdf: { status: string; stagingToken?: string; sizeBytes?: number; sha256?: string } = { status: "not_found" };
+        await report?.({ phase: "pdf", current: 0, total: 1, message: "Downloading the arXiv PDF…" });
         try {
           const bytes = await fetchArxivPdf(normalized, maxPdfBytes, fetcher);
           const staged = await storage.stage(bytes);
@@ -747,6 +755,7 @@ export function createApp(dependencies: AppDependencies = {}) {
         } catch (error) {
           warnings.push(errorMessage(error) === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
         }
+        await report?.({ phase: "pdf", current: 1, total: 1, message: pdf.status === "staged" ? "PDF ready." : "PDF check complete." });
         return c.json({ paper: metadata, pdf, warnings });
       }
 
@@ -754,7 +763,9 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (isbn) {
         const existing = repo.findDuplicate({ isbn, title: "" });
         if (existing) return c.json({ existing, duplicate: true });
+        await report?.({ phase: "sources", current: 0, total: 1, source: "open-library", message: "Checking Open Library…" });
         const metadata = await lookupOpenLibrary(isbn, fetcher);
+        await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library metadata found." });
         return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings: [] });
       }
 
@@ -765,17 +776,34 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (localExisting) return c.json({ existing: localExisting, duplicate: true });
       let metadata: PaperMetadata;
       const warnings: string[] = [];
+      const sourceTotal = doi ? 1 : 3;
+      let sourceCurrent = 0;
+      const providerLabel = (source: string) => source === "semantic-scholar" ? "Semantic Scholar" : source === "openalex" ? "OpenAlex" : "Crossref";
+      const startSource = async (source: string) => report?.({ phase: "sources", current: sourceCurrent, total: sourceTotal, source, message: `Checking ${providerLabel(source)}…` });
+      const finishSource = async (source: string, found: boolean) => {
+        sourceCurrent += 1;
+        await report?.({ phase: "sources", current: sourceCurrent, total: sourceTotal, source, message: found ? `${providerLabel(source)} checked.` : `${providerLabel(source)} did not return a match.` });
+      };
       try {
+        await startSource("crossref");
         metadata = await lookupCrossref(doi ? { doi } : { title: lookupTitle }, fetcher);
         metadata = verifyCitationMatch(metadata, parsedCitation);
+        await finishSource("crossref", true);
       } catch {
+        await finishSource("crossref", false);
         if (!doi) {
           try {
+            await startSource("openalex");
             metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
+            await finishSource("openalex", true);
           } catch {
+            await finishSource("openalex", false);
             try {
+              await startSource("semantic-scholar");
               metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
+              await finishSource("semantic-scholar", true);
             } catch {
+              await finishSource("semantic-scholar", false);
               metadata = {
                 title: /^https?:\/\//i.test(input) ? "Untitled paper" : lookupTitle,
                 authors: [],
@@ -797,11 +825,19 @@ export function createApp(dependencies: AppDependencies = {}) {
           warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
         }
       }
+      if (sourceCurrent < sourceTotal) {
+        sourceCurrent = sourceTotal;
+        await report?.({ phase: "sources", current: sourceCurrent, total: sourceTotal, message: "Metadata source checks complete." });
+      }
       if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
       const existing = repo.findDuplicate(metadata);
       if (existing) return c.json({ existing, duplicate: true });
+      await report?.({ phase: "enrichment", current: 0, total: 1, message: "Checking metadata enrichment…" });
       metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation);
+      await report?.({ phase: "enrichment", current: 1, total: 1, message: "Metadata enrichment complete." });
+      await report?.({ phase: "pdf", current: 0, total: 1, message: "Checking for an available PDF…" });
       const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      await report?.({ phase: "pdf", current: 1, total: 1, message: downloaded.pdf.status === "staged" ? "PDF ready." : "PDF check complete." });
       if (downloaded.warning) warnings.push(downloaded.warning);
       const stagedPath = downloaded.pdf.status === "staged" ? storage.getStagedPath(downloaded.pdf.stagingToken) : undefined;
       metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation, stagedPath);
@@ -812,10 +848,11 @@ export function createApp(dependencies: AppDependencies = {}) {
     }
   };
 
-  app.post("/api/import", importPaper);
-  app.post("/api/import/arxiv", importPaper);
+  const progressiveImport = (c: Context) => c.req.query("progress") === "1" ? progressStream(c, (report) => importPaper(c, report)) : importPaper(c);
+  app.post("/api/import", progressiveImport);
+  app.post("/api/import/arxiv", progressiveImport);
 
-  app.post("/api/metadata/lookup", async (c) => {
+  const lookupMetadata = async (c: Context, report?: LookupProgressReporter) => {
     try {
       const body = await c.req.json<{ title?: string; doi?: string; isbn?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean }>();
       let metadata: PaperMetadata;
@@ -825,54 +862,86 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (body.isbn) {
         const isbn = normalizeIsbn(body.isbn);
         if (!isbn) return jsonError(c, 400, "INVALID_ISBN", "Enter a valid ISBN-10 or ISBN-13.");
+        await report?.({ phase: "sources", current: 0, total: 1, source: "open-library", message: "Checking Open Library…" });
         metadata = await lookupOpenLibrary(isbn, fetcher);
+        await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library metadata found." });
         provider = "open-library";
       } else if (body.arxivId) {
         const normalized = normalizeArxivInput(body.arxivId);
         if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
+        await report?.({ phase: "sources", current: 0, total: 1, source: "arxiv", message: "Checking arXiv…" });
         metadata = await fetchArxivMetadata(normalized, fetcher);
+        await report?.({ phase: "sources", current: 1, total: 1, source: "arxiv", message: "arXiv metadata found." });
         provider = "arxiv";
       } else {
         const arxivDoi = body.doi ? normalizeArxivDoi(body.doi) : null;
         if (arxivDoi) {
+          await report?.({ phase: "sources", current: 0, total: 1, source: "arxiv", message: "Checking arXiv…" });
           metadata = await fetchArxivMetadata(arxivDoi, fetcher);
+          await report?.({ phase: "sources", current: 1, total: 1, source: "arxiv", message: "arXiv metadata found." });
           provider = "arxiv";
         } else {
           parsedCitation = await parseCitationForLookup(body.title || "");
           lookupTitle = parsedCitation.title || body.title || "";
+          const sourceTotal = body.doi ? 1 : 4;
+          let sourceCurrent = 0;
+          const providerLabel = (source: string) => source === "semantic-scholar" ? "Semantic Scholar" : source === "openalex" ? "OpenAlex" : source === "arxiv" ? "arXiv" : "Crossref";
+          const startSource = async (source: string) => report?.({ phase: "sources", current: sourceCurrent, total: sourceTotal, source, message: `Checking ${providerLabel(source)}…` });
+          const finishSource = async (source: string, found: boolean) => {
+            sourceCurrent += 1;
+            await report?.({ phase: "sources", current: sourceCurrent, total: sourceTotal, source, message: found ? `${providerLabel(source)} checked.` : `${providerLabel(source)} did not return a match.` });
+          };
           try {
+            await startSource("arxiv");
             metadata = await lookupArxivByTitle(lookupTitle, fetcher);
             metadata = verifyCitationMatch(metadata, parsedCitation);
+            await finishSource("arxiv", true);
             provider = "arxiv";
           } catch (error) {
+            await finishSource("arxiv", false);
             if (body.doi || !body.title?.trim()) {
               const doi = body.doi ? doiFromInput(body.doi) : undefined;
+              await startSource("crossref");
               metadata = await lookupCrossref({ title: lookupTitle, doi }, fetcher);
               metadata = verifyCitationMatch(metadata, parsedCitation);
+              await finishSource("crossref", true);
               provider = "crossref";
             } else {
               try {
+                await startSource("crossref");
                 metadata = verifyCitationMatch(await lookupCrossref({ title: lookupTitle }, fetcher), parsedCitation);
+                await finishSource("crossref", true);
                 provider = "crossref";
               } catch {
+                await finishSource("crossref", false);
                 try {
+                  await startSource("openalex");
                   metadata = verifyCitationMatch(await lookupOpenAlex(lookupTitle, fetcher), parsedCitation);
+                  await finishSource("openalex", true);
                   provider = "openalex";
                 } catch {
+                  await finishSource("openalex", false);
+                  await startSource("semantic-scholar");
                   metadata = verifyCitationMatch(await lookupSemanticScholar(lookupTitle, fetcher), parsedCitation);
+                  await finishSource("semantic-scholar", true);
                   provider = "semantic-scholar";
                 }
               }
             }
           }
+          if (sourceCurrent < sourceTotal) await report?.({ phase: "sources", current: sourceTotal, total: sourceTotal, message: "Metadata source checks complete." });
         }
       }
+      await report?.({ phase: "enrichment", current: 0, total: 1, message: "Checking metadata enrichment…" });
       metadata = await fillMissingMetadataAbstract(metadata, metadata.title || lookupTitle, parsedCitation);
+      await report?.({ phase: "enrichment", current: 1, total: 1, message: "Metadata enrichment complete." });
       const existingPaper = body.paperId ? repo.findById(body.paperId) : null;
       const preservePdf = body.preservePdf === true || Boolean(existingPaper?.r2Key);
+      await report?.({ phase: "pdf", current: 0, total: 1, message: preservePdf ? "Preserving the existing PDF…" : "Checking for an available PDF…" });
       const downloaded = preservePdf
         ? { pdf: { status: "preserved" } as StagedPdfResult }
         : await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      await report?.({ phase: "pdf", current: 1, total: 1, message: downloaded.pdf.status === "staged" ? "PDF ready." : "PDF check complete." });
       const pdfPath = downloaded.pdf.status === "staged"
         ? storage.getStagedPath(downloaded.pdf.stagingToken)
         : body.stagingToken?.trim()
@@ -886,7 +955,10 @@ export function createApp(dependencies: AppDependencies = {}) {
       const message = errorMessage(error);
       return jsonError(c, isClientValidationError(message) ? 400 : 404, message, "No matching citation metadata was found.");
     }
-  });
+  };
+
+  const progressiveMetadataLookup = (c: Context) => c.req.query("progress") === "1" ? progressStream(c, (report) => lookupMetadata(c, report)) : lookupMetadata(c);
+  app.post("/api/metadata/lookup", progressiveMetadataLookup);
 
   app.post("/api/metadata/bibtex", async (c) => {
     try {

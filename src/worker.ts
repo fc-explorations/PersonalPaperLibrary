@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type RemoteJWKSet } from "jose";
 import { Hono, type Context } from "hono";
+import { streamText } from "hono/streaming";
 import type { D1Database } from "./cloudflare/d1.js";
 import { D1AnalysisRepository } from "./repositories/d1-analysis.js";
 import { D1AnalysisJobRepository } from "./repositories/d1-analysis-jobs.js";
@@ -44,6 +45,24 @@ interface QueueMessage {
 
 interface QueueBatch {
   messages: QueueMessage[];
+}
+
+type LookupProgressEvent = { phase: "sources" | "enrichment" | "pdf"; current: number; total: number; source?: string; message: string };
+type LookupProgressReporter = (event: LookupProgressEvent) => Promise<void> | void;
+
+function progressStream(c: Context, operation: (report: LookupProgressReporter) => Promise<Response>): Response {
+  const response = streamText(c, async (stream) => {
+    const report: LookupProgressReporter = async (event) => {
+      await stream.write(`${JSON.stringify({ type: "progress", ...event })}\n`);
+    };
+    const response = await operation(report);
+    const body = await response.json().catch(() => ({}));
+    await stream.write(`${JSON.stringify({ type: "result", ok: response.ok, status: response.status, body })}\n`);
+  }, async (error, stream) => {
+    await stream.write(`${JSON.stringify({ type: "result", ok: false, status: 502, body: { error: { message: error instanceof Error ? error.message : "Request failed" } } })}\n`);
+  });
+  response.headers.set("Content-Type", "application/x-ndjson; charset=utf-8");
+  return response;
 }
 
 export interface CloudflareBindings {
@@ -103,13 +122,17 @@ function hostedShell(title: string, page: string, body: string): string {
 </html>`;
   const withRenderScaleSettings = markup.replace(
     '<div class="settings-group"><h2>Entries per page</h2>',
-    '<div class="settings-group"><h2>Rendering scale</h2><p class="muted">Scale the complete interface to fit more content on smaller screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="renderScale" value="100" data-theme-setting="renderScale"><span>100%</span></label><label class="width-option"><input type="radio" name="renderScale" value="95" data-theme-setting="renderScale"><span>95%</span></label><label class="width-option"><input type="radio" name="renderScale" value="90" data-theme-setting="renderScale"><span>90%</span></label><label class="width-option"><input type="radio" name="renderScale" value="85" data-theme-setting="renderScale"><span>85%</span></label><label class="width-option"><input type="radio" name="renderScale" value="80" data-theme-setting="renderScale"><span>80%</span></label><label class="width-option"><input type="radio" name="renderScale" value="75" data-theme-setting="renderScale"><span>75%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2>',
+    '<div class="settings-group"><h2>Rendering scale</h2><p class="muted">Scale the complete interface to fit more content on smaller screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="renderScale" value="100" data-theme-setting="renderScale"><span>100%</span></label><label class="width-option"><input type="radio" name="renderScale" value="90" data-theme-setting="renderScale"><span>90%</span></label><label class="width-option"><input type="radio" name="renderScale" value="80" data-theme-setting="renderScale"><span>80%</span></label><label class="width-option"><input type="radio" name="renderScale" value="70" data-theme-setting="renderScale"><span>70%</span></label><label class="width-option"><input type="radio" name="renderScale" value="60" data-theme-setting="renderScale"><span>60%</span></label><label class="width-option"><input type="radio" name="renderScale" value="50" data-theme-setting="renderScale"><span>50%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2>',
   );
-  return withRenderScaleSettings
+  const withPageSizeSettings = withRenderScaleSettings.replace(
+    /<div class="settings-group"><h2>Entries per page<\/h2><p class="muted">Choose how many papers appear on each library page\.<\/p><div class="width-options">.*?<\/div><\/div>/,
+    '<div class="settings-group"><h2>Entries per page</h2><p class="muted">Choose how many papers appear on each library page.</p><div class="width-options"><label class="width-option"><input type="radio" name="pageSize" value="5" data-theme-setting="pageSize"><span>5</span></label><label class="width-option"><input type="radio" name="pageSize" value="7" data-theme-setting="pageSize"><span>7</span></label><label class="width-option"><input type="radio" name="pageSize" value="10" data-theme-setting="pageSize"><span>10</span></label><label class="width-option"><input type="radio" name="pageSize" value="25" data-theme-setting="pageSize"><span>25</span></label><label class="width-option"><input type="radio" name="pageSize" value="50" data-theme-setting="pageSize"><span>50</span></label><label class="width-option"><input type="radio" name="pageSize" value="100" data-theme-setting="pageSize"><span>100</span></label></div></div>',
+  );
+  return withPageSizeSettings
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=46")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=25")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=47")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=26")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -289,11 +312,31 @@ function arxivFromMetadata(metadata: PaperMetadata): ReturnType<typeof normalize
   return undefined;
 }
 
-async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsedCitation?: ParsedCitationInput): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[] }> {
+async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsedCitation?: ParsedCitationInput, report?: LookupProgressReporter, fallbackTitle?: string): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[]; partial?: boolean }> {
   const normalized = normalizeArxivInput(input) || normalizeArxivDoi(input);
-  if (normalized) return { metadata: await fetchArxivMetadata(normalized, fetcher), arxiv: normalized, warnings: [] };
+  if (normalized) {
+    await report?.({ phase: "sources", current: 0, total: 1, source: "arxiv", message: "Checking arXiv…" });
+    const metadata = await fetchArxivMetadata(normalized, fetcher);
+    await report?.({ phase: "sources", current: 1, total: 1, source: "arxiv", message: "arXiv metadata found." });
+    return { metadata, arxiv: normalized, warnings: [] };
+  }
   const isbn = isbnFromInput(input);
-  if (isbn) return { metadata: await lookupOpenLibrary(isbn, fetcher), warnings: [] };
+  if (isbn) {
+    await report?.({ phase: "sources", current: 0, total: 1, source: "open-library", message: "Checking Open Library…" });
+    try {
+      const metadata = await lookupOpenLibrary(isbn, fetcher);
+      await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library metadata found." });
+      return { metadata, warnings: [] };
+    } catch (error) {
+      if (errorMessage(error) !== "OPENLIBRARY_NO_MATCH") throw error;
+      await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library has no record for this ISBN." });
+      return {
+        metadata: { title: fallbackTitle?.trim() || `ISBN ${isbn}`, authors: [], categories: [], isbn, metadataSource: "manual" },
+        warnings: ["No Open Library record was found for this ISBN. The ISBN was retained; review the existing metadata and save manually."],
+        partial: true,
+      };
+    }
+  }
   const doi = normalizeDoiInput(input);
   const title = parsedCitation?.title || input.trim();
   const warnings: string[] = [];
@@ -303,24 +346,35 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
     return candidate;
   };
   if (doi) {
+    await report?.({ phase: "sources", current: 0, total: 1, source: "crossref", message: "Checking Crossref…" });
     try {
       metadata = verify(await lookupCrossref({ doi }, fetcher));
+      await report?.({ phase: "sources", current: 1, total: 1, source: "crossref", message: "Crossref checked." });
     } catch {
+      await report?.({ phase: "sources", current: 1, total: 1, source: "crossref", message: "Crossref did not return a match." });
       warnings.push("Citation metadata was not found. You can save this DOI-only record or edit it manually.");
     }
   } else {
     // Provider latency is highly variable, especially for arXiv search and
     // Crossref. Run the title lookups together so one slow provider does not
     // block the providers that can already identify the paper.
-    const candidates = await Promise.all([
+    const providers = [
       ["arxiv", () => lookupArxivByTitle(title, fetcher)],
       ["crossref", () => lookupCrossref({ title }, fetcher)],
       ["openalex", () => lookupOpenAlex(title, fetcher)],
       ["semantic-scholar", () => lookupSemanticScholar(title, fetcher)],
-    ].map(async ([provider, lookup]) => {
+    ] as const;
+    let completedSources = 0;
+    const candidates = await Promise.all(providers.map(async ([provider, lookup]) => {
+      await report?.({ phase: "sources", current: completedSources, total: providers.length, source: provider, message: `Checking ${provider === "semantic-scholar" ? "Semantic Scholar" : provider === "openalex" ? "OpenAlex" : provider === "arxiv" ? "arXiv" : "Crossref"}…` });
       try {
-        return verify(await (lookup as () => Promise<PaperMetadata>)());
+        const result = verify(await lookup());
+        completedSources += 1;
+        await report?.({ phase: "sources", current: completedSources, total: providers.length, source: provider, message: `${provider === "semantic-scholar" ? "Semantic Scholar" : provider === "openalex" ? "OpenAlex" : provider === "arxiv" ? "arXiv" : "Crossref"} checked.` });
+        return result;
       } catch {
+        completedSources += 1;
+        await report?.({ phase: "sources", current: completedSources, total: providers.length, source: provider, message: `${provider === "semantic-scholar" ? "Semantic Scholar" : provider === "openalex" ? "OpenAlex" : provider === "arxiv" ? "arXiv" : "Crossref"} did not return a match.` });
         return undefined;
       }
     }));
@@ -358,7 +412,9 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
     }
   }
 
+  await report?.({ phase: "enrichment", current: 0, total: 1, message: "Checking metadata enrichment…" });
   metadata = await fillHostedMetadataAbstract(metadata, metadata.title || title, fetcher);
+  await report?.({ phase: "enrichment", current: 1, total: 1, message: "Metadata enrichment complete." });
   return { metadata, arxiv, warnings };
 }
 
@@ -498,15 +554,15 @@ app.get("/add", (c) => c.html(hostedShell("Add paper", "add", `<main class="shel
 
 app.get("/import", (c) => c.redirect("/add"));
 
-const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
+const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>, report?: LookupProgressReporter) => {
   try {
-    const body = await c.req.json<{ input?: string; paperId?: string; stagingToken?: string }>();
+    const body = await c.req.json<{ input?: string; title?: string; paperId?: string; stagingToken?: string }>();
     const input = body.input?.trim() || "";
     if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter an arXiv identifier, DOI, ISBN, or paper title.");
     const repo = new D1PaperRepository(c.env.DB);
     const fetcher = (request: RequestInfo | URL, init?: RequestInit) => fetch(request, init);
     const parsedCitation = isbnFromInput(input) ? undefined : await parseHostedCitationForLookup(c.env, input);
-    const lookup = await lookupHostedMetadata(input, fetcher, parsedCitation);
+    const lookup = await lookupHostedMetadata(input, fetcher, parsedCitation, report, body.title);
     let metadata = lookup.metadata;
     const existing = await repo.findDuplicate(metadata);
     if (existing && existing.id !== body.paperId) return c.json({ existing, duplicate: true });
@@ -514,6 +570,7 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
     const warnings = [...lookup.warnings];
     let pdf: { status: string; stagingToken?: string; sizeBytes?: number; sha256?: string } = { status: "not_found" };
     const storage = new R2Storage(c.env.PAPER_PDFS);
+    await report?.({ phase: "pdf", current: 0, total: 1, message: "Checking for an available PDF…" });
     try {
       if (body.stagingToken?.trim()) {
         const stagedSource = await storage.getStagedFile(body.stagingToken.trim());
@@ -533,6 +590,7 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
       pdf = { status: code === "PDF_TOO_LARGE" ? "too_large" : "not_found" };
       warnings.push(code === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
     }
+    await report?.({ phase: "pdf", current: 1, total: 1, message: pdf.status === "staged" ? "PDF ready." : "PDF check complete." });
     // A title-only fallback can happen when a provider is temporarily
     // unavailable. Retry metadata enrichment after the PDF has been staged;
     // the abstract may come from the PDF, but the remaining fields should
@@ -552,15 +610,16 @@ const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
         }
       }
     }
-    return c.json({ paper: metadata, pdf, warnings });
+    return c.json({ paper: metadata, pdf, warnings, partialMetadata: lookup.partial || false });
   } catch (error) {
     const code = errorMessage(error);
     return jsonError(c, code === "INVALID_ISBN" ? 400 : 502, code, "The paper could not be imported.");
   }
 };
 
-app.post("/api/import", hostedImport);
-app.post("/api/import/arxiv", hostedImport);
+const progressiveHostedImport = (c: Context<{ Bindings: CloudflareBindings }>) => c.req.query("progress") === "1" ? progressStream(c, (report) => hostedImport(c, report)) : hostedImport(c);
+app.post("/api/import", progressiveHostedImport);
+app.post("/api/import/arxiv", progressiveHostedImport);
 
 app.post("/api/metadata/bibtex", async (c) => {
   try {
