@@ -24,6 +24,30 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
 }
 
+function updateOperationProgress(progress, finished, total) {
+  if (!progress || !total) return;
+  const percent = Math.min(100, Math.round((finished / total) * 100));
+  progress.hidden = false;
+  progress.setAttribute("aria-valuenow", String(percent));
+  const fill = progress.querySelector("[data-operation-progress-fill], [data-bulk-progress-fill]");
+  if (fill) fill.style.width = `${percent}%`;
+}
+
+function createOperationProgress(anchor) {
+  const progress = document.createElement("div");
+  progress.className = "operation-progress";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", "Operation progress");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", "0");
+  const fill = document.createElement("span");
+  fill.dataset.operationProgressFill = "";
+  progress.append(fill);
+  anchor?.after(progress);
+  return progress;
+}
+
 document.addEventListener("click", (event) => {
   const target = event.target;
   const link = target instanceof Element ? target.closest("[data-paper-pdf-link]") : null;
@@ -189,11 +213,14 @@ function hostedLibrarySelectionUrl(ids) {
 
 function paperCard(paper) {
   const tags = (paper.tags || []).map((tag) => `<a class="tag" href="${libraryUrl(libraryState(), { tags: [tag], untagged: false, page: 1 })}">${escapeHtml(tag)}</a>`).join(" ");
-  const authors = (paper.authors || []).join(", ");
+  const authors = paper.authors || [];
+  const authorLine = authors.length <= 3 ? authors.join(", ") : `${authors.slice(0, 3).join(", ")} et al.`;
   const venue = paper.acceptedVenue || paper.journalRef || "";
-  const meta = [authors || "No authors recorded", venue, paper.year ? String(paper.year) : ""].filter(Boolean).join(" · ");
+  const sourceUrl = paper.arxivId ? (paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`) : paper.sourceUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");
+  const sourceLabel = paper.arxivId ? `arXiv:${paper.arxivId}` : paper.doi ? `DOI:${paper.doi}` : sourceUrl ? "Source" : "";
+  const meta = [`<span class="paper-authors">${escapeHtml(authorLine || "No authors recorded")}</span>`, venue ? escapeHtml(venue) : "", paper.year ? String(paper.year) : "", sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(sourceLabel)}</a>` : ""].filter(Boolean).join(" · ");
   const selected = libraryState().selected.includes(paper.id);
-  return `<article class="paper-card">${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing"><span class="material-symbols-outlined" aria-hidden="true">picture_as_pdf</span></span>`}<label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${escapeHtml(meta)}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
+  return `<article class="paper-card">${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing"><span class="material-symbols-outlined" aria-hidden="true">picture_as_pdf</span></span>`}<label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${meta}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
 }
 
 function renderLibraryTags(tags, state) {
@@ -598,12 +625,14 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const zipFiles = source === "zip" ? [...(form.querySelector("[data-folder-zip-input]")?.files || [])] : [];
   if (!pdfFiles.length && !zipFiles.length) return setStatus(form, "Choose a folder or ZIP archive containing PDF files.", true);
   const importLabel = source === "zip" ? "PDFs from ZIP" : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
+  const files = source === "folder" ? pdfFiles : zipFiles;
+  const progress = form.querySelector("[data-bulk-progress]");
   setStatus(form, `Importing 0 of ${source === "folder" ? `${pdfFiles.length} PDFs` : "1 ZIP archive"}… ETA calculating…`);
+  updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
     const archiveTag = zipFiles[0]?.name.replace(/\.zip$/i, "") || "";
-    const files = source === "folder" ? pdfFiles : zipFiles;
     const imported = [], skipped = [], failed = [];
     const startedAt = performance.now();
     const formatEta = (milliseconds) => { const seconds = Math.max(1, Math.ceil(milliseconds / 1000)); if (seconds < 60) return `${seconds}s`; const minutes = Math.floor(seconds / 60); const remaining = seconds % 60; return `${minutes}m${remaining ? ` ${remaining}s` : ""}`; };
@@ -624,6 +653,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       const average = (performance.now() - startedAt) / finished;
       const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
       setStatus(form, `Importing ${finished} of ${files.length} ${source === "folder" ? "PDFs" : "ZIP archives"}…${eta}`);
+      updateOperationProgress(progress, finished, files.length);
     }
     setStatus(form, `Imported ${imported.length}; skipped ${skipped.length}; failed ${failed.length}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
@@ -843,6 +873,12 @@ function initHostedQuestions() {
     const buttons = [...section.querySelectorAll("[data-generate-question]")];
     const pending = buttons.filter((questionButton) => !questionButton.closest("[data-question-id]")?.querySelector(".question-answer"));
     const skipped = buttons.length - pending.length;
+    if (!pending.length) {
+      setStatus(status, "All answers have already been generated.");
+      button.disabled = false;
+      return;
+    }
+    const progress = createOperationProgress(status);
     const formatRemainingTime = (milliseconds) => {
       const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
       if (seconds < 60) return `${seconds}s`;
@@ -860,6 +896,7 @@ function initHostedQuestions() {
       const averageDuration = durations.length ? durations.reduce((total, duration) => total + duration, 0) / durations.length : 0;
       const estimate = averageDuration && remaining ? ` ETA ~${formatRemainingTime(averageDuration)} remaining` : "";
       setStatus(status, `Generating answer ${Math.min(finished + 1, pending.length)} of ${pending.length}…${estimate}`);
+      updateOperationProgress(progress, finished, pending.length);
     };
     updateProgress();
     await Promise.all(pending.map(async (questionButton) => {

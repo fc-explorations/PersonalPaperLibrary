@@ -661,13 +661,15 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const importLabel = source === "zip"
     ? "PDFs from ZIP"
     : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
+  const files = source === "folder" ? pdfFiles : zipFiles;
+  const progress = form.querySelector("[data-bulk-progress]");
   setStatus(form, `Importing 0 of ${source === "folder" ? `${pdfFiles.length} PDFs` : "1 ZIP archive"}… ETA calculating…`);
+  updateOperationProgress(progress, 0, files.length);
   try {
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
     const archiveTag = zipFiles[0]?.name.replace(/\.zip$/i, "") || "";
     const useFolderAsTag = form.querySelector("[data-folder-tag-toggle]");
-    const files = source === "folder" ? pdfFiles : zipFiles;
     const imported = [], skipped = [], failed = [];
     const startedAt = performance.now();
     const formatEta = (milliseconds) => { const seconds = Math.max(1, Math.ceil(milliseconds / 1000)); if (seconds < 60) return `${seconds}s`; const minutes = Math.floor(seconds / 60); const remaining = seconds % 60; return `${minutes}m${remaining ? ` ${remaining}s` : ""}`; };
@@ -688,6 +690,7 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
       const average = (performance.now() - startedAt) / finished;
       const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
       setStatus(form, `Importing ${finished} of ${files.length} ${source === "folder" ? "PDFs" : "ZIP archives"}…${eta}`);
+      updateOperationProgress(progress, finished, files.length);
     }
     setStatus(form, `Imported ${imported.length}; skipped ${skipped.length}; failed ${failed.length}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
@@ -1021,6 +1024,7 @@ document.querySelector("[data-generate-all-questions]")?.addEventListener("click
     button.disabled = false;
     return;
   }
+  const progress = createOperationProgress(status);
   let completed = 0;
   let failed = 0;
   const durations = [];
@@ -1037,6 +1041,7 @@ document.querySelector("[data-generate-all-questions]")?.addEventListener("click
     const averageDuration = durations.length ? durations.reduce((total, duration) => total + duration, 0) / durations.length : 0;
     const estimate = averageDuration && remaining ? ` ETA ~${formatRemainingTime(averageDuration)} remaining` : "";
     if (status) status.textContent = `Generating answer ${Math.min(finished + 1, pendingButtons.length)} of ${pendingButtons.length}…${estimate}`;
+    updateOperationProgress(progress, finished, pendingButtons.length);
   };
   updateProgress();
   await Promise.all(pendingButtons.map(async (questionButton) => {
@@ -1162,6 +1167,30 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
 
 function escapeText(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function updateOperationProgress(progress, finished, total) {
+  if (!progress || !total) return;
+  const percent = Math.min(100, Math.round((finished / total) * 100));
+  progress.hidden = false;
+  progress.setAttribute("aria-valuenow", String(percent));
+  const fill = progress.querySelector("[data-operation-progress-fill], [data-bulk-progress-fill]");
+  if (fill) fill.style.width = `${percent}%`;
+}
+
+function createOperationProgress(anchor) {
+  const progress = document.createElement("div");
+  progress.className = "operation-progress";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", "Operation progress");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", "0");
+  const fill = document.createElement("span");
+  fill.dataset.operationProgressFill = "";
+  progress.append(fill);
+  anchor?.after(progress);
+  return progress;
 }
 
 const libraryToolbar = document.querySelector(".toolbar");
