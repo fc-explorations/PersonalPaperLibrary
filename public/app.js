@@ -581,7 +581,8 @@ document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => bu
   const names = [...current, ...selected].filter(Boolean).filter((name, index, values) => values.findIndex((candidate) => candidate.toLocaleLowerCase() === name.toLocaleLowerCase()) === index);
   setValue(form, "tags", names.join(", "));
   panel.hidden = true;
-  setStatus(form, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
+  if (form.dataset.paperId) void savePaperForm(form, { statusMessage: `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added and saved.` });
+  else setStatus(form, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
 }));
 
 document.querySelectorAll("[data-folder-tag-toggle]").forEach((toggle) => toggle.addEventListener("change", () => {
@@ -702,6 +703,11 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
 
 document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  await savePaperForm(form, { redirect: !form.dataset.paperId });
+}));
+
+const autosaveStates = new WeakMap();
+async function savePaperForm(form, { redirect = false, statusMessage = "Saved." } = {}) {
   setStatus(form, "Saving…");
   const body = {
     title: value(form, "title"), authors: value(form, "authors").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
@@ -713,11 +719,35 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
   const id = form.dataset.paperId;
   try {
     const result = await jsonRequest(id ? `/api/papers/${encodeURIComponent(id)}` : "/api/papers", { method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
+    if (redirect) window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
+    else setStatus(form, statusMessage);
+    return result;
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
+    return null;
   }
-}));
+}
+
+function schedulePaperAutosave(form, delay = 650) {
+  if (form.dataset.mode !== "edit") return;
+  const state = autosaveStates.get(form) || { timer: 0, saving: false, queued: false };
+  state.queued = true;
+  window.clearTimeout(state.timer);
+  state.timer = window.setTimeout(async () => {
+    if (state.saving) return;
+    state.saving = true;
+    state.queued = false;
+    await savePaperForm(form);
+    state.saving = false;
+    if (state.queued) schedulePaperAutosave(form, 0);
+  }, delay);
+  autosaveStates.set(form, state);
+}
+
+document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach((form) => {
+  form.addEventListener("input", () => schedulePaperAutosave(form));
+  form.addEventListener("change", () => schedulePaperAutosave(form, 0));
+});
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = button.form || button.closest("[data-paper-form]");
@@ -750,7 +780,8 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     updateWebResource(form, result.paper, result.pdf);
     const pdfMessage = result.pdf?.status === "staged" ? " PDF ready to store." : "";
     const warningMessage = result.warnings?.length ? ` ${result.warnings.join(" ")}` : "";
-    setStatus(form, `Metadata found via ${result.provider}.${pdfMessage} Review it, then save.${warningMessage}`);
+    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: `Metadata found via ${result.provider}; saved.${pdfMessage}${warningMessage}` });
+    else setStatus(form, `Metadata found via ${result.provider}.${pdfMessage} Review it, then save.${warningMessage}`);
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
@@ -773,7 +804,8 @@ document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.
   try {
     const body = await jsonRequest("/api/abstract/extract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(stagingToken ? { stagingToken } : { paperId }) });
     setValue(form, "abstract", body.abstract);
-    setStatus(form, "Abstract extracted from the PDF. Review it before saving.");
+    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: "Abstract extracted and saved." });
+    else setStatus(form, "Abstract extracted from the PDF. Review it before saving.");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   } finally {
@@ -790,7 +822,8 @@ document.querySelector("[data-replace-upload]")?.addEventListener("submit", asyn
     const body = await jsonRequest("/api/uploads", { method: "POST", body: new FormData(form) });
     const paperForm = document.querySelector("[data-paper-form]");
     setValue(paperForm, "stagingToken", body.pdf.stagingToken);
-    setStatus(form, "Replacement staged. Save changes to apply it.");
+    if (paperForm?.dataset.paperId) await savePaperForm(paperForm, { statusMessage: "Replacement PDF staged and saved." });
+    else setStatus(form, "Replacement staged. Save paper to apply it.");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }

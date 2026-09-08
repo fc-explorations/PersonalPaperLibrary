@@ -137,7 +137,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-  <script src="/app.js?v=32" defer></script>
+  <script src="/app.js?v=33" defer></script>
 </body>
 </html>`;
 }
@@ -461,7 +461,8 @@ function abstractField(value: unknown): string {
 }
 
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button><button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>${isEdit ? "Save changes" : "Save paper"}</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  const saveButton = isEdit ? "" : `<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>Save paper</span></button>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {

@@ -92,7 +92,7 @@ function hostedShell(title: string, page: string, body: string): string {
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
     .replace(/styles\.css\?v=33/g, "styles.css?v=38")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=16")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=17")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -138,7 +138,7 @@ function hostedPdfFilename(title: string, used: Set<string>): string {
 }
 
 function hostedEditActions(formId: string): string {
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${`<span class="material-symbols-outlined" aria-hidden="true">search</span>`}<span>Find metadata</span></button><button class="button" type="submit" form="${escapeHtml(formId)}">${`<span class="material-symbols-outlined" aria-hidden="true">save</span>`}<span>Save changes</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${`<span class="material-symbols-outlined" aria-hidden="true">search</span>`}<span>Find metadata</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 function hostedRenderedAnalysis(value: string): string {
