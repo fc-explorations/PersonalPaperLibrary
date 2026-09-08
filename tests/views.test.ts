@@ -48,6 +48,8 @@ describe("add page rendering", () => {
     expect(html).toContain('data-folder-tag-value>True</span>');
     expect(html).toContain("Use folder as tag");
     expect(html).toContain('data-folder-zip-input');
-    expect(html).toContain("Choose ZIP");
+    expect(html).toContain("Import");
+    expect(html).toContain("From Folder");
+    expect(html).toContain("From ZIP");
   });
 });

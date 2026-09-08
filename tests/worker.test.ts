@@ -214,8 +214,9 @@ describe("Cloudflare Worker API", () => {
     expect(html).toContain('input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf"');
     expect(html).toContain('data-folder-pdf-input');
     expect(html).toContain('data-folder-zip-input');
-    expect(html).toContain("Choose folder");
-    expect(html).toContain("Choose ZIP");
+    expect(html).toContain("Import");
+    expect(html).toContain("From Folder");
+    expect(html).toContain("From ZIP");
     expect(html).toContain('data-paper-form data-mode="add"');
     expect(html).toContain('data-lookup-metadata');
     expect(html).toContain("Primary category");
