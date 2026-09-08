@@ -13,7 +13,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - Existing schema: SQLite migrations `0001` through `0008`; hosted migrations must preserve the current data model and import path.
 - Hosted runtime constraint: Workers cannot use native SQLite, the local filesystem, child processes, macOS Keychain, or a long-lived in-process job queue.
 - Provisioned Cloudflare resources: D1 database `personal-paper-library` (`125f7459-7799-4ece-b407-ef4152b93460`) and R2 bucket `personal-paper-library` in Western Europe with Standard storage and public access disabled.
-- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a hosted UI for keyword/semantic library search, multi-PDF upload, paper selection/deletion, detail/edit, settings, arXiv/DOI/title import, PDF viewing, metadata export, summaries, questions, and merge-based backup/restore are deployed at `https://personal-paper-library.xfcosta.workers.dev`; large-library restore hardening and some citation-management features remain pending.
+- Current hosted status: Worker scaffold, core async D1 repositories, standalone R2 storage, tested D1/R2 paper and analysis-persistence API slices, durable D1 analysis jobs, a Cloudflare Queue producer/consumer, a Worker-native PDF extractor/executor, and a hosted UI for keyword/semantic library search, multi-PDF/folder/ZIP upload, paper selection/deletion, detail/edit, settings, arXiv/DOI/title import, PDF viewing, metadata export, summaries, questions, and merge-based backup/restore are deployed at `https://personal-paper-library.xfcosta.workers.dev`; large-library restore hardening and some citation-management features remain pending.
 - Remote migration status: the cloud baseline and `0002_analysis_jobs.sql` have been applied to the remote D1 database after Wrangler authentication and verified with read-only table queries.
 
 ## Non-goals
@@ -66,8 +66,10 @@ These spikes should happen before a large migration. Record the result of each d
 - [x] Add standalone asynchronous D1 Paper, Tag, and Analysis repositories with focused tests.
 - [x] Add an initial Worker API slice for D1 paper/tag operations and R2 PDF staging, reading, and deletion with focused tests.
 - [x] Add an initial hosted UI for search, PDF upload, metadata save, PDF viewing, and deletion.
+- [x] Align the hosted library, Add, Ask, Settings, paper-detail, and edit surfaces with the local interface structure and visual system while retaining hosted-only backup controls.
 - [x] Extend the hosted UI with paper detail/edit, hosted AI settings, arXiv metadata import with PDF staging, summaries, and questions.
 - [x] Extend hosted uploads with multi-PDF selection and add safe bulk paper deletion.
+- [x] Bring hosted folder and ZIP PDF imports to local parity, including folder tagging and Worker-side archive extraction.
 - [x] Add hosted Ask the library search with D1 indexing, OpenAI embeddings, semantic ranking, and keyword fallback.
 - [x] Extend hosted import to DOI and title lookup with Crossref, OpenAlex, Semantic Scholar fallback, and best-effort PDF staging.
 - [x] Add a hosted metadata JSON export; keep full PDF backup/restore for the versioned archive phase.

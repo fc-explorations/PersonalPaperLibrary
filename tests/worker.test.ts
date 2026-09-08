@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import worker, { type CloudflareBindings } from "../src/worker.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
+import { createZip } from "../src/services/zip.js";
 
 class MemoryD1 implements D1Database {
   readonly db = new Database(":memory:");
@@ -202,11 +203,55 @@ describe("Cloudflare Worker API", () => {
 
   it("exposes hosted bulk upload and deletion controls", async () => {
     const env = bindings();
-    const response = await worker.request("/", {}, env);
+    const response = await worker.request("/add", {}, env);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain('input name="file" type="file" accept="application/pdf" multiple');
-    expect(html).toContain('id="delete-selected"');
+    expect(html).toContain('input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf"');
+    expect(html).toContain('data-folder-pdf-input');
+    expect(html).toContain('data-folder-zip-input');
+    expect(html).toContain("Choose folder");
+    expect(html).toContain("Choose ZIP");
+    expect(html).toContain('data-paper-form data-mode="add"');
+    expect(html).toContain('data-lookup-metadata');
+    expect(html).toContain("Primary category");
+    expect(html).toContain("Open web resource");
+    const library = await worker.request("/", {}, env);
+    expect(await library.text()).toMatch(/id="library-search-form"[\s\S]*id="library-tags"[\s\S]*id="bulk-actions"/);
+    const paper = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ui-edit-paper", title: "UI edit paper", metadataSource: "manual" }) }, env);
+    expect(paper.status).toBe(201);
+    expect((await worker.request("/papers/ui-edit-paper/edit", {}, env)).status).toBe(200);
+    env.d1.db.close();
+  });
+
+  it("imports hosted folders and ZIP archives as editable papers", async () => {
+    const env = bindings();
+    const zippedPdf = new Uint8Array(new TextEncoder().encode("%PDF-1.7\nhosted zip paper"));
+    const archive = createZip([{ name: "papers/zipped-paper.pdf", data: zippedPdf }]);
+    const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
+    const form = new FormData();
+    form.append("files", new File([pdf], "folder-paper.pdf", { type: "application/pdf" }));
+    form.append("files", new File([archiveBuffer], "papers.zip", { type: "application/zip" }));
+    form.append("folderTag", "Hosted imports");
+    form.append("useFolderAsTag", "true");
+    const response = await worker.request("/api/bulk-upload", { method: "POST", body: form }, env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ imported: [{ filename: "folder-paper.pdf" }, { filename: "papers/zipped-paper.pdf" }], skipped: [], failed: [], folderTag: "hosted imports" });
+    const papers = await worker.request("/api/papers?tag=hosted%20imports&limit=10", {}, env);
+    expect((await papers.json() as { papers: Array<{ tags: string[] }> }).papers).toHaveLength(2);
+    env.d1.db.close();
+  });
+
+  it("supports hosted bulk tag and delete actions", async () => {
+    const env = bindings();
+    for (const id of ["bulk-one", "bulk-two"]) {
+      const response = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, title: id, metadataSource: "manual" }) }, env);
+      expect(response.status).toBe(201);
+    }
+    const tagged = await worker.request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: ["bulk-one", "bulk-two"], name: "important", action: "add" }) }, env);
+    expect(tagged.status).toBe(200);
+    await expect((await worker.request("/api/papers/bulk-one", {}, env)).text()).resolves.toContain("important");
+    const deleted = await worker.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: ["bulk-one", "bulk-two"] }) }, env);
+    expect(deleted.status).toBe(200);
     env.d1.db.close();
   });
 
@@ -273,6 +318,43 @@ describe("Cloudflare Worker API", () => {
       const title = await worker.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "Hosted title fallback" }) }, env);
       expect(title.status).toBe(200);
       expect(await title.json()).toMatchObject({ paper: { title: "Hosted title fallback", authors: ["Grace Hopper"] }, pdf: { status: "not_found" } });
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
+  });
+
+  it("stages the arXiv PDF when a title provider exposes an arXiv record", async () => {
+    const env = bindings();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org/works?query.title=")) return new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+      if (url.includes("api.openalex.org")) {
+        return new Response(JSON.stringify({
+          results: [{
+            title: "Dropout as a Bayesian Approximation: Representing Model Uncertainty in Deep Learning",
+            publication_year: 2015,
+            publication_date: "2015-06-06",
+            authorships: [{ author: { display_name: "Yarin Gal" } }, { author: { display_name: "Zoubin Ghahramani" } }],
+            ids: { doi: "https://doi.org/10.48550/arXiv.1506.02142" },
+            primary_location: { landing_page_url: "https://arxiv.org/abs/1506.02142", pdf_url: "https://arxiv.org/pdf/1506.02142" },
+          }],
+        }), { status: 200 });
+      }
+      if (url.includes("arxiv.org/pdf/1506.02142")) return new Response("%PDF-1.7\narxiv", { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      const response = await worker.request("/api/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: "Dropout as a Bayesian Approximation: Representing Model Uncertainty in Deep Learning" }),
+      }, env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        paper: { arxivId: "1506.02142" },
+        pdf: { status: "staged" },
+      });
     } finally {
       vi.unstubAllGlobals();
       env.d1.db.close();

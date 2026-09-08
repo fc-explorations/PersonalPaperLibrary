@@ -97,6 +97,11 @@ export class R2Storage {
     await this.bucket.delete(this.stagingKey(token));
   }
 
+  async getStagedFile(token: string): Promise<R2ObjectBodyLike | null> {
+    assertToken(token);
+    return this.bucket.get(this.stagingKey(token));
+  }
+
   async put(paperId: string, bytes: Uint8Array): Promise<R2StoredPdf> {
     assertPaperId(paperId);
     const key = this.paperKey(paperId);

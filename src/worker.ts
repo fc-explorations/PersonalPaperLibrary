@@ -17,6 +17,10 @@ import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDo
 import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput, PaperMetadata } from "./types.js";
 import { OpenAiEmbeddingClient } from "./services/embeddings.js";
+import { extractWorkerPdfFiles, type WorkerZipFile } from "./services/worker-zip.js";
+import { takeFirstPages } from "./services/pdf-analysis-core.js";
+import { OpenAiLlmClient } from "./services/llm.js";
+import { suggestTags } from "./services/tag-suggestions.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -45,6 +49,7 @@ export interface CloudflareBindings {
   ACCESS_AUDIENCE?: string;
   ACCESS_ALLOWED_EMAIL?: string;
   MAX_PDF_BYTES?: string;
+  MAX_REQUEST_BYTES?: string;
   OPENAI_API_KEY?: string;
   ANALYSIS_QUEUE?: AnalysisQueue;
   AI?: WorkersAiMarkdownBinding;
@@ -61,16 +66,21 @@ function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character] || character));
 }
 
+function hostedSettingsIcon(): string {
+  return `<svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.7 7.7 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.58-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .5-.42l.38-2.65c.61-.25 1.18-.58 1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>`;
+}
+
 function hostedShell(title: string, page: string, body: string): string {
-  return `<!doctype html>
+  const markup = `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet"><link rel="stylesheet" href="/styles.css?v=28"></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet"><link rel="stylesheet" href="/styles.css?v=32"></head>
   <body data-hosted-page="${escapeHtml(page)}">
     <header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary"><span class="wordmark">Personal</span><span class="wordmark wordmark-paper">Paper</span><span class="wordmark">Library</span></a><div class="header-actions"><a class="settings-link" href="/settings" aria-label="Settings" title="Settings"><svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.7 7.7 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.58-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .5-.42l.38-2.65c-.61-.25-1.18-.58-1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0 .12-.64l-2.11-1.65Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></a></div></div></header>
     ${body}
-    <script src="/cloud.js?v=2" defer></script>
+    <script src="/cloud.js?v=3" defer></script>
   </body>
 </html>`;
+  return markup.replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
 function jsonError(c: { json: (body: unknown, status?: number) => Response }, status: number, code: string, message: string): Response {
@@ -80,6 +90,35 @@ function jsonError(c: { json: (body: unknown, status?: number) => Response }, st
 function configuredPdfLimit(value: string | undefined): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_PDF_BYTES;
+}
+
+function configuredRequestLimit(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 256 * 1024 * 1024;
+}
+
+function folderTagFromInput(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value.replace(/[\r\n,]+/g, " ").replace(/\s+/g, " ").trim();
+  return clean ? parseTags(clean).at(0)?.slice(0, 100) : undefined;
+}
+
+function booleanInput(value: unknown, fallback: boolean): boolean {
+  if (typeof value !== "string") return fallback;
+  if (/^(false|0|off|no)$/i.test(value.trim())) return false;
+  if (/^(true|1|on|yes)$/i.test(value.trim())) return true;
+  return fallback;
+}
+
+function titleFromFilename(filename: string): string {
+  const basename = filename.split(/[\\/]/).pop() || filename;
+  return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
+}
+
+function cleanHostedAbstract(value: string): string | undefined {
+  const clean = value.trim().replace(/^```(?:text|markdown)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  if (!clean || /^(?:not[_ -]?found|none|no abstract)$/i.test(clean)) return undefined;
+  return clean.replace(/^abstract\s*:\s*/i, "").replace(/\s+/g, " ").trim() || undefined;
 }
 
 function normalizeDoiInput(input: string): string | undefined {
@@ -95,6 +134,15 @@ async function fetchHostedPdf(url: string, maxBytes: number, fetcher: typeof fet
   const bytes = await readResponseBytes(response, maxBytes);
   if (new TextDecoder().decode(bytes.slice(0, 4)) !== "%PDF") throw new Error("NOT_A_PDF");
   return bytes;
+}
+
+function arxivFromMetadata(metadata: PaperMetadata): ReturnType<typeof normalizeArxivInput> | undefined {
+  for (const candidate of [metadata.arxivId, metadata.arxivUrl, metadata.pdfUrl, metadata.sourceUrl]) {
+    if (!candidate) continue;
+    const normalized = normalizeArxivInput(candidate) || normalizeArxivDoi(candidate);
+    if (normalized) return normalized;
+  }
+  return undefined;
 }
 
 async function lookupHostedMetadata(input: string, fetcher: typeof fetch): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[] }> {
@@ -121,7 +169,35 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch): Promi
   }
   metadata ||= { title: doi ? "Untitled paper" : title, authors: [], categories: [], metadataSource: "manual" };
   if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
-  return { metadata, warnings };
+  let arxiv = arxivFromMetadata(metadata);
+
+  // Crossref often finds the publication record but does not expose its arXiv
+  // preprint. Enrich title searches from OpenAlex when it can identify one so
+  // the import can use arXiv's stable PDF endpoint as well.
+  if (!doi && !arxiv) {
+    try {
+      const enriched = await lookupOpenAlex(title, fetcher);
+      arxiv = arxivFromMetadata(enriched);
+      if (arxiv) {
+        metadata = {
+          ...enriched,
+          ...metadata,
+          title: metadata.title || enriched.title,
+          authors: metadata.authors.length ? metadata.authors : enriched.authors,
+          categories: metadata.categories.length ? metadata.categories : enriched.categories,
+          arxivId: arxiv.id,
+          arxivBaseId: arxiv.baseId,
+          arxivUrl: arxiv.abstractUrl,
+          pdfUrl: arxiv.pdfUrl,
+          sourceUrl: metadata.sourceUrl || enriched.sourceUrl || arxiv.abstractUrl,
+        };
+      }
+    } catch {
+      // The primary metadata provider remains usable when enrichment is unavailable.
+    }
+  }
+
+  return { metadata, arxiv, warnings };
 }
 
 function accessRequired(env: CloudflareBindings): boolean {
@@ -250,8 +326,11 @@ app.get("/", (c) => c.html(hostedShell("Library", "library", `<main class="shell
 </main>`)));
 
 app.get("/add", (c) => c.html(hostedShell("Add paper", "add", `<main class="shell cloud-library">
-  <section class="add-grid add-options"><div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form id="import-form" class="cloud-form"><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL" autocomplete="off"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find</span></button></div><p id="import-status" class="form-status" role="status"></p></form></div><div class="panel"><h2>Upload a PDF</h2><p class="muted">Upload one or more PDFs. A single file can be given a title; multiple files use their filenames.</p><form id="paper-form" class="cloud-form"><div class="cloud-form-grid"><label>Title<input name="title" maxlength="500" autocomplete="off" placeholder="Optional for multiple files"></label><label>Authors<input name="authors" placeholder="One author per line" autocomplete="off"></label><label>Tags<input name="tags" placeholder="Comma-separated tags" autocomplete="off"></label><label>PDFs<input name="file" type="file" accept="application/pdf,.pdf" multiple required></label></div><div class="form-actions"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">upload</span><span>Upload and save</span></button><span id="upload-status" class="muted" role="status"></span></div></form></div></section>
-  <section id="import-preview" class="panel" hidden><div class="section-heading"><div><p class="eyebrow">Review before saving</p><h2 id="import-title"></h2></div><span id="import-pdf-status" class="muted"></span></div><p id="import-authors" class="muted"></p><p id="import-abstract"></p><div class="cloud-card-actions"><button id="import-save" class="button" type="button">Save to library</button></div></section>
+  <section class="add-grid add-options"><div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form id="import-form" class="cloud-form"><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL" autocomplete="off"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find</span></button></div><p id="import-status" class="form-status" role="status"></p></form></div>
+    <div class="add-file-options"><div class="panel"><h2>Upload a PDF</h2><p class="muted">Metadata can be entered after the file is staged.</p><form data-upload-form><div class="inline-form"><div class="file-picker"><label class="button button-secondary" for="single-pdf-input"><span class="material-symbols-outlined" aria-hidden="true">upload</span><span>Choose file</span></label><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required class="sr-only" data-single-pdf-input></div></div><p class="form-status" role="status"></p></form></div>
+    <div class="panel"><h2>Import a folder</h2><p class="muted">Create one editable paper record per PDF, using each filename as its initial title. Choose a folder or ZIP archive, and whether its name is added as a tag.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="folder-import-pickers"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input"><span class="material-symbols-outlined" aria-hidden="true">folder_open</span><span>Choose folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple class="sr-only" data-folder-pdf-input></div><div class="file-picker"><label class="button button-secondary" for="folder-zip-input"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span><span>Choose ZIP</span></label><input id="folder-zip-input" name="files" type="file" accept="application/zip,.zip" class="sr-only" data-folder-zip-input></div></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-results" data-bulk-results></div></form></div></div>
+  </section>
+  <section id="import-preview" class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" id="import-pdf-status" data-pdf-status></span><div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="paper-form-new" data-lookup-metadata><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find metadata</span></button><a class="button button-secondary" data-web-resource data-web-resource-for="paper-form-new" target="_blank" rel="noreferrer" hidden><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>Open web resource</span></a><button class="button button-secondary" type="submit" form="paper-form-new"><span class="material-symbols-outlined" aria-hidden="true">save</span><span>Save paper</span></button></div></div><span class="form-status" data-form-status-for="paper-form-new" role="status"></span></div></div></div><div data-preview-form><form id="paper-form-new" class="paper-form" data-paper-form data-mode="add"><input type="hidden" name="stagingToken" value=""><div class="form-grid"><label>Title<div class="field-with-action title-field"><input name="title" type="text" value="" placeholder="Paper title"><a class="button button-secondary button-small form-utility-button" data-paper-pdf-link target="_blank" rel="noreferrer" aria-label="Open PDF" title="Open PDF" hidden><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>Open</span></a></div></label><label>Authors<textarea name="authors" rows="3" placeholder="One author per line"></textarea></label><div class="form-row"><label>Year<input name="year" type="number" placeholder="2025"></label><label>Published date<input name="publishedDate" type="text" placeholder="2025-01-01"></label></div><label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6"></textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>From PDF</span></button></div></label><div class="form-row"><label>Primary category<input name="primaryCategory" type="text" placeholder="cs.AI"></label><label>Categories<input name="categories" type="text" placeholder="cs.AI, cs.LG"></label></div><div class="form-row"><label>Journal reference<input name="journalRef" type="text"></label><label>Accepted venue<input name="acceptedVenue" type="text"></label></div><div class="form-row"><label>DOI<input name="doi" type="text"></label><label>arXiv ID<input name="arxivId" type="text" placeholder="2401.12345"></label></div><label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text"><a class="button button-secondary button-small form-utility-button" data-source-url-go target="_blank" rel="noreferrer" hidden><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span><span>Go</span></a></div></label><div class="tag-field"><label>Tags<input name="tags" type="text" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div></div></form></div><div class="warnings" data-warnings></div></section>
 </main>`)));
 
 app.get("/import", (c) => c.redirect("/add"));
@@ -451,12 +530,15 @@ app.post("/api/backups/:id/restore", async (c) => {
   }
 });
 
-app.get("/ask", (c) => c.html(hostedShell("Ask the library", "ask", `<main class="shell cloud-library hosted-ask-page">
-  <section class="page-heading"><div><p class="eyebrow">Semantic library search</p><h1>Ask the library</h1><p class="muted">Search your papers by meaning, with keyword fallback when embeddings are unavailable.</p></div></section>
-  <section class="panel"><form id="ask-form" class="cloud-form"><label>Question or topic<textarea id="ask-query" name="query" rows="4" required placeholder="Which papers discuss robust evaluation under distribution shift?"></textarea></label><div class="form-actions"><button class="button" type="submit">Search library</button><span id="ask-status" class="muted" role="status"></span></div></form></section>
-  <section class="panel hosted-index-panel"><div class="section-heading"><h2>Search index</h2><span id="ask-coverage" class="muted" role="status">Checking index…</span></div><p class="muted">Indexing sends paper metadata, abstracts, tags, and completed summaries to the configured embedding provider.</p><button id="ask-index" class="button button-secondary" type="button">Index pending papers</button></section>
-  <section id="ask-results" class="hosted-ask-results" hidden></section>
-</main>`)));
+app.get("/ask", async (c) => {
+  const tags = await new D1PaperRepository(c.env.DB).tags.list();
+  const tagOptions = tags.map((tag) => `<button class="tag ask-tag-button" type="button" data-ask-tag="${escapeHtml(tag)}" aria-pressed="false">${escapeHtml(tag)}</button>`).join("");
+  return c.html(hostedShell("Ask the library", "ask", `<main class="shell cloud-library hosted-ask-page">
+  <section class="page-heading ask-heading"><h1>Ask the library</h1></section>
+  <section class="panel ask-library-page"><form id="ask-form" class="ask-query-form"><div class="ask-query-input-row"><textarea id="ask-query" name="query" rows="3" maxlength="1000" required placeholder="Which papers study uncertainty calibration without using ensembles?"></textarea></div><div class="ask-query-controls-row"><div class="ask-query-toolbar"><div class="ask-tag-filter"><span class="ask-control-label">Search within</span><div class="ask-tag-selection"><div class="tag-mode-switch" role="group" aria-label="Tag matching mode"><span class="tag-mode-label">Match:</span><button class="tag tag-mode-button" type="button" data-ask-tag-mode="and" aria-pressed="false">AND</button><button class="tag tag-mode-button tag-selected" type="button" data-ask-tag-mode="or" aria-pressed="true">OR</button></div><div class="ask-tag-row"><span class="tag-mode-label">Tags:</span><div class="ask-tag-options"><button class="tag tag-selected ask-tag-button" type="button" data-ask-tag-all aria-pressed="true">ALL</button>${tagOptions || `<span class="muted">No tags yet</span>`}</div></div></div></div></div><div class="ask-submit-row"><button class="button button-secondary button-small ask-submit" type="submit"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask</span></button></div></div><p id="ask-status" class="form-status" role="status"></p></form><section id="ask-results" class="ask-results" hidden aria-live="polite"></section></section>
+  <section class="page-heading indexing-heading"><h1>Indexing</h1></section><div class="panel ask-indexing-panel"><div class="ask-indexing-row"><span id="ask-coverage" class="muted" role="status">Checking index coverage…</span><button id="ask-index" class="button button-secondary button-small" type="button"><span class="material-symbols-outlined" aria-hidden="true">refresh</span><span>Index papers</span></button></div><p class="form-status" id="ask-index-status" role="status"></p></div>
+</main>`));
+});
 
 app.get("/api/search/coverage", async (c) => {
   try {
@@ -495,7 +577,7 @@ app.post("/api/search", async (c) => {
 
 app.get("/settings", (c) => c.html(hostedShell("Settings", "settings", `<main class="shell cloud-library settings-page">
   <section class="page-heading"><div><p class="eyebrow">Hosted configuration</p><h1>Settings</h1><p class="muted">Cloudflare stores provider settings in D1; the OpenAI key remains a Worker Secret.</p></div></section>
-  <section class="panel"><form id="settings-form" class="cloud-form">
+  <section class="panel settings-page"><div class="settings-group"><h2>Accent color</h2><div class="theme-options"><label class="theme-option"><input type="radio" name="accent" value="forest" data-theme-setting="accent"><span class="theme-swatch" style="--swatch:#315c52"></span><span>Forest</span></label><label class="theme-option"><input type="radio" name="accent" value="blue" data-theme-setting="accent"><span class="theme-swatch" style="--swatch:#3d5a80"></span><span>Blue</span></label><label class="theme-option"><input type="radio" name="accent" value="terracotta" data-theme-setting="accent"><span class="theme-swatch" style="--swatch:#9a4e36"></span><span>Terracotta</span></label><label class="theme-option"><input type="radio" name="accent" value="plum" data-theme-setting="accent"><span class="theme-swatch" style="--swatch:#6b4c73"></span><span>Plum</span></label><label class="theme-option"><input type="radio" name="accent" value="slate" data-theme-setting="accent"><span class="theme-swatch" style="--swatch:#58606a"></span><span>Slate</span></label><label class="theme-option theme-option-custom"><input type="radio" name="accent" value="custom" data-theme-setting="accent"><input class="theme-picker" type="color" value="#315c52" data-theme-picker="accent" aria-label="Choose custom accent color"><span>Custom</span></label></div></div><div class="settings-group"><h2>Background color</h2><div class="theme-options"><label class="theme-option"><input type="radio" name="background" value="paper" data-theme-setting="background"><span class="theme-swatch" style="--swatch:#f7f6f2"></span><span>Paper</span></label><label class="theme-option"><input type="radio" name="background" value="white" data-theme-setting="background"><span class="theme-swatch" style="--swatch:#ffffff"></span><span>White</span></label><label class="theme-option"><input type="radio" name="background" value="light-gray" data-theme-setting="background"><span class="theme-swatch" style="--swatch:#eeeeec"></span><span>Light gray</span></label><label class="theme-option"><input type="radio" name="background" value="warm" data-theme-setting="background"><span class="theme-swatch" style="--swatch:#f3efe8"></span><span>Warm</span></label><label class="theme-option"><input type="radio" name="background" value="mint" data-theme-setting="background"><span class="theme-swatch" style="--swatch:#f6fdfa"></span><span>Mint</span></label><label class="theme-option theme-option-custom"><input type="radio" name="background" value="custom" data-theme-setting="background"><input class="theme-picker" type="color" value="#f7f6f2" data-theme-picker="background" aria-label="Choose custom background color"><span>Custom</span></label></div></div><div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="contentWidth" value="50" data-theme-setting="contentWidth"><span>50%</span></label><label class="width-option"><input type="radio" name="contentWidth" value="60" data-theme-setting="contentWidth"><span>60%</span></label><label class="width-option"><input type="radio" name="contentWidth" value="70" data-theme-setting="contentWidth"><span>70%</span></label><label class="width-option"><input type="radio" name="contentWidth" value="80" data-theme-setting="contentWidth"><span>80%</span></label><label class="width-option"><input type="radio" name="contentWidth" value="90" data-theme-setting="contentWidth"><span>90%</span></label><label class="width-option"><input type="radio" name="contentWidth" value="100" data-theme-setting="contentWidth"><span>100%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2><p class="muted">Choose how many papers appear on each library page.</p><div class="width-options"><label class="width-option"><input type="radio" name="pageSize" value="10" data-theme-setting="pageSize"><span>10</span></label><label class="width-option"><input type="radio" name="pageSize" value="25" data-theme-setting="pageSize"><span>25</span></label><label class="width-option"><input type="radio" name="pageSize" value="50" data-theme-setting="pageSize"><span>50</span></label><label class="width-option"><input type="radio" name="pageSize" value="100" data-theme-setting="pageSize"><span>100</span></label></div></div><form id="settings-form" class="cloud-form">
     <label>Provider<select name="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama (local only)</option></select></label>
     <label>OpenAI model<input name="openaiModel" required></label>
     <label>OpenAI embedding model<input name="openaiEmbeddingModel" required></label>
@@ -509,10 +591,15 @@ app.get("/papers/:id", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return c.html(hostedShell("Paper not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>Paper not found</h1><p><a href="/">Return to the library</a></p></section></main>`), 404);
   return c.html(hostedShell(paper.title, "paper", `<main class="shell cloud-library paper-detail-page" data-paper-id="${escapeHtml(paper.id)}">
-    <p><a href="/">← Library</a></p><section class="page-heading"><div><p class="eyebrow">Paper detail</p><h1 id="paper-title">${escapeHtml(paper.title)}</h1><p id="paper-meta" class="muted">${escapeHtml(paper.authors.join(", ") || "No authors recorded")}</p></div><div class="cloud-card-actions"><a id="paper-pdf" class="button" href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noreferrer">Open PDF</a><button id="paper-delete" class="button button-danger" type="button">Delete</button></div></section>
-    <section class="panel"><form id="paper-edit-form" class="cloud-form"><label>Title<input name="title" required maxlength="500" value="${escapeHtml(paper.title)}"></label><label>Authors<textarea name="authors" rows="3">${escapeHtml(paper.authors.join("\n"))}</textarea></label><label>Tags<input name="tags" value="${escapeHtml(paper.tags.join(", "))}"></label><label>Abstract<textarea name="abstract" rows="8">${escapeHtml(paper.abstract || "")}</textarea></label><div class="form-actions"><button class="button" type="submit">Save metadata</button><span id="paper-status" class="muted" role="status"></span></div></form></section>
-    <section class="panel"><div class="section-heading"><h2>Analysis</h2><span id="analysis-status" class="muted" role="status"></span></div><div id="paper-summary" class="analysis-content"><p class="muted">No summary loaded.</p></div><div class="cloud-card-actions"><button id="paper-summary-button" class="button" type="button">Generate summary</button><button id="paper-question-button" class="button" type="button">Ask a question</button></div><div id="paper-question-answer" class="analysis-result" hidden></div></section>
+    <section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${encodeURIComponent(paper.id)}/edit" aria-label="Edit paper" title="Edit paper"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit</span></a><button id="paper-delete" class="icon-button icon-button-danger" type="button" aria-label="Delete paper" title="Delete paper"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Del</span></button></div></section>
+    <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1 id="paper-title">${escapeHtml(paper.title)}</h1><p id="paper-meta" class="muted">${escapeHtml([paper.authors.join(", ") || "No authors recorded", paper.acceptedVenue || paper.journalRef || "", paper.year ? String(paper.year) : ""].filter(Boolean).join(" · "))}</p></header>${paper.abstract ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p id="paper-abstract" class="abstract">${escapeHtml(paper.abstract)}</p></section>` : `<section id="paper-abstract-section" class="detail-section abstract-section" hidden><h2>Abstract</h2><p id="paper-abstract" class="abstract"></p></section>`}${paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div id="paper-tags" class="paper-tags large">${paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" ")}</div></section>` : `<section id="paper-tags-section" class="detail-section detail-tags" hidden><h2>Tags</h2><div id="paper-tags" class="paper-tags large"></div></section>`}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata"><dt>Authors</dt><dd>${escapeHtml(paper.authors.join(", ") || "No authors recorded")}</dd>${paper.doi ? `<dt>DOI</dt><dd>${escapeHtml(paper.doi)}</dd>` : ""}${paper.arxivId ? `<dt>arXiv</dt><dd><a href="${escapeHtml(paper.arxivUrl || `https://arxiv.org/abs/${paper.arxivId}`)}" target="_blank" rel="noreferrer">${escapeHtml(paper.arxivId)}</a></dd>` : ""}<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd><dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd></dl></details><details class="detail-section analysis-section" data-summary-section><summary>Summary</summary><div class="analysis-body summary-body"><div id="paper-summary" class="analysis-content"><p class="muted">No summary loaded.</p></div><div class="analysis-actions summary-actions"><button id="paper-summary-button" class="button button-secondary button-small" type="button"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Generate summary</span></button><span id="analysis-status" class="form-status" role="status"></span></div></div></details><section class="detail-section analysis-questions"><details><summary>Questions</summary><p class="muted">Ask an additional question about this paper.</p><div class="inline-form"><input id="paper-question-input" placeholder="What would you like to know?" autocomplete="off"><button id="paper-question-button" class="button button-secondary button-small" type="button"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask</span></button></div><div id="paper-question-answer" class="analysis-result" hidden></div></details></section></div></article>
   </main>`));
+});
+
+app.get("/papers/:id/edit", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return c.html(hostedShell("Paper not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>Paper not found</h1><p><a href="/">Return to the library</a></p></section></main>`), 404);
+  return c.html(hostedShell(`Edit ${paper.title}`, "edit", `<main class="shell cloud-library edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top"><span id="paper-status" class="form-status" role="status"></span></div></section><section class="panel edit-panel"><form id="paper-edit-form" class="cloud-form" data-paper-id="${escapeHtml(paper.id)}"><label>Title<input name="title" required maxlength="500" value="${escapeHtml(paper.title)}"></label><label>Authors<textarea name="authors" rows="4">${escapeHtml(paper.authors.join("\n"))}</textarea></label><label>Tags<input name="tags" value="${escapeHtml(paper.tags.join(", "))}"></label><label>Abstract<textarea name="abstract" rows="8">${escapeHtml(paper.abstract || "")}</textarea></label><div class="form-actions"><a class="button button-secondary" href="/papers/${encodeURIComponent(paper.id)}">Cancel</a><button class="button" type="submit">Save changes</button></div></form><hr><h2>Replace PDF</h2><form id="replace-upload-form" class="cloud-form" data-paper-id="${escapeHtml(paper.id)}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary button-small" type="submit">Replace</button></div><p id="replace-status" class="form-status" role="status"></p></form></section></main>`));
 });
 
 app.get("/api/health", (c) => c.json({
@@ -566,6 +653,107 @@ app.post("/api/uploads", async (c) => {
   }
 });
 
+app.post("/api/abstract/extract", async (c) => {
+  try {
+    const body = await c.req.json<{ stagingToken?: string; paperId?: string }>();
+    const storage = new R2Storage(c.env.PAPER_PDFS);
+    const source = body.stagingToken
+      ? await storage.getStagedFile(body.stagingToken)
+      : body.paperId
+        ? await storage.getObject(body.paperId)
+        : null;
+    if (!source) return jsonError(c, 409, "PDF_NOT_FOUND", "Upload or save a PDF before extracting its abstract.");
+    if (!c.env.AI) return jsonError(c, 501, "PDF_EXTRACTOR_UNAVAILABLE", "Hosted PDF extraction is not configured.");
+    const converted = await c.env.AI.toMarkdown(
+      { name: "paper.pdf", blob: new Blob([await source.arrayBuffer()], { type: "application/pdf" }) },
+      { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
+    );
+    if (converted.format === "error" || !converted.data?.trim()) return jsonError(c, 422, "PDF_TEXT_EMPTY", "The PDF text could not be extracted.");
+    const settings = await analysisRepository(c.env).getSettings();
+    if (settings.provider !== "openai") return jsonError(c, 409, "OLLAMA_HOSTED_UNSUPPORTED", "Hosted abstract extraction requires the OpenAI provider.");
+    const client = new OpenAiLlmClient({ openaiApiKey: async () => c.env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
+    const extracted = await client.complete({
+      model: settings.openaiModel,
+      temperature: 0,
+      messages: [
+        { role: "system", content: "You extract paper abstracts exactly from PDF text. Return only the abstract as plain text. Do not summarize, rewrite, or invent text." },
+        { role: "user", content: `Extract the paper's abstract from the supplied opening pages. Return only the abstract. If no abstract is present, return exactly NOT_FOUND.\n\n${takeFirstPages(converted.data.trim(), 4).slice(0, 30_000)}` },
+      ],
+    });
+    const abstract = cleanHostedAbstract(extracted);
+    if (!abstract) return jsonError(c, 422, "ABSTRACT_NOT_FOUND", "No abstract could be found in the PDF.");
+    return c.json({ abstract });
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The abstract could not be extracted from the PDF.");
+  }
+});
+
+app.post("/api/bulk-upload", async (c) => {
+  const imported: Array<{ id: string; title: string; filename: string }> = [];
+  const skipped: Array<{ filename: string; reason: string; existingId?: string }> = [];
+  const failed: Array<{ filename: string; reason: string }> = [];
+  try {
+    const form = await c.req.raw.formData();
+    const candidates = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
+    const useFolderAsTag = booleanInput(form.get("useFolderAsTag"), true);
+    const folderTag = useFolderAsTag ? folderTagFromInput(form.get("folderTag")) : undefined;
+    const files: WorkerZipFile[] = [];
+    for (const candidate of candidates) {
+      if (/\.zip$/i.test(candidate.name)) {
+        try {
+          files.push(...await extractWorkerPdfFiles(new Uint8Array(await candidate.arrayBuffer()), configuredPdfLimit(c.env.MAX_PDF_BYTES)));
+        } catch (error) {
+          failed.push({ filename: candidate.name || "unknown archive", reason: errorMessage(error) });
+        }
+      } else if (/\.pdf$/i.test(candidate.name)) {
+        files.push({ name: candidate.name, bytes: new Uint8Array(await candidate.arrayBuffer()) });
+      }
+    }
+    if (!candidates.length) return jsonError(c, 400, "PDF_REQUIRED", "Choose a folder containing PDF files.");
+    if (!files.length) return c.json({ imported, skipped, failed, folderTag });
+    if (files.length > 200) return jsonError(c, 400, "TOO_MANY_FILES", "Import up to 200 PDFs at a time.");
+    const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+    if (totalBytes > configuredRequestLimit(c.env.MAX_REQUEST_BYTES)) return jsonError(c, 413, "REQUEST_TOO_LARGE", "The folder exceeds the configured request limit.");
+
+    const repo = new D1PaperRepository(c.env.DB);
+    const storage = new R2Storage(c.env.PAPER_PDFS);
+    for (const file of files) {
+      let stagingToken = "";
+      try {
+        validatePdf(file.bytes, file.name || "paper.pdf", configuredPdfLimit(c.env.MAX_PDF_BYTES));
+        const title = titleFromFilename(file.name || "paper.pdf");
+        const draft: PaperDraftInput = { title, authors: [], metadataSource: "manual", tags: folderTag ? [folderTag] : [] };
+        const staged = await storage.stage(file.bytes);
+        stagingToken = staged.token;
+        const duplicate = await repo.findDuplicate(draft, staged.sha256);
+        if (duplicate) {
+          await storage.discardStagedFile(staged.token);
+          stagingToken = "";
+          skipped.push({ filename: file.name, reason: "PDF already exists", existingId: duplicate.id });
+          continue;
+        }
+        const id = globalThis.crypto.randomUUID();
+        const promoted = await storage.promoteStagedFile(staged.token, id);
+        stagingToken = "";
+        try {
+          await repo.create({ ...draft, id }, promoted);
+          imported.push({ id, title, filename: file.name });
+        } catch (error) {
+          await storage.delete(id);
+          throw error;
+        }
+      } catch (error) {
+        if (stagingToken) await storage.discardStagedFile(stagingToken).catch(() => undefined);
+        failed.push({ filename: file.name || "unknown file", reason: errorMessage(error) });
+      }
+    }
+    return c.json({ imported, skipped, failed, folderTag });
+  } catch (error) {
+    const code = errorMessage(error);
+    return jsonError(c, code === "REQUEST_TOO_LARGE" ? 413 : 400, code, "The folder could not be imported.");
+  }
+});
+
 app.post("/api/papers", async (c) => {
   const storage = new R2Storage(c.env.PAPER_PDFS);
   let promoted: { key: string; sha256: string } | undefined;
@@ -594,14 +782,19 @@ app.put("/api/papers/:id", async (c) => {
   const repo = new D1PaperRepository(c.env.DB);
   const existing = await repo.findById(id);
   if (!existing) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  const storage = new R2Storage(c.env.PAPER_PDFS);
+  let promoted: { key: string; sha256: string } | undefined;
   try {
     const body = await c.req.json<Record<string, unknown>>();
     const draft = draftFromBody({ ...body, id });
     const duplicate = await repo.findDuplicate(draft);
     if (duplicate && duplicate.id !== id) return c.json({ error: { code: "DUPLICATE_PAPER", message: "This paper is already in the library.", existingId: duplicate.id } }, 409);
-    const paper = await repo.update(id, draft);
+    if (draft.stagingToken) promoted = await storage.promoteStagedFile(draft.stagingToken, id);
+    const paper = await repo.update(id, draft, promoted);
+    if (promoted && existing.pdfSha256 !== promoted.sha256) await analysisRepository(c.env).markFileChanged(id, promoted.sha256);
     return c.json({ paper });
   } catch (error) {
+    if (promoted && !existing.r2Key) await storage.delete(id).catch(() => {});
     return jsonError(c, 400, errorMessage(error), "The paper could not be updated.");
   }
 });
@@ -667,6 +860,21 @@ app.post("/api/papers/bulk-tags", async (c) => {
 });
 
 app.get("/api/tags", async (c) => c.json({ tags: await new D1PaperRepository(c.env.DB).tags.list() }));
+
+app.post("/api/tags/suggestions", async (c) => {
+  try {
+    const body = await c.req.json<{ title?: string; abstract?: string; categories?: string[] }>();
+    const abstract = typeof body.abstract === "string" ? body.abstract.trim() : "";
+    if (!abstract) return jsonError(c, 400, "ABSTRACT_REQUIRED", "Add an abstract before asking for tag suggestions.");
+    const settings = await analysisRepository(c.env).getSettings();
+    if (settings.provider !== "openai") return jsonError(c, 409, "OLLAMA_HOSTED_UNSUPPORTED", "Hosted tag suggestions require the OpenAI provider.");
+    const client = new OpenAiLlmClient({ openaiApiKey: async () => c.env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
+    const suggestions = await suggestTags({ title: body.title, abstract, categories: Array.isArray(body.categories) ? body.categories : [], existingTags: await new D1PaperRepository(c.env.DB).tags.list() }, client, settings.openaiModel);
+    return c.json({ suggestions, provider: "openai", model: settings.openaiModel });
+  } catch (error) {
+    return jsonError(c, 502, errorMessage(error), "Tag suggestions could not be generated. Check the hosted AI settings and retry.");
+  }
+});
 
 app.post("/api/tags", async (c) => {
   try {
