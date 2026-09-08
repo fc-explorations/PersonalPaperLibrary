@@ -96,6 +96,29 @@ function authorStatements(paperId: string, authors: string[]): Array<{ query: st
   });
 }
 
+type InsertEntry = { input: PaperDraftInput; file?: { key: string; sha256: string } };
+
+function insertStatements(entry: InsertEntry): Array<{ query: string; values: unknown[] }> {
+  const id = entry.input.id || globalThis.crypto.randomUUID();
+  const now = new Date().toISOString();
+  const authors = parseAuthors(entry.input.authors);
+  const tags = parseTags(entry.input.tags);
+  const values = paperValues(id, entry.input, entry.file, now);
+  values.pop();
+  return [
+    { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(20)})`, values },
+    ...authorStatements(id, authors),
+    ...tags.flatMap((tag) => {
+      const normalized = tag.trim().toLocaleLowerCase();
+      if (!normalized) return [];
+      return [
+        { query: "INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?, ?, ?)", values: [globalThis.crypto.randomUUID(), normalized, now] },
+        { query: "INSERT OR IGNORE INTO paper_tags (paper_id, tag_id) SELECT ?, id FROM tags WHERE name = ? COLLATE NOCASE", values: [id, normalized] },
+      ];
+    }),
+  ];
+}
+
 export class D1PaperRepository {
   readonly tags: D1TagRepository;
 
@@ -133,18 +156,77 @@ export class D1PaperRepository {
     return row ? this.hydrate(row) : null;
   }
 
+  /**
+   * Cheap duplicate check for bulk imports. It deliberately checks only
+   * indexed identity fields and returns an id, avoiding the full paper
+   * hydration queries that are unnecessary before an insert.
+   */
+  async findDuplicateId(input: PaperDraftInput, pdfSha256?: string): Promise<string | null> {
+    const exclude = input.id || "";
+    const arxivBaseId = input.arxivId ? input.arxivId.replace(/v\d+$/i, "").toLowerCase() : undefined;
+    const checks: Array<[string, unknown]> = [];
+    if (arxivBaseId) checks.push(["SELECT id FROM papers WHERE lower(arxiv_base_id) = ? AND id != COALESCE(?, '')", arxivBaseId]);
+    if (input.sourceUrl) checks.push(["SELECT id FROM papers WHERE source_url = ? AND id != COALESCE(?, '')", normalizeUrl(input.sourceUrl)]);
+    if (input.doi) checks.push(["SELECT id FROM papers WHERE lower(doi) = lower(?) AND id != COALESCE(?, '')", input.doi.trim()]);
+    if (pdfSha256) checks.push(["SELECT id FROM papers WHERE pdf_sha256 = ? AND id != COALESCE(?, '')", pdfSha256]);
+    for (const [query, value] of checks) {
+      const row = await first<{ id: string }>(this.db, query, value, exclude);
+      if (row?.id) return String(row.id);
+    }
+    return null;
+  }
+
+  /** Check many bulk-import candidates with a bounded number of indexed reads. */
+  async findDuplicateIds(entries: Array<{ input: PaperDraftInput; pdfSha256?: string }>): Promise<Map<number, string>> {
+    const duplicates = new Map<number, string>();
+    for (let start = 0; start < entries.length; start += 20) {
+      const chunk = entries.slice(start, start + 20);
+      const arxiv = [...new Set(chunk.map(({ input }) => input.arxivId?.replace(/v\d+$/i, "").toLowerCase()).filter(Boolean))] as string[];
+      const sourceUrls = [...new Set(chunk.map(({ input }) => normalizeUrl(input.sourceUrl)).filter(Boolean))] as string[];
+      const dois = [...new Set(chunk.map(({ input }) => input.doi?.trim().toLowerCase()).filter(Boolean))] as string[];
+      const hashes = [...new Set(chunk.map(({ pdfSha256 }) => pdfSha256).filter(Boolean))] as string[];
+      const clauses: string[] = [];
+      const values: string[] = [];
+      if (arxiv.length) { clauses.push(`lower(arxiv_base_id) IN (${placeholders(arxiv.length)})`); values.push(...arxiv); }
+      if (sourceUrls.length) { clauses.push(`source_url IN (${placeholders(sourceUrls.length)})`); values.push(...sourceUrls); }
+      if (dois.length) { clauses.push(`lower(doi) IN (${placeholders(dois.length)})`); values.push(...dois); }
+      if (hashes.length) { clauses.push(`pdf_sha256 IN (${placeholders(hashes.length)})`); values.push(...hashes); }
+      if (!clauses.length) continue;
+      const rows = await all<{ id: string; arxiv_base_id?: string; source_url?: string; doi?: string; pdf_sha256?: string }>(this.db, `SELECT id, arxiv_base_id, source_url, doi, pdf_sha256 FROM papers WHERE ${clauses.join(" OR ")}`, ...values);
+      for (let index = 0; index < chunk.length; index += 1) {
+        const { input, pdfSha256 } = chunk[index];
+        const arxivBaseId = input.arxivId?.replace(/v\d+$/i, "").toLowerCase();
+        const sourceUrl = normalizeUrl(input.sourceUrl);
+        const doi = input.doi?.trim().toLowerCase();
+        const row = rows.find((candidate) => (arxivBaseId && String(candidate.arxiv_base_id || "").toLowerCase() === arxivBaseId) || (sourceUrl && candidate.source_url === sourceUrl) || (doi && String(candidate.doi || "").toLowerCase() === doi) || (pdfSha256 && candidate.pdf_sha256 === pdfSha256));
+        if (row) duplicates.set(start + index, String(row.id));
+      }
+    }
+    return duplicates;
+  }
+
+  /** Insert a paper without reading it back. Used by bulk imports. */
+  async insert(input: PaperDraftInput, file?: { key: string; sha256: string }): Promise<void> {
+    await batch(this.db, insertStatements({ input, file }));
+  }
+
+  /** Insert in batches below D1's statement limit, without per-paper read-backs. */
+  async insertMany(entries: InsertEntry[]): Promise<void> {
+    let statements: Array<{ query: string; values: unknown[] }> = [];
+    for (const entry of entries) {
+      const next = insertStatements(entry);
+      if (statements.length && statements.length + next.length > 90) {
+        await batch(this.db, statements);
+        statements = [];
+      }
+      statements.push(...next);
+    }
+    if (statements.length) await batch(this.db, statements);
+  }
+
   async create(input: PaperDraftInput, file?: { key: string; sha256: string }): Promise<PaperRecord> {
     const id = input.id || globalThis.crypto.randomUUID();
-    const now = new Date().toISOString();
-    const authors = parseAuthors(input.authors);
-    const tags = parseTags(input.tags);
-    const values = paperValues(id, input, file, now);
-    values.pop();
-    await batch(this.db, [
-      { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(20)})`, values },
-      ...authorStatements(id, authors),
-      ...this.tagStatements(id, tags, now),
-    ]);
+    await this.insert({ ...input, id }, file);
     return (await this.findById(id))!;
   }
 

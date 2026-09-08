@@ -125,7 +125,7 @@ document.addEventListener("click", (event) => {
   const link = target instanceof Element ? target.closest("[data-paper-pdf-link]") : null;
   if (!link?.href) return;
   event.preventDefault();
-  window.location.assign(link.href);
+  window.open(link.href, "_blank", "noopener,noreferrer");
 });
 
 function renderHostedMarkdown(value) {
@@ -191,7 +191,10 @@ async function request(url, options = {}) {
   const response = await fetch(url, { credentials: "same-origin", ...options });
   const contentType = response.headers.get("content-type") || "";
   const body = contentType.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(body?.error?.message || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const message = body?.error?.message || `Request failed (${response.status})`;
+    throw new Error(body?.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
+  }
   return body;
 }
 

@@ -128,7 +128,7 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=41">
+  <link rel="stylesheet" href="/styles.css?v=44">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
@@ -137,7 +137,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-  <script src="/app.js?v=37" defer></script>
+    <script src="/app.js?v=41" defer></script>
 </body>
 </html>`;
 }
@@ -461,12 +461,13 @@ function abstractField(value: unknown): string {
 }
 
 export function bibtexImportField(formId: string): string {
-  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>Use BibTeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
+  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
 }
 
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
   const saveButton = isEdit ? "" : `<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>Save paper</span></button>`;
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find metadata</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  const lookupLabel = isEdit ? "Find" : "Find metadata";
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>${lookupLabel}</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {
@@ -476,7 +477,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
   const openPdfUrl = isEdit && data.r2Key ? `/api/papers/${escapeHtml(data.id)}/pdf` : "";
-  const openPdfButton = `<a class="button button-secondary button-small form-utility-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
+  const openPdfButton = `<a class="button button-secondary button-small form-utility-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
   const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
   const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
   const fields = `${titleField}
@@ -548,7 +549,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
     metadataRow("Journal reference", paper.journalRef),
     metadataRow("Accepted venue", paper.acceptedVenue),
     metadataRow("DOI", paper.doi),
-    metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/api/papers/${escapeHtml(paper.id)}/pdf">PDF</a>` : `<span class="muted">Not stored</span>`),
+    metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/api/papers/${escapeHtml(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`),
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
   ].join("");
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";

@@ -67,6 +67,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
 }
 
+const D1_DAILY_LIMIT_MESSAGE = "Cloudflare D1's daily free-tier limit has been reached. Retry after midnight UTC or upgrade the Workers plan.";
+
+function isD1DailyLimitError(message: string): boolean {
+  return /d1.*(?:daily|free tier).*(?:read|write).*limit|(?:daily|free tier).*(?:read|write).*limit.*d1|exceeded.*(?:daily|free tier).*(?:read|write)/i.test(message);
+}
+
+function d1LimitResponse(c: { json: (body: unknown, status?: number) => Response }): Response {
+  return jsonError(c, 429, "D1_DAILY_LIMIT_EXCEEDED", D1_DAILY_LIMIT_MESSAGE);
+}
+
+app.onError((error, c) => {
+  const message = errorMessage(error);
+  return isD1DailyLimitError(message) ? d1LimitResponse(c) : c.text("Internal Server Error", 500);
+});
+
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character] || character));
 }
@@ -92,8 +107,8 @@ function hostedShell(title: string, page: string, body: string): string {
   return withRenderScaleSettings
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=41")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=21")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=44")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=25")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -147,7 +162,7 @@ function hostedPdfFilename(title: string, used: Set<string>): string {
 }
 
 function hostedEditActions(formId: string): string {
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${`<span class="material-symbols-outlined" aria-hidden="true">search</span>`}<span>Find metadata</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${`<span class="material-symbols-outlined" aria-hidden="true">search</span>`}<span>Find</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 function hostedRenderedAnalysis(value: string): string {
@@ -796,7 +811,7 @@ app.get("/papers/:id", async (c) => {
     paper.journalRef ? `<dt>Journal reference</dt><dd>${escapeHtml(paper.journalRef)}</dd>` : "",
     paper.acceptedVenue ? `<dt>Accepted venue</dt><dd>${escapeHtml(paper.acceptedVenue)}</dd>` : "",
     paper.doi ? `<dt>DOI</dt><dd>${escapeHtml(paper.doi)}</dd>` : "",
-    `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
+    `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
     `<dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd>`,
   ].filter(Boolean).join("");
   const citeSection = renderCitationSection(paper);
@@ -896,6 +911,7 @@ app.post("/api/bulk-upload", async (c) => {
   const imported: Array<{ id: string; title: string; filename: string }> = [];
   const skipped: Array<{ filename: string; reason: string; existingId?: string }> = [];
   const failed: Array<{ filename: string; reason: string }> = [];
+  const pending: Array<{ file: WorkerZipFile; draft: PaperDraftInput; id: string; staged: { token: string; sha256: string }; promoted?: { key: string; sha256: string } }> = [];
   try {
     const form = await c.req.raw.formData();
     const candidates = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
@@ -938,31 +954,42 @@ app.post("/api/bulk-upload", async (c) => {
         };
         const staged = await storage.stage(file.bytes);
         stagingToken = staged.token;
-        const duplicate = await repo.findDuplicate(draft, staged.sha256);
-        if (duplicate) {
-          await storage.discardStagedFile(staged.token);
-          stagingToken = "";
-          skipped.push({ filename: file.name, reason: "PDF already exists", existingId: duplicate.id });
-          continue;
-        }
-        const id = globalThis.crypto.randomUUID();
-        const promoted = await storage.promoteStagedFile(staged.token, id);
+        pending.push({ file, draft, id: globalThis.crypto.randomUUID(), staged });
         stagingToken = "";
-        try {
-          await repo.create({ ...draft, id }, promoted);
-          imported.push({ id, title, filename: file.name });
-        } catch (error) {
-          await storage.delete(id);
-          throw error;
-        }
       } catch (error) {
+        if (isD1DailyLimitError(errorMessage(error))) throw error;
         if (stagingToken) await storage.discardStagedFile(stagingToken).catch(() => undefined);
         failed.push({ filename: file.name || "unknown file", reason: errorMessage(error) });
       }
     }
+    const duplicateIds = await repo.findDuplicateIds(pending.map(({ draft, staged }) => ({ input: draft, pdfSha256: staged.sha256 })));
+    const toInsert: Array<{ pending: (typeof pending)[number]; title: string }> = [];
+    for (let index = 0; index < pending.length; index += 1) {
+      const item = pending[index];
+      const duplicateId = duplicateIds.get(index);
+      if (duplicateId) {
+        await storage.discardStagedFile(item.staged.token);
+        skipped.push({ filename: item.file.name, reason: "PDF already exists", existingId: duplicateId });
+        continue;
+      }
+      try {
+        item.promoted = await storage.promoteStagedFile(item.staged.token, item.id);
+        toInsert.push({ pending: item, title: item.draft.title });
+      } catch (error) {
+        if (isD1DailyLimitError(errorMessage(error))) throw error;
+        failed.push({ filename: item.file.name || "unknown file", reason: errorMessage(error) });
+      }
+    }
+    await repo.insertMany(toInsert.map(({ pending: item }) => ({ input: { ...item.draft, id: item.id }, file: item.promoted })));
+    for (const { pending: item, title } of toInsert) imported.push({ id: item.id, title, filename: item.file.name });
     return c.json({ imported, skipped, failed, folderTag, discovered: files.length, processed: imported.length + skipped.length + failed.length });
   } catch (error) {
     const code = errorMessage(error);
+    if (isD1DailyLimitError(code)) {
+      const storage = new R2Storage(c.env.PAPER_PDFS);
+      await Promise.all(pending.filter((item) => !item.promoted).map((item) => storage.discardStagedFile(item.staged.token).catch(() => undefined)));
+      return d1LimitResponse(c);
+    }
     return jsonError(c, code === "REQUEST_TOO_LARGE" ? 413 : 400, code, "The folder could not be imported.");
   }
 });

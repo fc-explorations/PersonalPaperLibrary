@@ -352,7 +352,10 @@ function renderPreview(data, stagingToken = "") {
 async function jsonRequest(url, options) {
   const response = await fetch(url, options);
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error?.message || "Request failed");
+  if (!response.ok) {
+    const message = body.error?.message || "Request failed";
+    throw new Error(body.error?.code === "D1_DAILY_LIMIT_EXCEEDED" ? `${message} No data was lost.` : message);
+  }
   return body;
 }
 
