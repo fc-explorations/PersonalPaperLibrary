@@ -24,6 +24,14 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
 }
 
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  const link = target instanceof Element ? target.closest("[data-paper-pdf-link]") : null;
+  if (!link?.href) return;
+  event.preventDefault();
+  window.location.assign(link.href);
+});
+
 function renderHostedMarkdown(value) {
   const lines = String(value ?? "").replace(/\r\n/g, "\n").split("\n");
   const output = [];
@@ -341,7 +349,7 @@ function applyHostedMetadata(form, data) {
     const storedPdf = form.dataset.mode === "edit" && data.pdf?.status === "preserved" && form.dataset.paperId;
     stagedPdfLink.hidden = !activeStagingToken && !storedPdf;
     if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
-    else if (storedPdf) stagedPdfLink.href = `/papers/${encodeURIComponent(form.dataset.paperId)}/pdf`;
+    else if (storedPdf) stagedPdfLink.href = `/api/papers/${encodeURIComponent(form.dataset.paperId)}/pdf`;
   }
   const sourceUrl = form.querySelector("[data-source-url-go]");
   const source = paper.sourceUrl || paper.arxivUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");

@@ -468,8 +468,8 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const formId = isEdit ? `paper-form-${data.id}` : "paper-form-new";
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
-  const openPdfUrl = isEdit && data.r2Key ? `/papers/${escapeHtml(data.id)}/pdf` : "";
-  const openPdfButton = `<a class="button button-secondary button-small form-utility-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
+  const openPdfUrl = isEdit && data.r2Key ? `/api/papers/${escapeHtml(data.id)}/pdf` : "";
+  const openPdfButton = `<a class="button button-secondary button-small form-utility-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
   const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
   const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
   const fields = `${titleField}
@@ -538,7 +538,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
     metadataRow("Journal reference", paper.journalRef),
     metadataRow("Accepted venue", paper.acceptedVenue),
     metadataRow("DOI", paper.doi),
-    metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/papers/${escapeHtml(paper.id)}/pdf" target="_blank" rel="noopener noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`),
+    metadataRow("Document", paper.r2Key ? "PDF" : "Not stored", paper.r2Key ? `<a href="/api/papers/${escapeHtml(paper.id)}/pdf">PDF</a>` : `<span class="muted">Not stored</span>`),
     metadataRow("Added", new Date(paper.createdAt).toLocaleString("en-GB")),
   ].join("");
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
@@ -546,23 +546,6 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
   const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a><button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
   <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${paperLine}</p>` : ""}</header>${abstractSection}${tagsSection}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadata}</dl></details>${citeSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}</div></article>`;
   return layout(paper.title, body);
-}
-
-export function renderPdfViewerPage(paper: PaperRecord): string {
-  const paperUrl = `/papers/${encodeURIComponent(paper.id)}`;
-  const pdfUrl = `/api/papers/${encodeURIComponent(paper.id)}/pdf`;
-  const title = escapeHtml(paper.title);
-  const body = `<section class="pdf-reader-page">
-    <nav class="pdf-reader-toolbar" aria-label="PDF navigation">
-      <a class="button button-secondary" href="/">Library</a>
-      <a class="button button-secondary" href="${paperUrl}">Back to paper</a>
-      <a class="button button-secondary" href="${pdfUrl}?download=1">Download PDF</a>
-    </nav>
-    <header class="pdf-reader-heading"><p class="eyebrow">PDF reader</p><h1>${title}</h1></header>
-    <div class="pdf-reader-frame-wrap"><iframe class="pdf-reader-frame" src="${pdfUrl}" title="${title} PDF"></iframe></div>
-    <p class="pdf-reader-fallback muted">If the PDF does not appear, <a href="${pdfUrl}">open it directly</a> or use Download PDF.</p>
-  </section>`;
-  return layout(`Read ${paper.title}`, body);
 }
 
 export function renderEditPage(paper: PaperRecord): string {

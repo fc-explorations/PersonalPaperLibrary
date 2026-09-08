@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAddPage, renderMarkdown, renderPdfViewerPage, renderSettingsPage } from "../src/views.js";
-import type { PaperRecord } from "../src/types.js";
+import { renderAddPage, renderMarkdown, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -50,17 +49,5 @@ describe("add page rendering", () => {
     expect(html).toContain("Use folder as tag");
     expect(html).toContain('data-folder-zip-input');
     expect(html).toContain("Choose ZIP");
-  });
-});
-
-describe("PDF viewer rendering", () => {
-  it("keeps navigation in an app-owned PDF page", () => {
-    const paper = { id: "paper-1", title: "A paper", authors: [], tags: [], categories: [], r2Key: "papers/paper-1.pdf", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", metadataSource: "manual" } as PaperRecord;
-    const html = renderPdfViewerPage(paper);
-
-    expect(html).toContain('href="/"');
-    expect(html).toContain('href="/papers/paper-1"');
-    expect(html).toContain('src="/api/papers/paper-1/pdf"');
-    expect(html).toContain("Download PDF");
   });
 });

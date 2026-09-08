@@ -26,14 +26,6 @@ a { color: var(--accent); }
 .hosted-ask-result h2 a { color: var(--text); }
 .hosted-ask-result p { margin: 7px 0 0; }
 .hosted-search-warning { color: var(--muted); }
-.pdf-reader-page { padding: 28px 0 80px; }
-.pdf-reader-toolbar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 16px; background: var(--page-bg); }
-.pdf-reader-heading { margin: 12px 0 18px; }
-.pdf-reader-heading h1 { margin: 0; overflow-wrap: anywhere; }
-.pdf-reader-frame-wrap { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: white; box-shadow: 0 8px 28px rgb(37 35 31 / 8%); }
-.pdf-reader-frame { display: block; width: 100%; height: calc(100vh - 220px); min-height: 70vh; border: 0; background: white; }
-.pdf-reader-fallback { margin: 12px 0 0; }
-@media (max-width: 720px) { .pdf-reader-page { padding-top: 12px; } .pdf-reader-toolbar { padding-top: 8px; } .pdf-reader-toolbar .button { flex: 1 1 auto; min-width: 0; padding-inline: .65rem; } .pdf-reader-frame { height: calc(100svh - 205px); min-height: 65vh; } }
 @media (max-width: 720px) { .cloud-form-grid { grid-template-columns: 1fr; } }
 .site-header { background: transparent; }
 .site-header .shell { min-height: 0; padding: 56px 0 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
