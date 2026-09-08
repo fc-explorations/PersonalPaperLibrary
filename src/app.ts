@@ -137,7 +137,12 @@ function requestFilters(c: Context): { q?: string; tag?: string[]; tagMode: TagF
 
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
-  return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
+  return basename.replace(/\.pdf$/i, "")
+    .replace(/^\s*(?:paper|manuscript|preprint|submission|final|accepted|camera[-_ ]?ready)[-_ ]+/i, "")
+    .replace(/^\s*(?:arxiv[-_ ]*)?\d{4}\.\d{4,5}(?:v\d+)?[-_ ]*/i, "")
+    .replace(/[._]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "Untitled paper";
 }
 
 function folderTagFromInput(value: unknown): string | undefined {

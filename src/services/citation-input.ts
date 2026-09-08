@@ -18,6 +18,17 @@ function familyName(value: string): string {
   return words.at(-1) || "";
 }
 
+function titleKey(value: string): string {
+  return clean(value).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function titleSimilarity(left: string, right: string): number {
+  const leftWords = new Set(titleKey(left).split(/\s+/).filter(Boolean));
+  const rightWords = new Set(titleKey(right).split(/\s+/).filter(Boolean));
+  if (!leftWords.size || !rightWords.size) return 0;
+  return [...leftWords].filter((word) => rightWords.has(word)).length / new Set([...leftWords, ...rightWords]).size;
+}
+
 function looksLikeCitation(input: string): boolean {
   return input.length > 120 || /\b(?:19|20)\d{2}\b/.test(input) || /,\s*(?:and|&)\s+/i.test(input) || /\n/.test(input);
 }
@@ -78,7 +89,8 @@ export async function parseCitationInput(input: string, client?: LlmClient, mode
   }
 }
 
-export function citationMatchesMetadata(parsed: ParsedCitationInput, metadata: { authors: string[]; year?: number }): boolean {
+export function citationMatchesMetadata(parsed: ParsedCitationInput, metadata: { title?: string; authors: string[]; year?: number }): boolean {
+  if (parsed.title && metadata.title && titleKey(parsed.title) !== titleKey(metadata.title) && titleSimilarity(parsed.title, metadata.title) < 0.6) return false;
   if (parsed.year !== undefined && metadata.year !== undefined && Math.abs(parsed.year - metadata.year) > 1) return false;
   if (!parsed.authors.length || !metadata.authors.length) return true;
   const expectedFamilies = parsed.authors.map(familyName).filter(Boolean);

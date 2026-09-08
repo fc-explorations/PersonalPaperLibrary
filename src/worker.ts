@@ -125,7 +125,12 @@ function booleanInput(value: unknown, fallback: boolean): boolean {
 
 function titleFromFilename(filename: string): string {
   const basename = filename.split(/[\\/]/).pop() || filename;
-  return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
+  return basename.replace(/\.pdf$/i, "")
+    .replace(/^\s*(?:paper|manuscript|preprint|submission|final|accepted|camera[-_ ]?ready)[-_ ]+/i, "")
+    .replace(/^\s*(?:arxiv[-_ ]*)?\d{4}\.\d{4,5}(?:v\d+)?[-_ ]*/i, "")
+    .replace(/[._]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "Untitled paper";
 }
 
 function hostedPdfFilename(title: string, used: Set<string>): string {
