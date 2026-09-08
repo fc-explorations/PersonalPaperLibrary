@@ -35,6 +35,53 @@ function fields(xml: string, name: string): string[] {
   return [...xml.matchAll(pattern)].map((match) => decodeXml(match[1])).filter(Boolean);
 }
 
+function htmlMetaValues(html: string, key: string): string[] {
+  const values: string[] = [];
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const attributes: Record<string, string> = {};
+    for (const attribute of match[0].matchAll(/\b([a-z][a-z0-9:_.-]*)\s*=\s*(["'])([\s\S]*?)\2/gi)) {
+      attributes[attribute[1].toLowerCase()] = attribute[3];
+    }
+    if ((attributes.name || attributes.property || "").toLowerCase() === key.toLowerCase() && attributes.content) {
+      values.push(decodeXml(attributes.content));
+    }
+  }
+  return values.filter(Boolean);
+}
+
+function htmlDate(value?: string): string | undefined {
+  const match = value?.match(/(\d{4})[/-](\d{1,2})(?:[/-](\d{1,2}))?/);
+  return match ? [match[1], match[2].padStart(2, "0"), match[3]?.padStart(2, "0")].filter(Boolean).join("-") : undefined;
+}
+
+function htmlAuthor(value: string): string {
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  return parts.length === 2 ? `${parts[1]} ${parts[0]}` : value.trim();
+}
+
+function parseArxivHtmlMetadata(html: string, normalized: NormalizedArxivInput): PaperMetadata {
+  const title = htmlMetaValues(html, "citation_title")[0] || htmlMetaValues(html, "og:title")[0];
+  if (!title) throw new Error("ARXIV_METADATA_INCOMPLETE");
+  const publishedDate = htmlDate(htmlMetaValues(html, "citation_date")[0] || htmlMetaValues(html, "citation_online_date")[0]);
+  const authors = htmlMetaValues(html, "citation_author").map(htmlAuthor);
+  return {
+    arxivId: normalized.id,
+    arxivBaseId: normalized.baseId,
+    title,
+    abstract: htmlMetaValues(html, "citation_abstract")[0] || htmlMetaValues(html, "og:description")[0],
+    authors,
+    publishedDate,
+    updatedDate: htmlDate(htmlMetaValues(html, "citation_online_date")[0]),
+    year: publishedDate ? Number(publishedDate.slice(0, 4)) : undefined,
+    categories: [],
+    doi: htmlMetaValues(html, "citation_doi")[0],
+    sourceUrl: normalized.abstractUrl,
+    pdfUrl: htmlMetaValues(html, "citation_pdf_url")[0] || normalized.pdfUrl,
+    arxivUrl: normalized.abstractUrl,
+    metadataSource: "arxiv",
+  };
+}
+
 function acceptedVenueMatch(text?: string): RegExpMatchArray | null {
   return text?.match(/\baccepted\s+(?:(?:for|to)\s+publication\s+)?(?:at|to|for|in)\s+(.+?)(?:[.;]|$)/i)
     || text?.match(/\bpublished\s+as\s+(?:an?\s+)?conference\s+paper\s+at\s+(.+?)(?:[.;]|$)/i)
@@ -128,11 +175,22 @@ export function parseArxivMetadata(xml: string, normalized: NormalizedArxivInput
 }
 
 export async function fetchArxivMetadata(normalized: NormalizedArxivInput, fetcher: typeof fetch = fetch): Promise<PaperMetadata> {
-  const response = await fetchWithTimeout(fetcher, `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(normalized.id)}`, {
-    headers: { "User-Agent": "PersonalArxivPaperLibrary/1.0" },
-  });
-  if (!response.ok) throw new Error(`ARXIV_HTTP_${response.status}`);
-  return parseArxivMetadata(await readResponseText(response), normalized);
+  const headers = { "User-Agent": "PersonalArxivPaperLibrary/1.0" };
+  try {
+    const response = await fetchWithTimeout(fetcher, `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(normalized.id)}`, { headers });
+    if (!response.ok) throw new Error(`ARXIV_HTTP_${response.status}`);
+    return parseArxivMetadata(await readResponseText(response), normalized);
+  } catch (apiError) {
+    // The export API is frequently rate-limited or slow, while the abstract
+    // page remains available and exposes the same citation metadata.
+    try {
+      const response = await fetchWithTimeout(fetcher, normalized.abstractUrl, { headers });
+      if (!response.ok) throw new Error(`ARXIV_ABS_HTTP_${response.status}`);
+      return parseArxivHtmlMetadata(await readResponseText(response), normalized);
+    } catch {
+      throw apiError;
+    }
+  }
 }
 
 export async function fetchArxivPdf(

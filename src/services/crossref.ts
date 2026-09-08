@@ -96,7 +96,7 @@ export async function lookupCrossref(input: { title?: string; doi?: string }, fe
   const matches = works
     .map((work) => ({ work, score: titleSimilarity(input.title!, cleanText(work.title?.[0]) || "") }))
     .sort((left, right) => right.score - left.score)[0];
-  if (!matches || matches.score < 0.72) throw new Error("CROSSREF_NO_MATCH");
+  if (!matches || matches.score < 0.62) throw new Error("CROSSREF_NO_MATCH");
   const exact = titleKey(cleanText(matches.work.title?.[0]) || "") === titleKey(input.title!);
   const runnerUp = works
     .map((work) => titleSimilarity(input.title!, cleanText(work.title?.[0]) || ""))

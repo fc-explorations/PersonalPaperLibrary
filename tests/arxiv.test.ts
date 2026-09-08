@@ -56,6 +56,21 @@ describe("arXiv metadata", () => {
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("id_list=2401.12345"), expect.anything());
   });
 
+  it("falls back to the abstract page when the export API is unavailable", async () => {
+    const html = `<meta name="citation_title" content="Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability"><meta name="citation_author" content="Sundaram, Shobhita"><meta name="citation_author" content="Quan, John"><meta name="citation_date" content="2026/01/26"><meta name="citation_pdf_url" content="https://arxiv.org/pdf/2601.18778"><meta name="citation_abstract" content="A useful abstract.">`;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes("export.arxiv.org")
+      ? new Response("Rate exceeded", { status: 429 })
+      : new Response(html, { status: 200 }));
+    const result = await fetchArxivMetadata(normalizeArxivInput("2601.18778")!, fetcher);
+    expect(result).toMatchObject({
+      arxivId: "2601.18778",
+      title: "Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability",
+      authors: ["Shobhita Sundaram", "John Quan"],
+      year: 2026,
+      abstract: "A useful abstract.",
+    });
+  });
+
   it("recognizes published conference venues from the journal reference", () => {
     const xml = atom.replace("<arxiv:comment>10 pages. Accepted at ICLR 2022.</arxiv:comment>", "<arxiv:comment>Published as a conference paper at ICLR 2023</arxiv:comment>").replace("<arxiv:journal_ref>Journal 1</arxiv:journal_ref>", "<arxiv:journal_ref>Published as a conference paper at ICLR 2023</arxiv:journal_ref>");
     expect(parseArxivMetadata(xml, normalizeArxivInput("2401.12345")!).acceptedVenue).toBe("ICLR");
