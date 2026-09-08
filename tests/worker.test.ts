@@ -182,6 +182,24 @@ describe("Cloudflare Worker API", () => {
     env.d1.db.close();
   });
 
+  it("performs a safety-backed replace restore and prunes unrelated papers", async () => {
+    const env = bindings();
+    const target = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "replace-target", title: "Replace target", metadataSource: "manual" }) }, env);
+    expect(target.status).toBe(201);
+    const backup = await worker.request("/api/backups", { method: "POST" }, env);
+    const backupId = (await backup.json() as { backupId: string }).backupId;
+    const unrelated = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "replace-unrelated", title: "Unrelated current paper", metadataSource: "manual" }) }, env);
+    expect(unrelated.status).toBe(201);
+
+    const restore = await worker.request(`/api/backups/${backupId}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "replace", offset: 0, limit: 25 }) }, env);
+    expect(restore.status).toBe(200);
+    const result = await restore.json() as { mode: string; complete: boolean; restoredPapers: number; prunedPapers: number; safetyBackupId: string };
+    expect(result).toMatchObject({ mode: "replace", complete: true, restoredPapers: 1, prunedPapers: 1, safetyBackupId: expect.any(String) });
+    expect((await worker.request("/api/papers/replace-unrelated", {}, env)).status).toBe(404);
+    expect((await worker.request(`/api/backups/${result.safetyBackupId}`, {}, env)).status).toBe(200);
+    env.d1.db.close();
+  });
+
   it("exposes hosted bulk upload and deletion controls", async () => {
     const env = bindings();
     const response = await worker.request("/", {}, env);

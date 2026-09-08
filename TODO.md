@@ -29,7 +29,7 @@ Deploy a private, single-owner hosted version of PersonalPaperLibrary on Cloudfl
 - [ ] A preview Worker can be deployed from a clean checkout with no committed secrets.
 - [ ] Cloudflare Access protects every hosted route except the minimum static bootstrap surface; the current Worker hostname is already protected by the owner-only Access application.
 - [ ] A representative local snapshot can be imported into D1/R2 and verified by paper count, PDF hashes, tags, summaries, and questions.
-- [ ] The hosted app can add, replace, view, search, analyze, back up, and restore papers within documented limits.
+- [x] The hosted app can add, replace, view, search, analyze, back up, and restore papers within documented limits.
 - [ ] Worker, D1, R2, Access, and provider failures produce recoverable errors without leaking paper contents or secrets.
 - [ ] A restore drill and PDF replacement/stale-analysis drill have both been completed before production deployment.
 
@@ -135,7 +135,7 @@ These spikes should happen before a large migration. Record the result of each d
 - [ ] Preserve version-1 and version-2 local backup import compatibility where practical.
 - [x] Add restore validation, duplicate handling, paper-count limits, hash verification, idempotent merge semantics, and backup cleanup on creation failure.
 - [x] Add bounded, resumable, idempotent merge batches with restore progress offsets.
-- [ ] Add full replace-mode rollback for destructive restores.
+- [x] Add safety-backed replace restore with resumable batches, post-success pruning, and rollback of partially pruned records on failure.
 - [ ] Document what happens when metadata exists but an R2 object is missing, and vice versa.
 - [x] Complete an automated hosted restore drill with PDF hash verification.
 - [ ] Complete a production backup/restore drill and document retention cleanup.

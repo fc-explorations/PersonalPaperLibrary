@@ -64,11 +64,11 @@ function escapeHtml(value: unknown): string {
 function hostedShell(title: string, page: string, body: string): string {
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="stylesheet" href="/styles.css"></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet"><link rel="stylesheet" href="/styles.css?v=28"></head>
   <body data-hosted-page="${escapeHtml(page)}">
-    <header class="site-header"><div class="shell"><a class="brand" href="/"><span class="wordmark">Personal</span><span class="wordmark wordmark-paper">Paper</span><span class="wordmark">Library</span></a><nav class="cloud-nav"><a href="/">Library</a><a href="/import">Import</a><a href="/ask">Ask</a><a href="/settings">Settings</a></nav></div></header>
+    <header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary"><span class="wordmark">Personal</span><span class="wordmark wordmark-paper">Paper</span><span class="wordmark">Library</span></a><div class="header-actions"><a class="settings-link" href="/settings" aria-label="Settings" title="Settings"><svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.7 7.7 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.58-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .5-.42l.38-2.65c-.61-.25-1.18-.58-1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0 .12-.64l-2.11-1.65Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></a></div></div></header>
     ${body}
-    <script type="module" src="/cloud.js"></script>
+    <script src="/cloud.js?v=2" defer></script>
   </body>
 </html>`;
 }
@@ -241,34 +241,20 @@ app.use("/api/*", async (c, next) => {
   return next();
 });
 
-app.get("/", (c) => c.html(hostedShell("Your papers", "library", `<main class="shell cloud-library">
-      <section class="page-heading"><div><p class="eyebrow">Private hosted library</p><h1>Your papers</h1><p class="muted">Cloudflare D1 stores metadata and R2 stores the PDFs.</p></div><a class="button button-secondary" href="/api/export/metadata">Export metadata</a></section>
-      <section class="panel cloud-upload-panel">
-        <div class="section-heading"><h2>Add a paper</h2><span id="upload-status" class="muted" role="status"></span></div>
-        <form id="paper-form" class="cloud-form">
-          <div class="cloud-form-grid">
-            <label>Title<input name="title" maxlength="500" autocomplete="off" placeholder="Optional for multiple files"></label>
-            <label>Authors<input name="authors" placeholder="One author per line" autocomplete="off"></label>
-            <label>Tags<input name="tags" placeholder="Comma-separated tags" autocomplete="off"></label>
-            <label>PDFs<input name="file" type="file" accept="application/pdf" multiple required></label>
-          </div>
-          <div class="form-actions"><button class="button" type="submit">Upload and save</button></div>
-        </form>
-      </section>
-      <section class="cloud-library-section">
-        <div class="toolbar"><label class="search-label">Search<input id="search" type="search" placeholder="Title, author, tag, or abstract" autocomplete="off"></label><button id="refresh" class="button button-secondary" type="button">Refresh</button><button id="delete-selected" class="button button-danger" type="button" disabled>Delete selected</button></div>
-        <p id="list-status" class="muted" role="status"></p>
-        <div id="paper-list" class="paper-list"></div>
-      </section>
-    </main>`)));
-
-app.get("/add", (c) => c.redirect("/"));
-
-app.get("/import", (c) => c.html(hostedShell("Import paper", "import", `<main class="shell cloud-library">
-  <section class="page-heading"><div><p class="eyebrow">Metadata import</p><h1>Import a paper</h1><p class="muted">Enter an arXiv identifier, DOI, DOI URL, or paper title to fetch metadata and stage an available PDF.</p></div></section>
-  <section class="panel"><form id="import-form" class="cloud-form"><label>arXiv identifier, DOI, or title<input name="input" placeholder="2401.12345, 10.1000/example, or a paper title" required autocomplete="off"></label><div class="form-actions"><button class="button" type="submit">Look up paper</button><span id="import-status" class="muted" role="status"></span></div></form></section>
-  <section id="import-preview" class="panel" hidden><h2 id="import-title"></h2><p id="import-authors" class="muted"></p><p id="import-abstract"></p><div class="cloud-card-actions"><button id="import-save" class="button" type="button">Save to library</button></div></section>
+app.get("/", (c) => c.html(hostedShell("Library", "library", `<main class="shell cloud-library">
+  <div class="library-controls"><div class="library-primary-actions"><a class="button add-paper-button add-paper-square" href="/add" aria-label="Add paper" title="Add paper"><span class="material-symbols-outlined" aria-hidden="true">add</span></a><a class="button button-secondary ask-library-button" href="/ask"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask the library</span></a></div><form id="library-search-form" class="toolbar" method="get" action="/"><label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input id="search" name="q" placeholder="Search titles, authors, abstracts, tags…" autocomplete="off"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label><select id="sort" name="sort" aria-label="Sort papers"><option value="newest">Newest added</option><option value="oldest">Oldest added</option><option value="year-desc">Publication year ↓</option><option value="year-asc">Publication year ↑</option><option value="title">Title A–Z</option></select><button class="button button-secondary" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Search</span></button></form></div>
+  <section id="library-tags" class="tag-bar" aria-label="Library filters"><span class="tag-mode-label">Match:</span><a class="tag tag-mode-button" data-tag-mode="and" href="?tagMode=and">AND</a><a class="tag tag-mode-button tag-selected" data-tag-mode="or" href="?tagMode=or">OR</a><span class="tag-mode-label">Tags:</span><a class="tag tag-selected" data-tag-filter="all" href="?all=1">ALL</a><a class="tag" data-tag-filter="untagged" href="?untagged=1">NONE</a><span class="muted" data-tags-loading>Loading tags…</span></section>
+  <div class="results-heading"><span id="list-status" class="muted" role="status"></span><div class="results-actions"><div id="bulk-actions" class="bulk-actions" hidden><button id="delete-selected" class="button button-danger" type="button">Delete selected</button></div></div></div>
+  <section id="paper-list" class="paper-list empty-paper-list"></section>
+  <div id="library-pagination" class="pagination-footer" hidden></div>
 </main>`)));
+
+app.get("/add", (c) => c.html(hostedShell("Add paper", "add", `<main class="shell cloud-library">
+  <section class="add-grid add-options"><div class="panel"><h2>Find a paper</h2><p class="muted">Enter a title, DOI, URL, or identifier.</p><form id="import-form" class="cloud-form"><div class="inline-form"><input name="input" required placeholder="Paper title, DOI, or URL" autocomplete="off"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find</span></button></div><p id="import-status" class="form-status" role="status"></p></form></div><div class="panel"><h2>Upload a PDF</h2><p class="muted">Upload one or more PDFs. A single file can be given a title; multiple files use their filenames.</p><form id="paper-form" class="cloud-form"><div class="cloud-form-grid"><label>Title<input name="title" maxlength="500" autocomplete="off" placeholder="Optional for multiple files"></label><label>Authors<input name="authors" placeholder="One author per line" autocomplete="off"></label><label>Tags<input name="tags" placeholder="Comma-separated tags" autocomplete="off"></label><label>PDFs<input name="file" type="file" accept="application/pdf,.pdf" multiple required></label></div><div class="form-actions"><button class="button" type="submit"><span class="material-symbols-outlined" aria-hidden="true">upload</span><span>Upload and save</span></button><span id="upload-status" class="muted" role="status"></span></div></form></div></section>
+  <section id="import-preview" class="panel" hidden><div class="section-heading"><div><p class="eyebrow">Review before saving</p><h2 id="import-title"></h2></div><span id="import-pdf-status" class="muted"></span></div><p id="import-authors" class="muted"></p><p id="import-abstract"></p><div class="cloud-card-actions"><button id="import-save" class="button" type="button">Save to library</button></div></section>
+</main>`)));
+
+app.get("/import", (c) => c.redirect("/add"));
 
 const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
   try {
@@ -315,10 +301,10 @@ app.get("/api/export/metadata", async (c) => {
   });
 });
 
-app.post("/api/backups", async (c) => {
-  const storage = new R2Storage(c.env.PAPER_PDFS);
-  const repo = new D1PaperRepository(c.env.DB);
-  const analysis = analysisRepository(c.env);
+async function createHostedBackup(env: CloudflareBindings): Promise<{ storage: R2Storage; manifest: CloudBackupManifest }> {
+  const storage = new R2Storage(env.PAPER_PDFS);
+  const repo = new D1PaperRepository(env.DB);
+  const analysis = analysisRepository(env);
   const backupId = globalThis.crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + CLOUD_BACKUP_TTL_MS).toISOString();
@@ -334,18 +320,22 @@ app.post("/api/backups", async (c) => {
         if (paper.pdfSha256 && paper.pdfSha256 !== stored.sha256) throw new Error("BACKUP_PDF_HASH_MISMATCH");
         pdf = stored;
       }
-      entries.push({
-        paper: backupPaperMetadata(paper),
-        pdf,
-        summary: (await analysis.getSummary(paper.id)) || undefined,
-        questions: await analysis.listQuestions(paper.id, true, false),
-      });
+      entries.push({ paper: backupPaperMetadata(paper), pdf, summary: (await analysis.getSummary(paper.id)) || undefined, questions: await analysis.listQuestions(paper.id, true, false) });
     }
     const manifest = createCloudBackupManifest({ backupId, createdAt, expiresAt, papers: entries });
     await storage.putBackupManifest(backupId, JSON.stringify(manifest, null, 2));
-    return c.json({ backupId, createdAt, expiresAt, papers: entries.length, pdfs: entries.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${backupId}` }, 201);
+    return { storage, manifest };
   } catch (error) {
     await storage.deleteBackup(backupId).catch(() => {});
+    throw error;
+  }
+}
+
+app.post("/api/backups", async (c) => {
+  try {
+    const { manifest } = await createHostedBackup(c.env);
+    return c.json({ backupId: manifest.backupId, createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` }, 201);
+  } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The hosted backup could not be created.");
   }
 });
@@ -371,50 +361,93 @@ app.get("/api/backups/:id", async (c) => {
   return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", "content-disposition": `attachment; filename="personal-paper-library-backup-${backupId}.json"`, "cache-control": "no-store" } });
 });
 
+async function restoreCloudBackupEntry(entry: CloudBackupManifest["papers"][number], backupId: string, repo: D1PaperRepository, storage: R2Storage, analysis: D1AnalysisRepository, replacePdf: boolean): Promise<boolean> {
+  const id = entry.paper.id;
+  const draft = draftFromBody({ ...entry.paper, id });
+  const existing = await repo.findById(id);
+  if (!existing) {
+    const duplicate = await repo.findDuplicate(draft);
+    if (duplicate) throw new Error("BACKUP_DUPLICATE_PAPER");
+  }
+  let file;
+  if (entry.pdf) {
+    const backupBytes = await storage.getBackupPdf(backupId, id);
+    if (!backupBytes) throw new Error("BACKUP_PDF_MISSING");
+    const stored = await storage.put(id, backupBytes);
+    if (stored.sha256 !== entry.pdf.sha256) throw new Error("BACKUP_PDF_HASH_MISMATCH");
+    if (existing && existing.pdfSha256 !== stored.sha256) await analysis.markFileChanged(id, stored.sha256);
+    file = stored;
+  } else if (replacePdf && existing?.r2Key) {
+    await storage.delete(id);
+    await repo.clearPdf(id);
+    await analysis.markFileChanged(id, undefined);
+  }
+  if (existing) await repo.update(id, draft, file);
+  else await repo.create({ ...draft, id }, file);
+  if (entry.summary) await analysis.saveSummary({ ...entry.summary, paperId: id });
+  for (const savedQuestion of entry.questions) {
+    const { paperId: _paperId, answer, ...question } = savedQuestion;
+    await analysis.saveQuestion(id, question);
+    if (answer) await analysis.saveAnswer(id, savedQuestion.id, { ...answer });
+  }
+  return Boolean(file);
+}
+
 app.post("/api/backups/:id/restore", async (c) => {
   const loaded = await loadCloudBackup(c, c.req.param("id"));
   if (loaded instanceof Response) return loaded;
   const { storage, manifest } = loaded;
   const repo = new D1PaperRepository(c.env.DB);
   const analysis = analysisRepository(c.env);
-  const body = await c.req.json<{ offset?: number; limit?: number }>().catch(() => ({ offset: 0, limit: 25 }));
+  const body = await c.req.json<{ offset?: number; limit?: number; mode?: string; safetyBackupId?: string }>().catch(() => ({ offset: 0, limit: 25, mode: "merge", safetyBackupId: undefined as string | undefined }));
+  const mode = body.mode === "replace" ? "replace" : "merge";
   const offset = Number.isFinite(Number(body.offset)) ? Math.max(0, Math.floor(Number(body.offset))) : 0;
   const limit = Number.isFinite(Number(body.limit)) ? Math.min(50, Math.max(1, Math.floor(Number(body.limit)))) : 25;
   const batch = manifest.papers.slice(offset, offset + limit);
+  let safetyBackupId = body.safetyBackupId?.trim() || undefined;
+  let safetyManifest: CloudBackupManifest | undefined;
+  if (mode === "replace") {
+    if (offset === 0 && !safetyBackupId) {
+      const safety = await createHostedBackup(c.env);
+      safetyBackupId = safety.manifest.backupId;
+      safetyManifest = safety.manifest;
+    } else if (!safetyBackupId) return jsonError(c, 400, "SAFETY_BACKUP_REQUIRED", "Replace restore requires its safety backup ID after the first batch.");
+    if (!safetyManifest) {
+      const safetyLoaded = await loadCloudBackup(c, safetyBackupId);
+      if (safetyLoaded instanceof Response) return safetyLoaded;
+      safetyManifest = safetyLoaded.manifest;
+    }
+  }
   let restoredPapers = 0;
   let restoredPdfs = 0;
+  const deletedForRollback: CloudBackupManifest["papers"] = [];
   try {
     for (const entry of batch) {
-      const id = entry.paper.id;
-      const draft = draftFromBody({ ...entry.paper, id });
-      const existing = await repo.findById(id);
-      if (!existing) {
-        const duplicate = await repo.findDuplicate(draft);
-        if (duplicate) throw new Error("BACKUP_DUPLICATE_PAPER");
-      }
-      let file;
-      if (entry.pdf) {
-        const bytes = await storage.getBackupPdf(manifest.backupId, id);
-        if (!bytes) throw new Error("BACKUP_PDF_MISSING");
-        const stored = await storage.put(id, bytes);
-        if (stored.sha256 !== entry.pdf.sha256) throw new Error("BACKUP_PDF_HASH_MISMATCH");
-        file = stored;
-        restoredPdfs += 1;
-      }
-      if (existing) await repo.update(id, draft, file);
-      else await repo.create({ ...draft, id }, file);
-      if (entry.summary) await analysis.saveSummary({ ...entry.summary, paperId: id });
-      for (const savedQuestion of entry.questions) {
-        const { paperId: _paperId, answer, ...question } = savedQuestion;
-        await analysis.saveQuestion(id, question);
-        if (answer) await analysis.saveAnswer(id, savedQuestion.id, { ...answer });
-      }
+      restoredPdfs += await restoreCloudBackupEntry(entry, manifest.backupId, repo, storage, analysis, mode === "replace") ? 1 : 0;
       restoredPapers += 1;
     }
     const nextOffset = offset + restoredPapers;
-    return c.json({ ok: true, mode: "merge", restoredPapers, restoredPdfs, backupId: manifest.backupId, offset, nextOffset, totalPapers: manifest.papers.length, complete: nextOffset >= manifest.papers.length });
+    const complete = nextOffset >= manifest.papers.length;
+    let prunedPapers = 0;
+    if (mode === "replace" && complete) {
+      const targetIds = new Set(manifest.papers.map((entry) => entry.paper.id));
+      for (const id of await repo.listIds()) {
+        if (targetIds.has(id)) continue;
+        const current = await repo.findById(id);
+        if (!current) continue;
+        const safetyEntry = safetyManifest!.papers.find((entry) => entry.paper.id === id);
+        if (safetyEntry) deletedForRollback.push(safetyEntry);
+        if (current.r2Key) await storage.delete(id);
+        await repo.delete(id);
+        prunedPapers += 1;
+      }
+    }
+    return c.json({ ok: true, mode, restoredPapers, restoredPdfs, prunedPapers, safetyBackupId, backupId: manifest.backupId, offset, nextOffset, totalPapers: manifest.papers.length, complete });
   } catch (error) {
-    return jsonError(c, 500, errorMessage(error), `The hosted backup restore stopped at offset ${offset} after ${restoredPapers} paper(s) in this batch. Retry this batch; restore is merge-based.`);
+    if (mode === "replace" && deletedForRollback.length) {
+      for (const entry of deletedForRollback) await restoreCloudBackupEntry(entry, safetyManifest!.backupId, repo, storage, analysis, false).catch(() => {});
+    }
+    return jsonError(c, 500, errorMessage(error), `The hosted ${mode} restore stopped at offset ${offset} after ${restoredPapers} paper(s) in this batch. Retry is safe; safety backup: ${safetyBackupId || "none"}.`);
   }
 });
 
@@ -469,7 +502,7 @@ app.get("/settings", (c) => c.html(hostedShell("Settings", "settings", `<main cl
     <div class="settings-subsection"><h2>Hosted credential</h2><p id="key-status" class="muted">Checking Worker Secret…</p><p class="muted">Update the secret with <code>npx wrangler secret put OPENAI_API_KEY</code>.</p></div>
     <div class="form-actions"><button class="button" type="submit">Save settings</button><span id="settings-status" class="muted" role="status"></span></div>
   </form></section>
-  <section class="panel"><div class="section-heading"><h2>Hosted backup</h2><span id="backup-status" class="muted" role="status"></span></div><p class="muted">Creates a versioned JSON manifest and copies PDFs into a protected R2 backup namespace. Restore merges the backup into the current library and updates matching paper IDs.</p><div class="cloud-card-actions"><button id="backup-create" class="button" type="button">Create hosted backup</button><a id="backup-download" class="button button-secondary" hidden>Download manifest</a></div><label>Backup ID for restore<input id="backup-id" autocomplete="off" placeholder="Paste a backup ID"></label><div class="form-actions"><button id="backup-restore" class="button button-secondary" type="button">Restore backup</button></div></section>
+  <section class="panel"><div class="section-heading"><h2>Hosted backup</h2><span id="backup-status" class="muted" role="status"></span></div><p class="muted">Creates a versioned JSON manifest and copies PDFs into a protected R2 backup namespace. Merge restores update matching paper IDs. Replace restores create a safety backup first, restore in batches, and remove unrelated papers only after all batches succeed.</p><div class="cloud-card-actions"><button id="backup-create" class="button" type="button">Create hosted backup</button><a id="backup-download" class="button button-secondary" hidden>Download manifest</a></div><label>Backup ID for restore<input id="backup-id" autocomplete="off" placeholder="Paste a backup ID"></label><label>Restore mode<select id="backup-mode"><option value="merge">Merge into current library</option><option value="replace">Replace current library (creates a safety backup)</option></select></label><div class="form-actions"><button id="backup-restore" class="button button-secondary" type="button">Restore backup</button></div></section>
 </main>`)));
 
 app.get("/papers/:id", async (c) => {
@@ -587,6 +620,49 @@ app.delete("/api/papers/:id", async (c) => {
   } catch (error) {
     if (move) await storage.restoreFromTrash(move);
     return jsonError(c, 500, errorMessage(error), "The paper could not be deleted.");
+  }
+});
+
+app.post("/api/papers/bulk-delete", async (c) => {
+  const repo = new D1PaperRepository(c.env.DB);
+  const storage = new R2Storage(c.env.PAPER_PDFS);
+  try {
+    const body = await c.req.json<{ selectedIds?: string[] }>();
+    const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
+    if (!ids.length) return jsonError(c, 400, "SELECTION_REQUIRED", "Select at least one paper.");
+    const papers = (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper));
+    const moved: Array<NonNullable<Awaited<ReturnType<R2Storage["moveToTrash"]>>>> = [];
+    try {
+      for (const paper of papers) if (paper.r2Key) {
+        const move = await storage.moveToTrash(paper.id);
+        if (move) moved.push(move);
+      }
+      await repo.deleteMany(papers.map((paper) => paper.id));
+      for (const move of moved) await storage.finalizeTrash(move);
+      return c.json({ ok: true, deleted: papers.length });
+    } catch (error) {
+      for (const move of moved.reverse()) await storage.restoreFromTrash(move).catch(() => {});
+      throw error;
+    }
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The selected papers could not be deleted.");
+  }
+});
+
+app.post("/api/papers/bulk-tags", async (c) => {
+  try {
+    const body = await c.req.json<{ selectedIds?: string[]; name?: string; action?: string }>();
+    const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
+    const name = body.name?.trim() || "";
+    if (!ids.length) return jsonError(c, 400, "SELECTION_REQUIRED", "Select at least one paper.");
+    if (!name) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter a tag name.");
+    if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
+    const tags = new D1PaperRepository(c.env.DB).tags;
+    if (body.action === "add") await tags.addToPapers(ids, name);
+    else await tags.removeFromPapers(ids, name);
+    return c.json({ ok: true, updated: ids.length, action: body.action, tag: name.toLocaleLowerCase() });
+  } catch (error) {
+    return jsonError(c, 400, errorMessage(error), "The selected paper tags could not be updated.");
   }
 });
 

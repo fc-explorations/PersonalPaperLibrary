@@ -185,6 +185,7 @@ async function initSettings() {
   const backupCreate = document.querySelector("#backup-create");
   const backupDownload = document.querySelector("#backup-download");
   const backupId = document.querySelector("#backup-id");
+  const backupMode = document.querySelector("#backup-mode");
   const backupRestore = document.querySelector("#backup-restore");
   const backupStatus = document.querySelector("#backup-status");
   backupCreate?.addEventListener("click", async () => {
@@ -202,20 +203,23 @@ async function initSettings() {
   backupRestore?.addEventListener("click", async () => {
     const value = backupId.value.trim();
     if (!value) return setStatus(backupStatus, "Enter a backup ID first.", true);
+    const restoreMode = backupMode?.value || "merge";
+    if (restoreMode === "replace" && !confirm("Replace the current hosted library? A safety backup will be created first, but unrelated current papers will be removed after all target batches succeed.")) return;
     backupRestore.disabled = true;
     try {
       let offset = 0;
       let total = 0;
       let restoredPapers = 0;
       let restoredPdfs = 0;
+      let safetyBackupId = "";
       let complete = false;
       while (!complete) {
-        setStatus(backupStatus, total ? `Restoring ${offset} of ${total} papers…` : "Restoring backup…");
-        const result = await request(`/api/backups/${encodeURIComponent(value)}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "merge", offset, limit: 25 }) });
+        setStatus(backupStatus, total ? `${restoreMode === "replace" ? "Replacing" : "Restoring"} ${offset} of ${total} papers…` : `${restoreMode === "replace" ? "Replacing" : "Restoring"} backup…`);
+        const result = await request(`/api/backups/${encodeURIComponent(value)}/restore`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: restoreMode, offset, limit: 25, safetyBackupId: safetyBackupId || undefined }) });
         if (result.nextOffset <= offset && !result.complete) throw new Error("Restore made no progress. Retry with the backup ID.");
-        restoredPapers += result.restoredPapers; restoredPdfs += result.restoredPdfs; total = result.totalPapers; offset = result.nextOffset; complete = result.complete;
+        restoredPapers += result.restoredPapers; restoredPdfs += result.restoredPdfs; total = result.totalPapers; offset = result.nextOffset; safetyBackupId = result.safetyBackupId || safetyBackupId; complete = result.complete;
       }
-      setStatus(backupStatus, `Restored ${restoredPapers} paper${restoredPapers === 1 ? "" : "s"} and ${restoredPdfs} PDF${restoredPdfs === 1 ? "" : "s"}.`);
+      setStatus(backupStatus, restoreMode === "replace" ? `Replaced ${restoredPapers} paper${restoredPapers === 1 ? "" : "s"} and ${restoredPdfs} PDF${restoredPdfs === 1 ? "" : "s"}. Safety backup: ${safetyBackupId}.` : `Restored ${restoredPapers} paper${restoredPapers === 1 ? "" : "s"} and ${restoredPdfs} PDF${restoredPdfs === 1 ? "" : "s"}.`);
     } catch (error) { setStatus(backupStatus, error.message, true); }
     finally { backupRestore.disabled = false; }
   });
