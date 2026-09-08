@@ -137,7 +137,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-  <script src="/app.js?v=30" defer></script>
+  <script src="/app.js?v=31" defer></script>
 </body>
 </html>`;
 }

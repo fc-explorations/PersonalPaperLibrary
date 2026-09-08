@@ -661,22 +661,37 @@ document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", as
   const importLabel = source === "zip"
     ? "PDFs from ZIP"
     : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
-  setStatus(form, `Importing ${importLabel}…`);
+  setStatus(form, `Importing 0 of ${source === "folder" ? `${pdfFiles.length} PDFs` : "1 ZIP archive"}… ETA calculating…`);
   try {
-    const formData = new FormData(form);
-    formData.delete("files");
-    pdfFiles.forEach((file) => formData.append("files", file, file.name));
-    zipFiles.forEach((file) => formData.append("files", file, file.name));
     const relativePath = pdfFiles[0]?.webkitRelativePath || "";
     const folderTag = relativePath.split("/").filter(Boolean)[0] || "";
     const archiveTag = zipFiles[0]?.name.replace(/\.zip$/i, "") || "";
-    if (folderTag || archiveTag) formData.set("folderTag", folderTag || archiveTag);
     const useFolderAsTag = form.querySelector("[data-folder-tag-toggle]");
-    formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
-    const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
-    setStatus(form, `Imported ${body.imported.length}; skipped ${body.skipped.length}; failed ${body.failed.length}${body.folderTag ? `; tagged as “${body.folderTag}”` : ""}.`);
+    const files = source === "folder" ? pdfFiles : zipFiles;
+    const imported = [], skipped = [], failed = [];
+    const startedAt = performance.now();
+    const formatEta = (milliseconds) => { const seconds = Math.max(1, Math.ceil(milliseconds / 1000)); if (seconds < 60) return `${seconds}s`; const minutes = Math.floor(seconds / 60); const remaining = seconds % 60; return `${minutes}m${remaining ? ` ${remaining}s` : ""}`; };
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const formData = new FormData();
+      formData.append("files", file, file.name);
+      formData.set("folderTag", folderTag || archiveTag);
+      formData.set("useFolderAsTag", String(useFolderAsTag?.checked ?? true));
+      try {
+        const body = await jsonRequest("/api/bulk-upload", { method: "POST", body: formData });
+        imported.push(...body.imported); skipped.push(...body.skipped); failed.push(...body.failed);
+      } catch (error) {
+        failed.push({ filename: file.name, reason: clientErrorMessage(error) });
+      }
+      const finished = index + 1;
+      const remaining = files.length - finished;
+      const average = (performance.now() - startedAt) / finished;
+      const eta = remaining ? ` ETA ~${formatEta(average * remaining)} remaining` : "";
+      setStatus(form, `Importing ${finished} of ${files.length} ${source === "folder" ? "PDFs" : "ZIP archives"}…${eta}`);
+    }
+    setStatus(form, `Imported ${imported.length}; skipped ${skipped.length}; failed ${failed.length}${folderTag || archiveTag ? `; tagged as “${folderTag || archiveTag}”` : ""}.`);
     const results = form.querySelector("[data-bulk-results]");
-    results.innerHTML = [...body.imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...body.skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...body.failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
+    results.innerHTML = [...imported.map((item) => `<div class="result-success">Imported: ${escapeText(item.title)}${item.warning ? ` <span class="result-muted">(${escapeText(item.warning)})</span>` : ""}</div>`), ...skipped.map((item) => `<div class="result-muted">Skipped: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`), ...failed.map((item) => `<div class="result-error">Failed: ${escapeText(item.filename)} (${escapeText(item.reason)})</div>`)].join("");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
