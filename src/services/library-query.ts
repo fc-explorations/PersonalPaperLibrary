@@ -9,9 +9,9 @@ function parseJson(value: string): unknown {
   return JSON.parse(fenced.trim());
 }
 
-export async function groupLibraryResults(hits: LibrarySearchHit[], query: string, client: LlmClient, model: string, getSummary: (paperId: string) => SummaryRecord | null): Promise<LibraryGroup[]> {
-  const source = hits.slice(0, 20).map((hit) => {
-    const summary = getSummary(hit.paper.id);
+export async function groupLibraryResults(hits: LibrarySearchHit[], query: string, client: LlmClient, model: string, getSummary: (paperId: string) => SummaryRecord | null | Promise<SummaryRecord | null>): Promise<LibraryGroup[]> {
+  const source = (await Promise.all(hits.slice(0, 20).map(async (hit) => {
+    const summary = await getSummary(hit.paper.id);
     return JSON.stringify({
       paperId: hit.paper.id,
       title: hit.paper.title,
@@ -20,7 +20,7 @@ export async function groupLibraryResults(hits: LibrarySearchHit[], query: strin
       summary: summary?.status === "complete" ? summary.content.slice(0, 2400) : "",
       evidence: hit.evidence,
     });
-  }).join("\n");
+  }))).join("\n");
   const response = await client.complete({
     model,
     temperature: 0.2,

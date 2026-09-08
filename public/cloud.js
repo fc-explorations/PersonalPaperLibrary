@@ -22,6 +22,62 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
 }
 
+function renderHostedMarkdown(value) {
+  const lines = String(value ?? "").replace(/\r\n/g, "\n").split("\n");
+  const output = [];
+  let paragraph = [];
+  let list = [];
+  let code = [];
+  let inCode = false;
+  const inline = (text) => {
+    const fragments = [];
+    const protect = (fragment) => { const token = `\u0000${fragments.length}\u0000`; fragments.push(fragment); return token; };
+    let protectedText = escapeHtml(text).replace(/`([^`]+)`/g, (_, codeText) => protect(`<code>${escapeHtml(codeText)}</code>`));
+    protectedText = protectedText.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)[^$\n]+?(?<!\\)\$)/g, (math) => protect(math));
+    return protectedText.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>").replace(/_([^_]+)_/g, "<em>$1</em>").replace(/\u0000(\d+)\u0000/g, (_, index) => fragments[Number(index)]);
+  };
+  const flushParagraph = () => { if (paragraph.length) { output.push(`<p>${inline(paragraph.join(" "))}</p>`); paragraph = []; } };
+  const flushList = () => { if (list.length) { output.push(`<ul>${list.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>`); list = []; } };
+  const flushCode = () => { if (code.length) { output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`); code = []; } };
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) { flushParagraph(); flushList(); if (inCode) flushCode(); inCode = !inCode; continue; }
+    if (inCode) { code.push(line); continue; }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { flushParagraph(); flushList(); output.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); continue; }
+    const item = line.match(/^\s*[-*+]\s+(.+)$/) || line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (item) { flushParagraph(); list.push(item[1]); continue; }
+    flushList(); paragraph.push(line.trim());
+  }
+  flushParagraph(); flushList(); if (inCode) flushCode();
+  return output.join("");
+}
+
+function typesetHostedMath(elements) {
+  let attempts = 0;
+  const typeset = () => {
+    const mathJax = window.MathJax;
+    if (typeof mathJax?.typesetPromise !== "function") {
+      if (attempts++ < 200) window.setTimeout(typeset, 50);
+      return;
+    }
+    const run = () => { void mathJax.typesetPromise(elements).catch(() => {}); };
+    if (mathJax.startup?.promise) void mathJax.startup.promise.then(run).catch(() => {});
+    else run();
+  };
+  typeset();
+}
+
+typesetHostedMath([...document.querySelectorAll(".analysis-content")]);
+
+function renderHostedAnalysisMeta(summary) {
+  if (!summary?.provider || !summary?.model || !summary?.generatedAt) return "";
+  const duration = typeof summary.durationMs === "number"
+    ? ` · ${Math.floor(summary.durationMs / 60000)}:${String(Math.floor(summary.durationMs / 1000) % 60).padStart(2, "0")}`
+    : "";
+  return `<p class="analysis-meta muted">${escapeHtml(summary.provider)} · ${escapeHtml(summary.model)} · ${escapeHtml(new Date(summary.generatedAt).toLocaleString("en-GB"))}${duration}</p>`;
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, { credentials: "same-origin", ...options });
   const contentType = response.headers.get("content-type") || "";
@@ -42,12 +98,12 @@ function setStatus(element, message, error = false) {
 
 function sleep(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 
-async function pollUntil(load, done, timeout = 120000) {
+async function pollUntil(load, done, timeout = 120000, interval = 3000) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
     const value = await load();
     if (done(value)) return value;
-    await sleep(3000);
+    await sleep(interval);
   }
   throw new Error("The analysis job is taking longer than expected. Refresh to check its status.");
 }
@@ -55,8 +111,9 @@ async function pollUntil(load, done, timeout = 120000) {
 function showAnalysisResult(element, heading, content, error = false) {
   if (!element) return;
   element.className = `analysis-result${error ? " status-error" : ""}`;
-  element.innerHTML = `<strong>${escapeHtml(heading)}</strong><pre>${escapeHtml(content)}</pre>`;
+  element.innerHTML = `<strong>${escapeHtml(heading)}</strong><div class="analysis-content">${renderHostedMarkdown(content)}</div>`;
   element.hidden = false;
+  typesetHostedMath([element]);
 }
 
 async function runSummary(paperId, onUpdate, mode = "quick") {
@@ -68,7 +125,7 @@ async function runSummary(paperId, onUpdate, mode = "quick") {
   );
   if (!progress.job || progress.job.status !== "complete") throw new Error(progress.job?.errorMessage || "Summary generation failed.");
   const summary = await request(`/api/papers/${encodeURIComponent(paperId)}/summary`);
-  onUpdate("Summary", summary.summary?.content || "The summary completed without content.");
+  onUpdate("Summary", summary.summary?.content || "The summary completed without content.", summary.summary);
 }
 
 async function runQuestion(paperId, question, onUpdate) {
@@ -86,7 +143,7 @@ async function runQuestion(paperId, question, onUpdate) {
 
 function libraryState() {
   const params = new URLSearchParams(window.location.search);
-  return { q: params.get("q") || "", sort: params.get("sort") || "newest", tags: params.getAll("tag"), tagMode: params.get("tagMode") === "and" ? "and" : "or", untagged: params.get("untagged") === "1", page: Math.max(1, Number(params.get("page") || 1) || 1), pageSize: pageSizes.includes(Number(selectedTheme.pageSize)) ? Number(selectedTheme.pageSize) : 50 };
+  return { q: params.get("q") || "", sort: params.get("sort") || "newest", tags: params.getAll("tag"), selected: params.getAll("selected"), tagMode: params.get("tagMode") === "and" ? "and" : "or", untagged: params.get("untagged") === "1", page: Math.max(1, Number(params.get("page") || 1) || 1), pageSize: pageSizes.includes(Number(selectedTheme.pageSize)) ? Number(selectedTheme.pageSize) : 50 };
 }
 
 function libraryUrl(state, changes = {}) {
@@ -95,6 +152,7 @@ function libraryUrl(state, changes = {}) {
   if (next.q) params.set("q", next.q);
   if (next.sort && next.sort !== "newest") params.set("sort", next.sort);
   (next.tags || []).forEach((tag) => params.append("tag", tag));
+  (next.selected || []).forEach((id) => params.append("selected", id));
   if (next.tagMode && next.tagMode !== "or") params.set("tagMode", next.tagMode);
   if (next.untagged) params.set("untagged", "1");
   if (next.page > 1) params.set("page", String(next.page));
@@ -102,12 +160,19 @@ function libraryUrl(state, changes = {}) {
   return query ? `/?${query}` : "/";
 }
 
+function hostedLibrarySelectionUrl(ids) {
+  const params = new URLSearchParams();
+  ids.forEach((id) => params.append("selected", id));
+  return `/?${params}`;
+}
+
 function paperCard(paper) {
   const tags = (paper.tags || []).map((tag) => `<a class="tag" href="${libraryUrl(libraryState(), { tags: [tag], untagged: false, page: 1 })}">${escapeHtml(tag)}</a>`).join(" ");
   const authors = (paper.authors || []).join(", ");
   const venue = paper.acceptedVenue || paper.journalRef || "";
   const meta = [authors || "No authors recorded", venue, paper.year ? String(paper.year) : ""].filter(Boolean).join(" · ");
-  return `<article class="paper-card">${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing"><span class="material-symbols-outlined" aria-hidden="true">picture_as_pdf</span></span>`}<label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${escapeHtml(meta)}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
+  const selected = libraryState().selected.includes(paper.id);
+  return `<article class="paper-card">${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing"><span class="material-symbols-outlined" aria-hidden="true">picture_as_pdf</span></span>`}<label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${escapeHtml(meta)}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
 }
 
 function renderLibraryTags(tags, state) {
@@ -118,6 +183,38 @@ function renderLibraryTags(tags, state) {
   }).join(" ");
   const allSelected = !state.tags.length && !state.untagged;
   return `<span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button${state.tagMode === "and" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "and", page: 1 })}">AND</a> <a class="tag tag-mode-button${state.tagMode === "or" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "or", page: 1 })}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag${allSelected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: false, page: 1 })}">ALL</a> <a class="tag${state.untagged ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: !state.untagged, page: 1 })}">NONE</a> ${tagLinks}`;
+}
+
+let hostedLibraryView = { body: null, state: null, tags: [] };
+
+function hasLibraryFilter(state) {
+  return Boolean(state?.q || state?.tags?.length || state?.untagged);
+}
+
+function libraryExportUrl(state, selectedIds = []) {
+  const params = new URLSearchParams();
+  if (state?.q) params.set("q", state.q);
+  (state?.tags || []).forEach((tag) => params.append("tag", tag));
+  if (state?.tagMode === "and") params.set("tagMode", "and");
+  if (state?.untagged) params.set("untagged", "1");
+  selectedIds.forEach((id) => params.append("selected", id));
+  return `/api/export/pdfs?${params}`;
+}
+
+function bulkTagEditor(context, tags) {
+  const options = tags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
+  return `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(context.q || "")}" data-selection-tags="${escapeHtml(JSON.stringify(context.tags || []))}" data-selection-tag-mode="${escapeHtml(context.tagMode || "or")}" data-selection-untagged="${context.untagged ? "true" : "false"}" data-selection-ids="${escapeHtml(JSON.stringify(context.selectedIds || []))}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${options}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add"><span class="material-symbols-outlined" aria-hidden="true">add</span><span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags><span class="material-symbols-outlined" aria-hidden="true">close</span><span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>`;
+}
+
+function groupActions(body, state, tags, selectedIds = []) {
+  const group = selectedIds.length ? false : hasLibraryFilter(state);
+  if (!body?.total || (!group && !selectedIds.length)) return "";
+  const context = { q: group ? state.q : "", tags: group ? state.tags : [], tagMode: group ? state.tagMode : "or", untagged: group ? state.untagged : false, selectedIds };
+  const count = selectedIds.length || body.total;
+  const stored = selectedIds.length ? body.papers.filter((paper) => paper.r2Key).length : body.stored;
+  const label = selectedIds.length ? `Delete selected (${count})` : state.tags.length || state.untagged ? "Delete group" : "Delete selected";
+  const toolbar = `<div class="bulk-actions" data-bulk-toolbar><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit tags</span></button>${stored ? `<a class="button button-secondary" href="${libraryExportUrl(context, selectedIds)}"><span class="material-symbols-outlined" aria-hidden="true">download</span><span>Download ${stored} PDF${stored === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(context.q)}" data-delete-tags="${escapeHtml(JSON.stringify(context.tags))}" data-delete-tag-mode="${escapeHtml(context.tagMode)}" data-delete-untagged="${context.untagged ? "true" : "false"}" data-delete-selected-ids="${escapeHtml(JSON.stringify(selectedIds))}" data-delete-count="${count}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>${label}</span></button></div>`;
+  return `<div class="hosted-bulk-group" data-hosted-bulk>${toolbar}${bulkTagEditor(context, tags)}</div>`;
 }
 
 function renderPagination(state, total) {
@@ -141,11 +238,13 @@ async function loadPapers() {
     const params = new URLSearchParams({ limit: String(state.pageSize), offset: String((state.page - 1) * state.pageSize), sort: state.sort, tagMode: state.tagMode });
     if (state.q) params.set("q", state.q);
     state.tags.forEach((tag) => params.append("tag", tag));
+    state.selected.forEach((id) => params.append("selected", id));
     if (state.untagged) params.set("untagged", "1");
     const [body, tagBody] = await Promise.all([request(`/api/papers?${params}`), request("/api/tags")]);
     const pageCount = Math.max(1, Math.ceil(body.total / state.pageSize));
     if (body.total && state.page > pageCount) return window.location.replace(libraryUrl(state, { page: pageCount }));
     document.querySelector("#library-tags").innerHTML = renderLibraryTags(tagBody.tags || [], state);
+    hostedLibraryView = { body, state, tags: tagBody.tags || [] };
     list.className = `paper-list${body.papers.length ? "" : " empty-paper-list"}`;
     list.innerHTML = body.papers.length ? body.papers.map(paperCard).join("") : `<div class="empty-state"><h2>${state.q || state.tags.length || state.untagged ? "No papers found" : "No papers yet"}</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`;
     setStatus(listStatus, `${body.total} paper${body.total === 1 ? "" : "s"}`);
@@ -164,8 +263,9 @@ function updateBulkState() {
   const actions = document.querySelector("#bulk-actions");
   if (!list || !actions) return;
   const selected = list.querySelectorAll("[data-select-paper]:checked").length;
-  actions.hidden = selected === 0;
-  actions.innerHTML = selected ? `<button class="button button-secondary" type="button" data-bulk-tags>Edit tags</button><button id="delete-selected" class="button button-danger" type="button">Delete selected (${selected})</button>` : "";
+  const selectedIds = [...list.querySelectorAll("[data-select-paper]:checked")].map((input) => input.dataset.selectPaper).filter(Boolean);
+  actions.innerHTML = groupActions(hostedLibraryView.body, hostedLibraryView.state, hostedLibraryView.tags, selectedIds);
+  actions.hidden = !actions.innerHTML;
 }
 
 function initLibrary() {
@@ -176,20 +276,34 @@ function initLibrary() {
   document.querySelector("#bulk-actions")?.addEventListener("click", async (event) => {
     const ids = [...list.querySelectorAll("[data-select-paper]:checked")].map((input) => input.dataset.selectPaper).filter(Boolean);
     const target = event.target.closest("button");
-    if (!ids.length || !target) return;
-    if (target.dataset.bulkTags !== undefined) {
-      const name = window.prompt("Tag to add or remove:");
-      if (!name?.trim()) return;
-      const action = window.confirm(`Add “${name.trim()}” to ${ids.length} selected paper${ids.length === 1 ? "" : "s"}? Choose Cancel to remove it.`) ? "add" : "remove";
-      try { await request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: ids, name, action }) }); await loadPapers(); }
-      catch (error) { setStatus(document.querySelector("#list-status"), error.message, true); }
+    if (!target) return;
+    if (target.matches("[data-toggle-bulk-tags]")) {
+      const editor = document.querySelector("[data-bulk-tag-editor]");
+      const toolbar = document.querySelector("[data-bulk-toolbar]");
+      if (editor) editor.hidden = false;
+      if (toolbar) toolbar.hidden = true;
+      target.setAttribute("aria-expanded", "true");
+      editor?.querySelector("select")?.focus();
       return;
     }
-    if (!confirm(`Delete ${ids.length} selected paper${ids.length === 1 ? "" : "s"} and their PDFs?`)) return;
+    if (target.matches("[data-cancel-bulk-tags]")) {
+      const editor = document.querySelector("[data-bulk-tag-editor]");
+      const toolbar = document.querySelector("[data-bulk-toolbar]");
+      if (editor) editor.hidden = true;
+      if (toolbar) toolbar.hidden = false;
+      document.querySelector("[data-toggle-bulk-tags]")?.setAttribute("aria-expanded", "false");
+      return;
+    }
+    if (!target.matches("[data-delete-group]")) return;
+    const count = target.dataset.deleteCount || String(ids.length);
+    if (!confirm(`Delete ${count} paper${Number(count) === 1 ? "" : "s"} and their PDFs?`)) return;
     target.disabled = true;
-    try { setStatus(document.querySelector("#list-status"), `Deleting ${ids.length} paper${ids.length === 1 ? "" : "s"}…`); await request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: ids }) }); await loadPapers(); }
+    const body = { q: target.dataset.deleteQuery || undefined, tags: JSON.parse(target.dataset.deleteTags || "[]"), tagMode: target.dataset.deleteTagMode || "or", untagged: target.dataset.deleteUntagged === "true", selectedIds: JSON.parse(target.dataset.deleteSelectedIds || "[]") };
+    try { setStatus(document.querySelector("#list-status"), `Deleting ${count} paper${Number(count) === 1 ? "" : "s"}…`); await request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); await loadPapers(); }
     catch (error) { setStatus(document.querySelector("#list-status"), error.message, true); target.disabled = false; }
   });
+  document.querySelector("#bulk-actions")?.addEventListener("change", (event) => { if (!event.target.matches("[data-bulk-tag-select]")) return; const form = event.target.closest("form"); const input = form?.querySelector("[data-new-tag]"); const isNew = event.target.value === "__new__"; if (input) { input.hidden = !isNew; input.required = isNew; if (isNew) input.focus(); } });
+  document.querySelector("#bulk-actions")?.addEventListener("submit", async (event) => { const form = event.target.closest("[data-bulk-tag-form]"); if (!form) return; event.preventDefault(); const action = event.submitter?.dataset.bulkTagAction; const selected = form.elements.namedItem("tag").value; const name = selected === "__new__" ? form.elements.namedItem("newTag").value : selected; if (action === "remove" && selected === "__new__") { setStatus(form, "Choose an existing tag to remove.", true); return; } if (!name?.trim()) { setStatus(form, "Choose or enter a tag.", true); return; } setStatus(form, "Updating tags…"); try { await request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery || undefined, tags: JSON.parse(form.dataset.selectionTags || "[]"), tagMode: form.dataset.selectionTagMode || "or", untagged: form.dataset.selectionUntagged === "true", selectedIds: JSON.parse(form.dataset.selectionIds || "[]"), name, action }) }); await loadPapers(); } catch (error) { setStatus(form, error.message, true); } });
   form.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(form); window.location.href = libraryUrl(libraryState(), { q: String(data.get("q") || "").trim(), sort: String(data.get("sort") || "newest"), page: 1 }); });
   const clear = document.querySelector("[data-clear-search]");
   const search = document.querySelector("#search");
@@ -200,18 +314,15 @@ function initLibrary() {
 
 let hostedStaged;
 
-function renderHostedPreview(data) {
-  const preview = document.querySelector("#import-preview");
-  if (!preview) return;
-  hostedStaged = data;
-  const form = document.querySelector("#paper-form-new");
+function applyHostedMetadata(form, data) {
+  if (!form) return;
   const paper = data.paper || {};
-  const setValue = (name, value) => { const input = form?.elements.namedItem(name); if (input) input.value = value || ""; };
+  const setValue = (name, value) => { const input = form.elements.namedItem(name); if (input) input.value = value || ""; };
   setValue("title", paper.title);
   setValue("authors", (paper.authors || []).join("\n"));
   setValue("year", paper.year);
   setValue("publishedDate", paper.publishedDate);
-  setValue("abstract", paper.abstract);
+  if (paper.abstract?.trim()) setValue("abstract", paper.abstract);
   setValue("primaryCategory", paper.primaryCategory);
   setValue("categories", (paper.categories || []).join(", "));
   setValue("journalRef", paper.journalRef);
@@ -219,18 +330,31 @@ function renderHostedPreview(data) {
   setValue("doi", paper.doi);
   setValue("arxivId", paper.arxivId);
   setValue("sourceUrl", paper.sourceUrl || paper.arxivUrl);
-  setValue("tags", (paper.tags || []).join(", "));
-  const existingStagingToken = form?.elements.namedItem("stagingToken")?.value || "";
+  if (form.dataset.mode !== "edit") setValue("tags", (paper.tags || []).join(", "));
+  const existingStagingToken = form.elements.namedItem("stagingToken")?.value || "";
   const activeStagingToken = data.pdf?.stagingToken || existingStagingToken;
   setValue("stagingToken", activeStagingToken);
-  const stagedPdfLink = form?.querySelector("[data-paper-pdf-link]");
+  const stagedPdfLink = form.querySelector("[data-paper-pdf-link]");
   if (stagedPdfLink) {
-    stagedPdfLink.hidden = !activeStagingToken;
+    const storedPdf = form.dataset.mode === "edit" && data.pdf?.status === "preserved" && form.dataset.paperId;
+    stagedPdfLink.hidden = !activeStagingToken && !storedPdf;
     if (activeStagingToken) stagedPdfLink.href = `/api/staging/${encodeURIComponent(activeStagingToken)}/pdf`;
+    else if (storedPdf) stagedPdfLink.href = `/api/papers/${encodeURIComponent(form.dataset.paperId)}/pdf`;
   }
-  const sourceUrl = form?.querySelector("[data-source-url-go]");
+  const sourceUrl = form.querySelector("[data-source-url-go]");
   const source = paper.sourceUrl || paper.arxivUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");
   if (sourceUrl) { sourceUrl.hidden = !/^https?:\/\//i.test(source); if (!sourceUrl.hidden) sourceUrl.href = source; }
+}
+
+function renderHostedPreview(data) {
+  const preview = document.querySelector("#import-preview");
+  if (!preview) return;
+  hostedStaged = data;
+  const form = document.querySelector("#paper-form-new");
+  applyHostedMetadata(form, data);
+  const paper = data.paper || {};
+  const activeStagingToken = form?.elements.namedItem("stagingToken")?.value || "";
+  const source = paper.sourceUrl || paper.arxivUrl || (paper.doi ? `https://doi.org/${encodeURIComponent(paper.doi)}` : "");
   const webResource = preview.querySelector("[data-web-resource]");
   if (webResource) { webResource.hidden = Boolean(activeStagingToken) || !/^https?:\/\//i.test(source); if (!webResource.hidden) webResource.href = source; }
   const pdfStatus = document.querySelector("#import-pdf-status");
@@ -258,7 +382,8 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
   const status = document.querySelector(`[data-form-status-for="${form.id}"]`);
   setStatus(status, "Saving…");
   try {
-    const saved = await request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(hostedPaperBody(form)) });
+    const editing = form.dataset.mode === "edit" && form.dataset.paperId;
+    const saved = await request(editing ? `/api/papers/${encodeURIComponent(form.dataset.paperId)}` : "/api/papers", { method: editing ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...hostedPaperBody(form), ...(editing ? { id: form.dataset.paperId } : {}) }) });
     window.location.href = `/papers/${encodeURIComponent(saved.paper.id)}`;
   } catch (error) {
     setStatus(status, error.message, true);
@@ -275,9 +400,10 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   button.disabled = true;
   try {
     setStatus(status, "Looking up citation metadata…");
-    const body = await request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input }) });
+    const body = await request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input, paperId: form.dataset.mode === "edit" ? form.dataset.paperId : undefined, stagingToken: get("stagingToken") || undefined }) });
     if (body.duplicate) throw new Error("That paper is already in the library.");
-    renderHostedPreview(body);
+    if (form.dataset.mode === "edit") applyHostedMetadata(form, body);
+    else renderHostedPreview(body);
     setStatus(status, "Metadata found. Review it, then save.");
   } catch (error) {
     setStatus(status, error.message, true);
@@ -290,11 +416,12 @@ document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.
   const form = button.closest("[data-paper-form]");
   const status = document.querySelector(`[data-form-status-for="${form?.id}"]`);
   const stagingToken = form?.elements.namedItem("stagingToken")?.value || "";
-  if (!stagingToken) return setStatus(status, "Upload or stage a PDF before extracting its abstract.", true);
+  const paperId = form?.dataset.mode === "edit" ? form.dataset.paperId : "";
+  if (!stagingToken && !paperId) return setStatus(status, "Upload or stage a PDF before extracting its abstract.", true);
   button.disabled = true;
   try {
     setStatus(status, "Extracting the abstract from the PDF…");
-    const body = await request("/api/abstract/extract", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stagingToken }) });
+    const body = await request("/api/abstract/extract", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stagingToken: stagingToken || undefined, paperId: paperId || undefined }) });
     form.elements.namedItem("abstract").value = body.abstract || "";
     setStatus(status, "Abstract extracted from the PDF. Review it before saving.");
   } catch (error) {
@@ -348,6 +475,57 @@ document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => bu
   setStatus(status, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
 }));
 
+document.querySelectorAll("[data-source-url-go]").forEach((link) => {
+  const form = link.closest("form");
+  const input = form?.elements.namedItem("sourceUrl");
+  const update = () => {
+    const value = String(input?.value || "").trim();
+    link.hidden = !/^https?:\/\//i.test(value);
+    link.href = link.hidden ? "#" : value;
+  };
+  input?.addEventListener("input", update);
+  update();
+});
+
+document.querySelectorAll("[data-copy-bibtex]").forEach((button) => button.addEventListener("click", async () => {
+  const field = button.closest(".bibtex-section")?.querySelector("[data-bibtex]");
+  if (!field) return;
+  const text = field.value || field.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    field.focus();
+    field.select();
+    document.execCommand("copy");
+  }
+  button.textContent = "Copied";
+  window.setTimeout(() => { button.textContent = "Copy"; }, 1500);
+}));
+
+document.querySelectorAll("[data-copy-citation]").forEach((button) => button.addEventListener("click", async () => {
+  const text = button.dataset.copyCitation || button.closest(".citation-style")?.querySelector(".citation-text")?.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    document.body.appendChild(field);
+    field.select();
+    document.execCommand("copy");
+    field.remove();
+  }
+  button.textContent = "Copied";
+  window.setTimeout(() => { button.textContent = "Copy"; }, 1500);
+}));
+
+document.querySelectorAll("[data-collapse-section]").forEach((button) => button.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const section = button.closest("details");
+  if (!section) return;
+  section.open = false;
+  section.querySelector("summary")?.focus();
+}));
+
 document.querySelector("[data-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -371,6 +549,7 @@ const folderPdfInput = document.querySelector("[data-folder-pdf-input]");
 const folderZipInput = document.querySelector("[data-folder-zip-input]");
 folderPdfInput?.addEventListener("change", () => {
   if (folderPdfInput.files.length && folderPdfInput.form) {
+    folderPdfInput.form.dataset.bulkSource = "folder";
     if (folderZipInput) folderZipInput.value = "";
     folderPdfInput.form.requestSubmit();
   }
@@ -378,6 +557,7 @@ folderPdfInput?.addEventListener("change", () => {
 
 folderZipInput?.addEventListener("change", () => {
   if (folderZipInput.files.length && folderZipInput.form) {
+    folderZipInput.form.dataset.bulkSource = "zip";
     if (folderPdfInput) folderPdfInput.value = "";
     folderZipInput.form.requestSubmit();
   }
@@ -392,11 +572,11 @@ document.querySelector("[data-folder-tag-toggle]")?.addEventListener("change", (
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const files = [...form.querySelectorAll("input[type=file]")].flatMap((input) => [...input.files]);
-  const pdfFiles = files.filter((file) => /\.pdf$/i.test(file.name));
-  const zipFiles = files.filter((file) => /\.zip$/i.test(file.name));
+  const source = form.dataset.bulkSource || (form.querySelector("[data-folder-zip-input]")?.files.length ? "zip" : "folder");
+  const pdfFiles = source === "folder" ? [...(form.querySelector("[data-folder-pdf-input]")?.files || [])] : [];
+  const zipFiles = source === "zip" ? [...(form.querySelector("[data-folder-zip-input]")?.files || [])] : [];
   if (!pdfFiles.length && !zipFiles.length) return setStatus(form, "Choose a folder or ZIP archive containing PDF files.", true);
-  const importLabel = zipFiles.length ? `${pdfFiles.length ? `${pdfFiles.length} local PDF${pdfFiles.length === 1 ? "" : "s"} and ` : ""}PDFs from ZIP` : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"}`;
+  const importLabel = source === "zip" ? "PDFs from ZIP" : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
   setStatus(form, `Importing ${importLabel}…`);
   try {
     const formData = new FormData();
@@ -496,8 +676,17 @@ async function initAsk() {
   };
   const renderResults = (body) => {
     const warnings = (body.warnings || []).map((warning) => `<p class="hosted-search-warning">${escapeHtml(warning)}</p>`).join("");
-    const cards = (body.hits || []).map((hit) => `<article class="ask-result"><h3><a href="/papers/${encodeURIComponent(hit.paper.id)}">${escapeHtml(hit.paper.title)}</a></h3><p class="muted ask-result-meta">${escapeHtml((hit.paper.authors || []).join(", ") || "No authors recorded")} · ${escapeHtml(hit.matchType)} · ${(Number(hit.score) * 100).toFixed(0)}% match</p>${hit.evidence || hit.paper.abstract ? `<p class="ask-evidence">${escapeHtml(hit.evidence || hit.paper.abstract)}</p>` : ""}</article>`).join("");
-    results.innerHTML = `${warnings}<div class="ask-results-heading"><div><p class="eyebrow">Library query</p><p class="muted">${body.hits?.length || 0} result${body.hits?.length === 1 ? "" : "s"}.</p></div></div>${cards || `<div class="empty-state"><h2>No matching papers</h2><p class="muted">Try a broader idea or remove one of the tag filters.</p></div>`}`;
+    const hits = body.hits || [];
+    const groups = body.groups || [];
+    const groupHtml = groups.length ? `<section><div class="ask-results-heading"><h2>Themes</h2></div><div class="ask-group-list">${groups.map((group) => { const paperIds = [...new Set(group.paperIds || [])]; return `<article class="ask-group"><div class="ask-group-header"><div><h3>${escapeHtml(group.name)}</h3><p>${escapeHtml(group.description)}</p></div><a class="button button-secondary button-small ask-group-select" href="${hostedLibrarySelectionUrl(paperIds)}">Select ${paperIds.length} paper${paperIds.length === 1 ? "" : "s"}</a></div>${group.evidence ? `<p class="muted ask-group-evidence">${escapeHtml(group.evidence)}</p>` : ""}<div class="ask-paper-list">${paperIds.map((id, index) => { const hit = hits.find((item) => item.paper.id === id); return hit ? `${index ? `<hr class="ask-paper-divider">` : ""}<div class="ask-paper-row"><h4><a href="/papers/${encodeURIComponent(hit.paper.id)}">${escapeHtml(hit.paper.title)}</a></h4><p class="muted ask-paper-meta">${escapeHtml((hit.paper.authors || []).slice(0, 3).join(", "))}${hit.paper.year ? ` · ${escapeHtml(hit.paper.year)}` : ""}</p></div>` : ""; }).join("")}</div></article>`; }).join("")}</div></section>` : "";
+    const hitHtml = hits.length ? `<section><div class="ask-results-heading"><div><h2>Relevant papers</h2><span class="muted">Ranked by semantic and keyword match</span></div><button class="button button-secondary button-small ask-select-results" type="button" data-hosted-select-results disabled>Select selected papers</button></div><div class="ask-result-list">${hits.map((hit) => `<article class="ask-result"><div class="ask-result-select-row"><input class="ask-result-checkbox" type="checkbox" value="${escapeHtml(hit.paper.id)}" aria-label="Select ${escapeHtml(hit.paper.title)}"><div class="ask-result-content"><h3><a href="/papers/${encodeURIComponent(hit.paper.id)}">${escapeHtml(hit.paper.title)}</a></h3><p class="muted ask-result-meta">${escapeHtml((hit.paper.authors || []).slice(0, 3).join(", ") || "No authors recorded")}${hit.paper.year ? ` · ${escapeHtml(hit.paper.year)}` : ""} · ${escapeHtml(hit.matchType)} · ${(Number(hit.score) * 100).toFixed(0)}% match</p>${hit.evidence || hit.paper.abstract ? `<p class="ask-evidence-label">Relevant passage</p><p class="ask-evidence">${escapeHtml(hit.evidence || hit.paper.abstract)}</p>` : ""}</div></div></article>`).join("")}</div></section>` : `<div class="empty-state"><h2>No matching papers</h2><p class="muted">Try a broader idea or remove one of the tag filters.</p></div>`;
+    results.innerHTML = `${warnings}<div class="ask-results-heading"><div><p class="eyebrow">Library query</p><p class="muted">${body.hits?.length || 0} result${body.hits?.length === 1 ? "" : "s"}.</p></div></div>${groupHtml}${hitHtml}`;
+    const button = results.querySelector("[data-hosted-select-results]");
+    const checkboxes = [...results.querySelectorAll(".ask-result-checkbox")];
+    const updateSelection = () => { const selected = checkboxes.filter((checkbox) => checkbox.checked); if (button) { button.disabled = selected.length === 0; button.textContent = selected.length ? `Select ${selected.length} paper${selected.length === 1 ? "" : "s"}` : "Select selected papers"; } };
+    checkboxes.forEach((checkbox) => checkbox.addEventListener("change", updateSelection));
+    button?.addEventListener("click", () => { const selected = checkboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value); if (selected.length) window.location.href = hostedLibrarySelectionUrl(selected); });
+    updateSelection();
     results.hidden = false;
   };
   await loadCoverage();
@@ -518,6 +707,143 @@ async function initAsk() {
       const body = await request("/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: query.value.trim(), tags: selectedTags(), tagMode, limit: 20 }) });
       renderResults(body); showCoverage(body.coverage); setStatus(status, `${body.hits.length} result${body.hits.length === 1 ? "" : "s"}.`);
     } catch (error) { setStatus(status, error.message, true); }
+  });
+}
+
+async function runHostedQuestion(paperId, questionId) {
+  await request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}`, { method: "POST" });
+  return pollUntil(
+    async () => (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId),
+    (item) => item?.answer && ["complete", "error", "stale"].includes(item.answer.status),
+    600000,
+    1000,
+  );
+}
+
+function updateHostedQuestionOverview(item) {
+  const questionId = String(item?.id || "");
+  const complete = item?.answer?.status === "complete";
+  const question = [...document.querySelectorAll("[data-question-id]")].find((entry) => entry.dataset.questionId === questionId);
+  const group = question?.closest("[data-question-group]");
+  const questions = group ? [...group.querySelectorAll("[data-question-id]")] : [];
+  const questionIndex = questions.indexOf(question);
+  if (question && complete) question.dataset.answerComplete = "true";
+  const answered = questions.filter((entry) => entry.dataset.answerComplete === "true" || entry.querySelector(".question-answer")).length;
+  const progress = group?.querySelector(".question-progress");
+  if (progress) {
+    progress.setAttribute("aria-label", `${answered} of ${questions.length} questions answered`);
+    progress.setAttribute("title", `${answered} of ${questions.length} questions answered`);
+    const dot = progress.querySelectorAll(".question-progress-dot")[questionIndex];
+    dot?.classList.toggle("is-answered", complete);
+  }
+  const overview = [...document.querySelectorAll("[data-question-overview-dot]")].find((dot) => dot.dataset.questionOverviewDot === questionId);
+  overview?.classList.toggle("is-answered", complete);
+  const overviewProgress = overview?.closest(".question-overview-progress");
+  if (overviewProgress) {
+    const dots = [...overviewProgress.querySelectorAll(".question-progress-dot")];
+    const complete = dots.filter((dot) => dot.classList.contains("is-answered")).length;
+    overviewProgress.setAttribute("aria-label", `${complete} of ${dots.length} questions answered`);
+    overviewProgress.setAttribute("title", `${complete} of ${dots.length} questions answered`);
+  }
+}
+
+async function generateHostedQuestion(button) {
+  const detail = document.querySelector(".paper-detail-page");
+  const paperId = detail?.dataset.paperId;
+  const item = button.closest("[data-question-id]");
+  if (!paperId || !item) return false;
+  const status = item.querySelector("[data-question-status]");
+  button.disabled = true;
+  setStatus(status, "Generating…");
+  try {
+    const question = await runHostedQuestion(paperId, button.dataset.generateQuestion);
+    item.querySelector(".question-empty, .status-error, .status-warning")?.remove();
+    item.querySelector(".question-answer, .question-answer-meta")?.remove();
+    if (question?.answer?.status !== "complete") throw new Error(question?.answer?.errorMessage || "Question generation failed.");
+    const answer = document.createElement("div");
+    answer.className = "analysis-content question-answer";
+    answer.innerHTML = renderHostedMarkdown(question.answer.content);
+    item.querySelector(".question-actions")?.before(answer);
+    const meta = document.createElement("p");
+    meta.className = "analysis-meta question-answer-meta muted";
+    meta.textContent = `${question.answer.provider} · ${question.answer.model} · ${new Date(question.answer.generatedAt).toLocaleString("en-GB")}${typeof question.answer.durationMs === "number" ? ` · ${Math.floor(question.answer.durationMs / 60000)}:${String(Math.floor(question.answer.durationMs / 1000) % 60).padStart(2, "0")}` : ""}`;
+    item.querySelector(".question-actions")?.before(meta);
+    typesetHostedMath([answer]);
+    setStatus(status, "Saved.");
+    updateHostedQuestionOverview(question);
+    const label = button.querySelector("span:last-child");
+    if (label) label.textContent = "Regenerate answer";
+    return true;
+  } catch (error) {
+    item.querySelector(".question-empty")?.remove();
+    setStatus(status, error.message, true);
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function initHostedQuestions() {
+  const section = document.querySelector("[data-questions-section]");
+  const detail = document.querySelector(".paper-detail-page");
+  if (!section || !detail) return;
+  section.querySelectorAll("[data-generate-question]").forEach((button) => button.addEventListener("click", () => generateHostedQuestion(button)));
+  section.querySelector("[data-toggle-questions]")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const groups = [...section.querySelectorAll("[data-question-group]")];
+    const expand = groups.some((group) => !group.open);
+    groups.forEach((group) => { group.open = expand; });
+    const button = event.currentTarget;
+    button.setAttribute("aria-label", expand ? "Collapse all questions" : "Expand all questions");
+    button.setAttribute("title", expand ? "Collapse all questions" : "Expand all questions");
+    const icon = button.querySelector(".material-symbols-outlined");
+    if (icon) icon.textContent = expand ? "unfold_less" : "unfold_more";
+  });
+  section.querySelector("[data-generate-all-questions]")?.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const button = event.currentTarget;
+    const status = section.querySelector("[data-questions-status]");
+    const buttons = [...section.querySelectorAll("[data-generate-question]")];
+    const pending = buttons.filter((questionButton) => !questionButton.closest("[data-question-id]")?.querySelector(".question-answer"));
+    const skipped = buttons.length - pending.length;
+    const formatRemainingTime = (milliseconds) => {
+      const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return `${minutes}m${remainingSeconds ? ` ${remainingSeconds}s` : ""}`;
+    };
+    button.disabled = true;
+    let completed = 0;
+    let failed = 0;
+    const durations = [];
+    const updateProgress = () => {
+      const finished = completed + failed;
+      const remaining = pending.length - finished;
+      const averageDuration = durations.length ? durations.reduce((total, duration) => total + duration, 0) / durations.length : 0;
+      const estimate = averageDuration && remaining ? ` ETA ~${formatRemainingTime(averageDuration)} remaining` : "";
+      setStatus(status, `Generating answer ${Math.min(finished + 1, pending.length)} of ${pending.length}…${estimate}`);
+    };
+    updateProgress();
+    await Promise.all(pending.map(async (questionButton) => {
+      const startedAt = performance.now();
+      if (await generateHostedQuestion(questionButton)) completed += 1; else failed += 1;
+      durations.push(performance.now() - startedAt);
+      updateProgress();
+    }));
+    setStatus(status, `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`, failed > 0);
+    button.disabled = false;
+  });
+  section.querySelector("[data-add-question]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const question = form.elements.namedItem("question")?.value?.trim() || "";
+    if (!question) return;
+    setStatus(form, "Adding question…");
+    try {
+      await request(`/api/papers/${encodeURIComponent(detail.dataset.paperId)}/questions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) });
+      window.location.reload();
+    } catch (error) { setStatus(form, error.message, true); }
   });
 }
 
@@ -542,7 +868,10 @@ async function initPaper() {
     const tags = document.querySelector("#paper-tags");
     if (tags && paper.tags?.length) { tags.innerHTML = paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" "); if (tagsSection) tagsSection.hidden = false; }
     const existing = await request(`/api/papers/${encodeURIComponent(id)}/summary`);
-    if (existing.summary?.status === "complete") summary.innerHTML = `<pre>${escapeHtml(existing.summary.content)}</pre>`;
+    if (existing.summary?.status === "complete") {
+      summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(existing.summary.content)}</div>${renderHostedAnalysisMeta(existing.summary)}`;
+      typesetHostedMath([summary]);
+    }
   } catch (error) { setStatus(paperStatus, error.message, true); }
   editForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -554,7 +883,7 @@ async function initPaper() {
   });
   document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, (heading, content) => { summary.innerHTML = `<pre>${escapeHtml(content)}</pre>`; setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
+    try { await runSummary(id, (heading, content, record) => { summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
     catch (error) { setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
   }));
@@ -575,20 +904,10 @@ async function initPaper() {
 }
 
 function initEdit() {
-  const form = document.querySelector("#paper-edit-form");
+  const form = document.querySelector("[data-paper-form][data-mode='edit']");
   if (!form) return;
   const id = form.dataset.paperId;
-  const status = document.querySelector("#paper-status");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const data = new FormData(form);
-      const body = { id, title: data.get("title"), authors: String(data.get("authors") || "").split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean), tags: String(data.get("tags") || "").split(",").map((value) => value.trim()).filter(Boolean), abstract: data.get("abstract"), metadataSource: "manual" };
-      await request(`/api/papers/${encodeURIComponent(id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      window.location.href = `/papers/${encodeURIComponent(id)}`;
-    } catch (error) { setStatus(status, error.message, true); }
-  });
-  const replace = document.querySelector("#replace-upload-form");
+  const replace = document.querySelector("[data-replace-upload]");
   replace?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const file = replace.elements.file.files?.[0];
@@ -596,7 +915,7 @@ function initEdit() {
     try {
       setStatus(document.querySelector("#replace-status"), "Uploading replacement PDF…");
       const upload = await request("/api/uploads", { method: "POST", body: new FormData(replace) });
-      await request(`/api/papers/${encodeURIComponent(id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, title: form.elements.title.value, authors: String(form.elements.authors.value || "").split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean), tags: String(form.elements.tags.value || "").split(",").map((value) => value.trim()).filter(Boolean), abstract: form.elements.abstract.value, stagingToken: upload.pdf.stagingToken, metadataSource: "manual" }) });
+      await request(`/api/papers/${encodeURIComponent(id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...hostedPaperBody(form), id, stagingToken: upload.pdf.stagingToken }) });
       window.location.href = `/papers/${encodeURIComponent(id)}`;
     } catch (error) { setStatus(document.querySelector("#replace-status"), error.message, true); }
   });
@@ -635,5 +954,6 @@ initLibrary();
 initSettings();
 initAsk();
 initPaper();
+initHostedQuestions();
 initEdit();
 initImport();

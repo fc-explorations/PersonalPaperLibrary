@@ -1,5 +1,6 @@
 export type LlmProvider = "openai" | "ollama";
 export type LlmMessage = { role: "system" | "user"; content: string };
+export const MATH_FORMATTING_INSTRUCTION = "When writing mathematics, always use LaTeX delimiters: inline \\( ... \\) or display \\[ ... \\]. Use commands such as \\Sigma_T, v^\\top, \\rho, and \\lambda; never write raw forms such as v^T, ΣT, or ΣB.";
 
 export interface LlmClient {
   complete(input: { model: string; messages: LlmMessage[]; temperature: number }): Promise<string>;

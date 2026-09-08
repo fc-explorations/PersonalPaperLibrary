@@ -25,7 +25,7 @@ import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js"
 import { LibrarySearchRepository } from "./repositories/library-search.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } from "./services/embeddings.js";
-import { OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
+import { MATH_FORMATTING_INSTRUCTION, OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
 import { groupLibraryResults } from "./services/library-query.js";
 import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream, extractPdfFiles, type ExtractedZipFile } from "./services/zip.js";
@@ -351,6 +351,36 @@ export function createApp(dependencies: AppDependencies = {}) {
     return { provider: "openai", model: summaryModel || settings.openaiModel.trim() || "gpt-5-nano", client: dependencies.llmClient || new OpenAiLlmClient({ fetcher, openaiApiKey: () => keychain.get() }) };
   }
 
+  async function fillMissingMetadataAbstract(metadata: PaperMetadata, title: string, parsedCitation?: ParsedCitationInput, pdfPath?: string): Promise<PaperMetadata> {
+    if (!metadata.abstract?.trim()) {
+      const alternateLookups = [
+        () => lookupOpenAlex(title, fetcher),
+        () => lookupSemanticScholar(title, fetcher),
+      ];
+      for (const lookup of alternateLookups) {
+        try {
+          const alternate = await lookup();
+          if (parsedCitation) verifyCitationMatch(alternate, parsedCitation);
+          if (alternate.abstract?.trim()) {
+            metadata = { ...metadata, abstract: alternate.abstract };
+            break;
+          }
+        } catch {
+          // Try the next metadata provider, then the stored PDF if available.
+        }
+      }
+    }
+    if (metadata.abstract?.trim() || !pdfPath || !existsSync(pdfPath)) return metadata;
+    try {
+      const selected = selectedLlm(analysis.getSettings());
+      const text = await pdfExcerptTextExtractor(pdfPath);
+      const abstract = await extractAbstractFromPdfText(text, selected.client, selected.model);
+      return abstract ? { ...metadata, abstract } : metadata;
+    } catch {
+      return metadata;
+    }
+  }
+
   function selectedEmbedding(settings: AiSettings): { provider: LlmProvider; model: string; client?: EmbeddingClient } {
     if (settings.provider === "ollama") return { provider: "ollama", model: settings.ollamaEmbeddingModel.trim(), client: dependencies.embeddingClient || new OllamaEmbeddingClient({ fetcher, baseUrl: settings.ollamaBaseUrl }) };
     return { provider: "openai", model: settings.openaiEmbeddingModel.trim(), client: dependencies.embeddingClient || new OpenAiEmbeddingClient({ fetcher, openaiApiKey: () => keychain.get() }) };
@@ -431,7 +461,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     const summarySource = mode === "full" ? excludeAppendixMaterial(source.text) : { text: source.text, excluded: false };
     const selected = selectedLlm(analysis.getSettings(), SUMMARY_OPENAI_MODEL);
     const startedAt = Date.now();
-    const messages = (content: string) => [{ role: "system" as const, content: "You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details." }, { role: "user" as const, content }];
+    const messages = (content: string) => [{ role: "system" as const, content: `You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details. ${MATH_FORMATTING_INSTRUCTION}` }, { role: "user" as const, content }];
     try {
       let content: string;
       if (mode === "quick") {
@@ -493,7 +523,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     const startedAt = Date.now();
     try {
       const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
-      const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: "Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence." }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
+      const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: `Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence. ${MATH_FORMATTING_INSTRUCTION}` }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
       const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" as const };
       analysis.saveAnswer(paperId, questionId, record);
       return record;
@@ -557,12 +587,13 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.get("/", (c) => {
     const { q, tag, tagMode, all, noTags, untagged, selected } = requestFilters(c);
     const sort = parseSortOrder(c.req.query("sort"));
-    const filters = selected?.length ? { ids: selected } : { q, tag, tagMode, untagged };
-    const pageSize = selected?.length ? selected.length : parsePageSize(c.req.query("pageSize"));
+    const filters = { q, tag, tagMode, untagged };
+    const pageSize = parsePageSize(c.req.query("pageSize"));
     const total = repo.count(filters);
     const requestedPage = Math.max(1, Number.parseInt(c.req.query("page") || "1", 10) || 1);
     const page = total ? Math.min(requestedPage, Math.ceil(total / pageSize)) : 1;
-    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: pageSize, offset: (page - 1) * pageSize }), repo.tags.list(), { q, tag, tagMode, sort, all, noTags, untagged, selected, page, pageSize, total, storedPdfCount: repo.countStored(filters) }));
+    const storedPdfCount = selected?.length ? repo.countStored({ ids: selected }) : repo.countStored(filters);
+    return c.html(renderLibrary(repo.list({ ...filters, sort, limit: pageSize, offset: (page - 1) * pageSize }), repo.tags.list(), { q, tag, tagMode, sort, all, noTags, untagged, selected, page, pageSize, total, storedPdfCount }));
   });
 
   app.get("/add", (c) => c.html(renderAddPage()));
@@ -713,8 +744,11 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (!metadata.sourceUrl && /^https?:\/\//i.test(input)) metadata.sourceUrl = input;
       const existing = repo.findDuplicate(metadata);
       if (existing) return c.json({ existing, duplicate: true });
+      metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation);
       const downloaded = await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
       if (downloaded.warning) warnings.push(downloaded.warning);
+      const stagedPath = downloaded.pdf.status === "staged" ? storage.getStagedPath(downloaded.pdf.stagingToken) : undefined;
+      metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation, stagedPath);
       return c.json({ paper: metadata, pdf: downloaded.pdf, warnings });
     } catch (error) {
       return jsonError(c, 502, "IMPORT_FAILED", errorMessage(error));
@@ -726,9 +760,11 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.post("/api/metadata/lookup", async (c) => {
     try {
-      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string; paperId?: string; preservePdf?: boolean }>();
+      const body = await c.req.json<{ title?: string; doi?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean }>();
       let metadata: PaperMetadata;
       let provider: string;
+      let parsedCitation: ParsedCitationInput | undefined;
+      let lookupTitle = body.title || "";
       if (body.arxivId) {
         const normalized = normalizeArxivInput(body.arxivId);
         if (!normalized) return jsonError(c, 400, "INVALID_ARXIV_ID", "Enter a valid arXiv identifier.");
@@ -740,8 +776,8 @@ export function createApp(dependencies: AppDependencies = {}) {
           metadata = await fetchArxivMetadata(arxivDoi, fetcher);
           provider = "arxiv";
         } else {
-          const parsedCitation = await parseCitationForLookup(body.title || "");
-          const lookupTitle = parsedCitation.title || body.title || "";
+          parsedCitation = await parseCitationForLookup(body.title || "");
+          lookupTitle = parsedCitation.title || body.title || "";
           try {
             const doi = body.doi ? doiFromInput(body.doi) : undefined;
             metadata = await lookupCrossref({ title: lookupTitle, doi }, fetcher);
@@ -759,11 +795,20 @@ export function createApp(dependencies: AppDependencies = {}) {
           }
         }
       }
+      metadata = await fillMissingMetadataAbstract(metadata, metadata.title || lookupTitle, parsedCitation);
       const existingPaper = body.paperId ? repo.findById(body.paperId) : null;
       const preservePdf = body.preservePdf === true || Boolean(existingPaper?.r2Key);
       const downloaded = preservePdf
         ? { pdf: { status: "preserved" } as StagedPdfResult }
         : await stageMetadataPdf(metadata, storage, maxPdfBytes, fetcher);
+      const pdfPath = downloaded.pdf.status === "staged"
+        ? storage.getStagedPath(downloaded.pdf.stagingToken)
+        : body.stagingToken?.trim()
+          ? storage.getStagedPath(body.stagingToken.trim())
+        : existingPaper?.r2Key
+          ? storage.getPath(existingPaper.id)
+          : undefined;
+      metadata = await fillMissingMetadataAbstract(metadata, metadata.title || lookupTitle, parsedCitation, pdfPath);
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       return jsonError(c, 404, errorMessage(error), "No matching citation metadata was found.");

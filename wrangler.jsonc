@@ -39,7 +39,7 @@
     "consumers": [
       {
         "queue": "personal-paper-library-analysis",
-        "max_batch_size": 10,
+        "max_batch_size": 20,
         "max_batch_timeout": 5
       }
     ]

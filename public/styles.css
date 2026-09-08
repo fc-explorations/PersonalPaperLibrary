@@ -10,8 +10,8 @@ a { color: var(--accent); }
 .cloud-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .cloud-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: .9rem; font-weight: 700; }
 .cloud-form-grid input { min-width: 0; color: var(--text); font-weight: 400; }
-.cloud-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
-.paper-select { display: inline-block; margin: 0 8px 0 0; }
+.cloud-card-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.paper-select { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 2px 8px 0 0; }
 .paper-select input { width: auto; }
 .analysis-result { max-width: 78ch; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--section-surface); }
 .analysis-result strong { display: block; margin-bottom: 6px; color: var(--accent); }
@@ -73,7 +73,8 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 .55rem; }
 .edit-actions-top .form-actions-row { justify-content: flex-end; }
 .edit-actions-top .form-actions .form-status { position: static; width: min(520px, 100%); max-width: 100%; height: auto; margin-left: auto; overflow-wrap: anywhere; text-align: right; }
 .paper-heading, .paper-detail { max-width: none; }
-.edit-page, .edit-panel { width: 100%; }
+.edit-page, .edit-panel { min-width: 0; }
+.edit-page > .page-heading, .edit-page > .panel { min-width: 0; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
 .question-section-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
 .section-heading h2 { margin: 0; }
@@ -243,6 +244,12 @@ select { width: auto; min-width: 150px; }
 .credits-box p { margin: 6px 0 0; }
 .backup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
 .backup-actions form { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.settings-page .form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 14px; }
+.settings-page .form-actions .button { width: auto; flex: 0 0 auto; }
+.settings-page .ai-key-actions { justify-content: flex-end; }
+.settings-page .backup-actions { justify-content: flex-end; }
+.settings-page .backup-actions form { margin: 0; }
+.settings-page .backup-actions form .form-status { width: auto; margin: 0; }
 .theme-options { display: flex; flex-wrap: wrap; gap: 14px; }
 .theme-option { position: relative; display: grid; gap: 7px; min-width: 86px; color: var(--muted); cursor: pointer; }
 .theme-option input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; }

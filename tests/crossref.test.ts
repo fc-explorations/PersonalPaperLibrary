@@ -36,4 +36,9 @@ describe("Crossref lookup", () => {
     expect(result.title).toBe(work.title[0]);
     expect(result.journalRef).toContain("Machine Learning");
   });
+
+  it("rejects a near-match that shares generic title words", async () => {
+    const fetcher = async () => new Response(JSON.stringify({ message: { items: [{ title: ["Generating 3D Facial Expressions with Recurrent Neural Networks"] }] } }), { status: 200 });
+    await expect(lookupCrossref({ title: "Generating Sequences With Recurrent Neural Networks" }, fetcher)).rejects.toThrow("CROSSREF_NO_MATCH");
+  });
 });

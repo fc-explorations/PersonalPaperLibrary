@@ -358,6 +358,44 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("fills a missing metadata abstract from the staged PDF automatically", async () => {
+    const title = "Metadata Abstract Fallback Test";
+    const context = testApp(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: [title], DOI: "10.1000/abstract-fallback", link: [{ URL: "https://publisher.example/abstract-fallback.pdf", "content-type": "application/pdf" }] }] } }), { status: 200 });
+      if (url === "https://publisher.example/abstract-fallback.pdf") return new Response(pdf, { status: 200, headers: { "content-type": "application/pdf" } });
+      return new Response("not found", { status: 404 });
+    }, undefined, {
+      llmClient: { complete: async () => "Recovered automatically from the PDF." },
+      pdfExcerptTextExtractor: async () => "Title\nAbstract\nText from the opening PDF pages.",
+    });
+    const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).paper.abstract).toBe("Recovered automatically from the PDF.");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("uses a manually staged PDF when metadata is refreshed", async () => {
+    const title = "Manual PDF Metadata Refresh Test";
+    const context = testApp(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: [title], DOI: "10.1000/manual-refresh" }] } }), { status: 200 });
+      return new Response("not found", { status: 404 });
+    }, undefined, {
+      llmClient: { complete: async () => "Recovered from the uploaded PDF." },
+      pdfExcerptTextExtractor: async () => "Title\nAbstract\nText from the uploaded PDF.",
+    });
+    const staged = await context.storage.stage(pdf);
+    const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, stagingToken: staged.token, preservePdf: true }) });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.pdf.status).toBe("preserved");
+    expect(result.paper.abstract).toBe("Recovered from the uploaded PDF.");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("stages the canonical arXiv PDF after arXiv metadata lookup", async () => {
     const context = testApp();
     const response = await context.app.request("/api/metadata/lookup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ arxivId: "2401.12345" }) });

@@ -128,9 +128,9 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=32">
+  <link rel="stylesheet" href="/styles.css?v=33">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
-  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
   ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
@@ -302,6 +302,13 @@ function citationStyles(paper: PaperRecord): Array<{ label: string; text: string
   });
 }
 
+export function renderCitationSection(paper: PaperRecord): string {
+  const bibtex = bibtexEntry(paper);
+  const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
+  const compactCitations = citationStyles(paper).map(({ label, text, html }) => `<article class="citation-style"><div class="citation-style-heading"><strong>${escapeHtml(label)}</strong><button class="button button-secondary button-small" type="button" data-copy-citation="${escapeHtml(text)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span><span>Copy</span></button></div><p class="citation-text">${html}</p></article>`).join("");
+  return `<details class="detail-section bibtex-section"><summary>Cite</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">BibTeX</p><button class="button button-secondary" type="button" data-copy-bibtex><span class="material-symbols-outlined" aria-hidden="true">content_copy</span><span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea><div class="citation-styles"><p class="eyebrow">Compact styles</p>${compactCitations}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse Cite" title="Collapse Cite"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button></div></div></details>`;
+}
+
 function tagLinks(tags: string[], selected?: string): string {
   return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
 }
@@ -366,10 +373,12 @@ function metadataRow(label: string, value: unknown, content = renderText(value))
   return `<dt>${escapeHtml(label)}</dt><dd>${content}</dd>`;
 }
 
-function paperCard(paper: PaperRecord): string {
+function paperCard(paper: PaperRecord, selectedIds: string[] = []): string {
   const summary = paperHeaderSummary(paper);
+  const selected = selectedIds.includes(paper.id);
   return `<article class="paper-card">
     ${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing">${pdfMissingIcon()}</span>`}
+    <label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label>
     <div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${renderText(paper.title, false)}</a></h2>
     ${summary ? `<p class="muted">${summary}</p>` : ""}</div>
     ${paper.tags.length ? `<div class="paper-tags">${tagLinks(paper.tags)}</div>` : ""}
@@ -401,13 +410,14 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
   const allTagsSelected = allSelected;
   const downloadQuery = selectedIds.length ? librarySelectionQuery(selectedIds) : libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
   const storedPdfCount = query.storedPdfCount ?? papers.filter((paper) => paper.r2Key).length;
+  const selectionCount = selectedIds.length || total;
   const hasSelection = Boolean(total && (selectedIds.length || query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
   const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
   const selectionIds = escapeHtml(JSON.stringify(selectedIds));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${total}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions><button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${selectionCount}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
   const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}" data-selection-tag-mode="${tagMode}" data-selection-ids="${selectionIds}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const pageCount = Math.ceil(total / pageSize);
   const pageLinks = paginationPages(page, pageCount).map((pageNumber) => pageNumber === "ellipsis"
@@ -427,8 +437,8 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
   <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allSelected ? "none" : true, false, 1, pageSize, tagMode)}" aria-pressed="${allTagsSelected}">ALL</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode)}" aria-pressed="${untaggedSelected}">NONE</a> ${groupTagLinks(tags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize)}</section>
-  <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions">${bulkButtons}${bulkTagEditor}</div></div>
-  <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}${papers.length ? "" : " empty-paper-list"}">${papers.length ? papers.map(paperCard).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
+  <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions" data-local-bulk-actions>${bulkButtons}${bulkTagEditor}</div></div>
+  <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}${papers.length ? "" : " empty-paper-list"}">${papers.length ? papers.map((paper) => paperCard(paper, selectedIds)).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
   return layout("Library", body);
 }
 
@@ -489,7 +499,7 @@ export function renderAddPage(): string {
   return layout("Add paper", body);
 }
 
-function analysisMeta(provider: string, model: string, generatedAt: string, durationMs?: number, className = "analysis-meta"): string {
+export function analysisMeta(provider: string, model: string, generatedAt: string, durationMs?: number, className = "analysis-meta"): string {
   const duration = durationMs === undefined ? "" : ` · ${Math.floor(durationMs / 60000)}:${String(Math.floor(durationMs / 1000) % 60).padStart(2, "0")}`;
   return `<p class="${className} muted">${escapeHtml(provider)} · ${escapeHtml(model)} · ${escapeHtml(new Date(generatedAt).toLocaleString("en-GB"))}${duration}</p>`;
 }
@@ -504,7 +514,7 @@ function renderSummarySection(summary?: SummaryRecord | null): string {
   return `<details class="detail-section analysis-section" data-summary-section><summary><span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body">${state}${content}${summary ? analysisMeta(summary.provider, summary.model, summary.generatedAt, summary.durationMs) : ""}<div class="analysis-actions summary-actions"><div class="summary-action-buttons">${button}</div><span class="form-status" data-summary-status role="status"></span></div></div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse summary" title="Collapse summary">${collapseIcon()}</button></div></details>`;
 }
 
-function renderQuestionsSection(questions: StoredQuestion[]): string {
+export function renderQuestionsSection(questions: StoredQuestion[]): string {
   const groups = new Map<string, StoredQuestion[]>();
   questions.forEach((question) => groups.set(question.groupId, [...(groups.get(question.groupId) || []), question]));
   const groupSections = [...groups.entries()].map(([groupId, items]) => {
@@ -519,10 +529,7 @@ function renderQuestionsSection(questions: StoredQuestion[]): string {
 
 export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | null, questions: StoredQuestion[] = []): string {
   const paperLine = paperHeaderSummary(paper);
-  const bibtex = bibtexEntry(paper);
-  const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
-  const compactCitations = citationStyles(paper).map(({ label, text, html }) => `<article class="citation-style"><div class="citation-style-heading"><strong>${escapeHtml(label)}</strong><button class="button button-secondary button-small" type="button" data-copy-citation="${escapeHtml(text)}">${copyIcon()}<span>Copy</span></button></div><p class="citation-text">${html}</p></article>`).join("");
-  const citeSection = `<details class="detail-section bibtex-section"><summary>Cite</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">BibTeX</p><button class="button button-secondary" type="button" data-copy-bibtex>${copyIcon()}<span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea><div class="citation-styles"><p class="eyebrow">Compact styles</p>${compactCitations}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse Cite" title="Collapse Cite">${collapseIcon()}</button></div></div></details>`;
+  const citeSection = renderCitationSection(paper);
   const metadata = [
     metadataRow("Authors", paper.authors.join(", ")),
     metadataRow("Year", paperYear(paper)),

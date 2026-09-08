@@ -69,6 +69,6 @@ export async function lookupSemanticScholar(title: string, fetcher: typeof fetch
   const payload = await readResponseJson<{ data?: SemanticScholarPaper[] }>(response);
   const papers = payload.data || [];
   const match = papers.map((paper) => ({ paper, score: similarity(title, paper.title || "") })).sort((left, right) => right.score - left.score)[0];
-  if (!match || match.score < 0.55) throw new Error("SEMANTICSCHOLAR_NO_MATCH");
+  if (!match || match.score < 0.72) throw new Error("SEMANTICSCHOLAR_NO_MATCH");
   return mapPaper(match.paper);
 }

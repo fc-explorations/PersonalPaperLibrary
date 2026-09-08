@@ -72,6 +72,6 @@ export async function lookupOpenAlex(title: string, fetcher: typeof fetch = fetc
   const payload = await readResponseJson<{ results?: OpenAlexWork[] }>(response);
   const works = payload.results || [];
   const match = works.map((work) => ({ work, score: similarity(title, work.title || "") })).sort((left, right) => right.score - left.score)[0];
-  if (!match || match.score < 0.55) throw new Error("OPENALEX_NO_MATCH");
+  if (!match || match.score < 0.72) throw new Error("OPENALEX_NO_MATCH");
   return mapWork(match.work);
 }

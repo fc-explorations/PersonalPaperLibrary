@@ -628,6 +628,7 @@ const folderPdfInput = document.querySelector("[data-folder-pdf-input]");
 const folderZipInput = document.querySelector("[data-folder-zip-input]");
 folderPdfInput?.addEventListener("change", () => {
   if (folderPdfInput.files.length && folderPdfInput.form) {
+    folderPdfInput.form.dataset.bulkSource = "folder";
     if (folderZipInput) folderZipInput.value = "";
     folderPdfInput.form.requestSubmit();
   }
@@ -635,6 +636,7 @@ folderPdfInput?.addEventListener("change", () => {
 
 folderZipInput?.addEventListener("change", () => {
   if (folderZipInput.files.length && folderZipInput.form) {
+    folderZipInput.form.dataset.bulkSource = "zip";
     if (folderPdfInput) folderPdfInput.value = "";
     folderZipInput.form.requestSubmit();
   }
@@ -643,18 +645,18 @@ folderZipInput?.addEventListener("change", () => {
 document.querySelector("[data-bulk-upload-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const files = [...form.querySelectorAll("input[type=file]")].flatMap((input) => [...input.files]);
-  const pdfFiles = files.filter((file) => /\.pdf$/i.test(file.name));
-  const zipFiles = files.filter((file) => /\.zip$/i.test(file.name));
+  const source = form.dataset.bulkSource || (form.querySelector("[data-folder-zip-input]")?.files.length ? "zip" : "folder");
+  const pdfFiles = source === "folder" ? [...(form.querySelector("[data-folder-pdf-input]")?.files || [])] : [];
+  const zipFiles = source === "zip" ? [...(form.querySelector("[data-folder-zip-input]")?.files || [])] : [];
   if (!pdfFiles.length && !zipFiles.length) {
     setStatus(form, "Choose a folder or ZIP archive containing PDF files.");
     const results = form.querySelector("[data-bulk-results]");
     if (results) results.textContent = "";
     return;
   }
-  const importLabel = zipFiles.length
-    ? `${pdfFiles.length ? `${pdfFiles.length} local PDF${pdfFiles.length === 1 ? "" : "s"} and ` : ""}PDFs from ZIP`
-    : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"}`;
+  const importLabel = source === "zip"
+    ? "PDFs from ZIP"
+    : `${pdfFiles.length} PDF${pdfFiles.length === 1 ? "" : "s"} from folder`;
   setStatus(form, `Importing ${importLabel}…`);
   try {
     const formData = new FormData(form);
@@ -699,12 +701,12 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   const form = button.form || button.closest("[data-paper-form]");
   setStatus(form, "Looking up citation metadata…");
   try {
-    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, preservePdf: Boolean(value(form, "stagingToken")) }) });
+    const result = await jsonRequest("/api/metadata/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) });
     setValue(form, "title", result.paper.title);
     setValue(form, "authors", (result.paper.authors || []).join("\n"));
     setValue(form, "year", result.paper.year);
     setValue(form, "publishedDate", result.paper.publishedDate);
-    setValue(form, "abstract", result.paper.abstract);
+    if (result.paper.abstract?.trim()) setValue(form, "abstract", result.paper.abstract);
     setValue(form, "primaryCategory", result.paper.primaryCategory);
     setValue(form, "categories", (result.paper.categories || []).join(", "));
     setValue(form, "journalRef", result.paper.journalRef);
@@ -1010,16 +1012,20 @@ document.querySelector("[data-generate-all-questions]")?.addEventListener("click
     const remainingSeconds = seconds % 60;
     return `${minutes}m${remainingSeconds ? ` ${remainingSeconds}s` : ""}`;
   };
-  for (const questionButton of pendingButtons) {
+  const updateProgress = () => {
     const finished = completed + failed;
     const remaining = pendingButtons.length - finished;
     const averageDuration = durations.length ? durations.reduce((total, duration) => total + duration, 0) / durations.length : 0;
-    const estimate = averageDuration ? ` ETA ~${formatRemainingTime(averageDuration * remaining)} remaining` : "";
-    if (status) status.textContent = `Generating answer ${finished + 1} of ${pendingButtons.length}…${estimate}`;
+    const estimate = averageDuration && remaining ? ` ETA ~${formatRemainingTime(averageDuration)} remaining` : "";
+    if (status) status.textContent = `Generating answer ${Math.min(finished + 1, pendingButtons.length)} of ${pendingButtons.length}…${estimate}`;
+  };
+  updateProgress();
+  await Promise.all(pendingButtons.map(async (questionButton) => {
     const startedAt = performance.now();
     if (await generateOneQuestion(questionButton)) completed += 1; else failed += 1;
     durations.push(performance.now() - startedAt);
-  }
+    updateProgress();
+  }));
   button.disabled = false;
   if (status) status.textContent = `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`;
 });
@@ -1072,6 +1078,13 @@ document.querySelector("[data-delete-group]")?.addEventListener("click", async (
     window.alert(clientErrorMessage(error));
   }
 });
+
+document.querySelectorAll("[data-select-paper]").forEach((input) => input.addEventListener("change", () => {
+  const params = new URLSearchParams(window.location.search);
+  params.delete("selected");
+  document.querySelectorAll("[data-select-paper]:checked").forEach((selected) => params.append("selected", selected.dataset.selectPaper));
+  window.location.href = `/?${params.toString()}`;
+}));
 
 document.querySelector("[data-toggle-bulk-tags]")?.addEventListener("click", (event) => {
   const button = event.currentTarget;

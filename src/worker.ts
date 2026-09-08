@@ -11,17 +11,20 @@ import { fetchArxivMetadata, fetchArxivPdf, normalizeArxivDoi, normalizeArxivInp
 import { lookupCrossref } from "./services/crossref.js";
 import { lookupOpenAlex } from "./services/openalex.js";
 import { lookupSemanticScholar } from "./services/semantic-scholar.js";
+import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupManifest } from "./services/cloud-backup.js";
 import { DEFAULT_MAX_PDF_BYTES, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
 import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput, PaperMetadata } from "./types.js";
 import { OpenAiEmbeddingClient } from "./services/embeddings.js";
-import { extractWorkerPdfFiles, type WorkerZipFile } from "./services/worker-zip.js";
+import { createWorkerZip, extractWorkerPdfFiles, type WorkerZipFile } from "./services/worker-zip.js";
 import { takeFirstPages } from "./services/pdf-analysis-core.js";
 import { OpenAiLlmClient } from "./services/llm.js";
 import { suggestTags } from "./services/tag-suggestions.js";
-import { renderPaperForm } from "./views.js";
+import { groupLibraryResults } from "./services/library-query.js";
+import { analysisMeta, renderCitationSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
+import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -74,11 +77,11 @@ function hostedSettingsIcon(): string {
 function hostedShell(title: string, page: string, body: string): string {
   const markup = `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet"><link rel="stylesheet" href="/styles.css?v=32"></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · PersonalPaperLibrary</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet"><link rel="stylesheet" href="/styles.css?v=33"><script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script><script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script></head>
   <body data-hosted-page="${escapeHtml(page)}">
     <header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary"><span class="wordmark">Personal</span><span class="wordmark wordmark-paper">Paper</span><span class="wordmark">Library</span></a><div class="header-actions"><a class="settings-link" href="/settings" aria-label="Settings" title="Settings"><svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.7 7.7 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.58-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .5-.42l.38-2.65c-.61-.25-1.18-.58-1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0 .12-.64l-2.11-1.65Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></a></div></div></header>
     ${body}
-    <script src="/cloud.js?v=5" defer></script>
+    <script src="/cloud.js?v=10" defer></script>
   </body>
 </html>`;
   return markup.replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
@@ -116,28 +119,76 @@ function titleFromFilename(filename: string): string {
   return basename.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
 }
 
-function hostedBibtex(paper: PaperMetadata & { id: string }): string {
-  const authorKey = paper.authors[0]?.split(/\s+/).filter(Boolean).at(-1)?.toLowerCase().replace(/[^a-z0-9]+/g, "") || "paper";
-  const year = paper.year || paper.publishedDate?.slice(0, 4) || "nd";
-  const titleKey = paper.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 24) || "paper";
-  const key = `${authorKey}${year}${titleKey}`;
-  const lines = [`@article{${key},`, `  title = {${paper.title}},`];
-  if (paper.authors.length) lines.push(`  author = {${paper.authors.join(" and ")}},`);
-  if (paper.year) lines.push(`  year = {${paper.year}},`);
-  if (paper.journalRef) lines.push(`  journal = {${paper.journalRef}},`);
-  if (paper.doi) lines.push(`  doi = {${paper.doi}},`);
-  if (paper.sourceUrl || paper.arxivUrl) lines.push(`  url = {${paper.sourceUrl || paper.arxivUrl}},`);
-  return `${lines.join("\n")}\n}`;
+function hostedPdfFilename(title: string, used: Set<string>): string {
+  const base = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "paper";
+  let filename = `${base}.pdf`;
+  let suffix = 2;
+  while (used.has(filename.toLowerCase())) filename = `${base} (${suffix++}).pdf`;
+  used.add(filename.toLowerCase());
+  return filename;
 }
 
 function hostedEditActions(formId: string): string {
   return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${`<span class="material-symbols-outlined" aria-hidden="true">search</span>`}<span>Find metadata</span></button><button class="button" type="submit" form="${escapeHtml(formId)}">${`<span class="material-symbols-outlined" aria-hidden="true">save</span>`}<span>Save changes</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
+function hostedRenderedAnalysis(value: string): string {
+  return renderMarkdown(value.replace(/(^|\n)(\s*(?:[-*+]\s+|\d+[.)]\s+)[^\n]+(?:\n|$))+/g, (_, prefix: string, block: string) => `${prefix}${block.split(/\n/).map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")}\n`));
+}
+
 function cleanHostedAbstract(value: string): string | undefined {
   const clean = value.trim().replace(/^```(?:text|markdown)?\s*/i, "").replace(/\s*```$/i, "").trim();
   if (!clean || /^(?:not[_ -]?found|none|no abstract)$/i.test(clean)) return undefined;
   return clean.replace(/^abstract\s*:\s*/i, "").replace(/\s+/g, " ").trim() || undefined;
+}
+
+async function extractHostedAbstract(env: CloudflareBindings, source: { arrayBuffer(): Promise<ArrayBuffer> }): Promise<string> {
+  if (!env.AI) throw new Error("PDF_EXTRACTOR_UNAVAILABLE");
+  const converted = await env.AI.toMarkdown(
+    { name: "paper.pdf", blob: new Blob([await source.arrayBuffer()], { type: "application/pdf" }) },
+    { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
+  );
+  if (converted.format === "error" || !converted.data?.trim()) throw new Error("PDF_TEXT_EMPTY");
+  const settings = await analysisRepository(env).getSettings();
+  if (settings.provider !== "openai") throw new Error("OLLAMA_HOSTED_UNSUPPORTED");
+  const client = new OpenAiLlmClient({ openaiApiKey: async () => env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
+  const extracted = await client.complete({
+    model: settings.openaiModel,
+    temperature: 0,
+    messages: [
+      { role: "system", content: "You extract paper abstracts exactly from PDF text. Return only the abstract as plain text. Do not summarize, rewrite, or invent text." },
+      { role: "user", content: `Extract the paper's abstract from the supplied opening pages. Return only the abstract. If no abstract is present, return exactly NOT_FOUND.\n\n${takeFirstPages(converted.data.trim(), 4).slice(0, 30_000)}` },
+    ],
+  });
+  const abstract = cleanHostedAbstract(extracted);
+  if (!abstract) throw new Error("ABSTRACT_NOT_FOUND");
+  return abstract;
+}
+
+async function fillHostedMetadataAbstract(metadata: PaperMetadata, title: string, fetcher: typeof fetch): Promise<PaperMetadata> {
+  if (metadata.abstract?.trim() || !title.trim()) return metadata;
+  for (const lookup of [() => lookupOpenAlex(title, fetcher), () => lookupSemanticScholar(title, fetcher)]) {
+    try {
+      const alternate = await lookup();
+      if (alternate.abstract?.trim()) return { ...metadata, abstract: alternate.abstract };
+    } catch {
+      // Continue to the next provider; PDF extraction is attempted after staging.
+    }
+  }
+  return metadata;
+}
+
+async function parseHostedCitationForLookup(env: CloudflareBindings, input: string): Promise<ParsedCitationInput> {
+  try {
+    const settings = await analysisRepository(env).getSettings();
+    if (settings.provider === "openai" && env.OPENAI_API_KEY?.trim()) {
+      const client = new OpenAiLlmClient({ openaiApiKey: async () => env.OPENAI_API_KEY, fetcher: (request, init) => fetch(request, init) });
+      return await parseCitationInput(input, client, settings.openaiModel);
+    }
+  } catch {
+    // Use the deterministic citation parser when hosted AI parsing is unavailable.
+  }
+  return parseCitationInput(input);
 }
 
 function normalizeDoiInput(input: string): string | undefined {
@@ -164,22 +215,26 @@ function arxivFromMetadata(metadata: PaperMetadata): ReturnType<typeof normalize
   return undefined;
 }
 
-async function lookupHostedMetadata(input: string, fetcher: typeof fetch): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[] }> {
+async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsedCitation?: ParsedCitationInput): Promise<{ metadata: PaperMetadata; arxiv?: ReturnType<typeof normalizeArxivInput>; warnings: string[] }> {
   const normalized = normalizeArxivInput(input) || normalizeArxivDoi(input);
   if (normalized) return { metadata: await fetchArxivMetadata(normalized, fetcher), arxiv: normalized, warnings: [] };
   const doi = normalizeDoiInput(input);
-  const title = input.trim();
+  const title = parsedCitation?.title || input.trim();
   const warnings: string[] = [];
   let metadata: PaperMetadata | undefined;
+  const verify = (candidate: PaperMetadata): PaperMetadata => {
+    if (parsedCitation && !citationMatchesMetadata(parsedCitation, candidate)) throw new Error("CITATION_METADATA_MISMATCH");
+    return candidate;
+  };
   try {
-    metadata = await lookupCrossref(doi ? { doi } : { title }, fetcher);
+    metadata = verify(await lookupCrossref(doi ? { doi } : { title }, fetcher));
   } catch {
     if (!doi) {
       try {
-        metadata = await lookupOpenAlex(title, fetcher);
+        metadata = verify(await lookupOpenAlex(title, fetcher));
       } catch {
         try {
-          metadata = await lookupSemanticScholar(title, fetcher);
+          metadata = verify(await lookupSemanticScholar(title, fetcher));
         } catch {
           warnings.push("Citation metadata was not found. You can save this title-only record or edit it manually.");
         }
@@ -196,13 +251,14 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch): Promi
   if (!doi && !arxiv) {
     try {
       const enriched = await lookupOpenAlex(title, fetcher);
+      if (parsedCitation && !citationMatchesMetadata(parsedCitation, enriched)) throw new Error("CITATION_METADATA_MISMATCH");
       arxiv = arxivFromMetadata(enriched);
       if (arxiv) {
         metadata = {
-          ...enriched,
           ...metadata,
           title: metadata.title || enriched.title,
           authors: metadata.authors.length ? metadata.authors : enriched.authors,
+          abstract: metadata.abstract?.trim() ? metadata.abstract : enriched.abstract,
           categories: metadata.categories.length ? metadata.categories : enriched.categories,
           arxivId: arxiv.id,
           arxivBaseId: arxiv.baseId,
@@ -216,6 +272,7 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch): Promi
     }
   }
 
+  metadata = await fillHostedMetadataAbstract(metadata, metadata.title || title, fetcher);
   return { metadata, arxiv, warnings };
 }
 
@@ -281,10 +338,12 @@ function listOptions(url: URL) {
   const limitValue = Number(url.searchParams.get("limit"));
   const offsetValue = Number(url.searchParams.get("offset"));
   const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
+  const ids = url.searchParams.getAll("selected").filter((id) => /^[a-z0-9_-]+$/i.test(id));
   return {
     q: url.searchParams.get("q")?.trim() || undefined,
     tag: tags.length ? tags : undefined,
     tagMode: url.searchParams.get("tagMode") === "and" ? "and" as D1TagFilterMode : "or" as D1TagFilterMode,
+    ids: ids.length ? ids : undefined,
     untagged: url.searchParams.get("untagged") === "1",
     sort: parseSortOrder(url.searchParams.get("sort")),
     limit: Number.isFinite(limitValue) ? Math.min(100, Math.max(1, Math.floor(limitValue))) : 50,
@@ -293,9 +352,7 @@ function listOptions(url: URL) {
 }
 
 function analysisRepository(env: CloudflareBindings): D1AnalysisRepository {
-  // The built-in question catalog currently depends on the local YAML loader.
-  // Hosted custom questions remain available until the catalog is ported.
-  return new D1AnalysisRepository(env.DB, () => []);
+  return new D1AnalysisRepository(env.DB, () => hostedQuestionDefinitions);
 }
 
 async function searchRepository(env: CloudflareBindings): Promise<{ search: D1LibrarySearchRepository; embedder: { provider: string; model: string; client?: OpenAiEmbeddingClient } }> {
@@ -356,27 +413,52 @@ app.get("/import", (c) => c.redirect("/add"));
 
 const hostedImport = async (c: Context<{ Bindings: CloudflareBindings }>) => {
   try {
-    const body = await c.req.json<{ input?: string }>();
+    const body = await c.req.json<{ input?: string; paperId?: string; stagingToken?: string }>();
     const input = body.input?.trim() || "";
     if (!input) return jsonError(c, 400, "IMPORT_INPUT_REQUIRED", "Enter an arXiv identifier, DOI, or paper title.");
     const repo = new D1PaperRepository(c.env.DB);
     const fetcher = (request: RequestInfo | URL, init?: RequestInit) => fetch(request, init);
-    const lookup = await lookupHostedMetadata(input, fetcher);
-    const metadata = lookup.metadata;
+    const parsedCitation = await parseHostedCitationForLookup(c.env, input);
+    const lookup = await lookupHostedMetadata(input, fetcher, parsedCitation);
+    let metadata = lookup.metadata;
     const existing = await repo.findDuplicate(metadata);
-    if (existing) return c.json({ existing, duplicate: true });
+    if (existing && existing.id !== body.paperId) return c.json({ existing, duplicate: true });
+    const existingPaper = body.paperId ? await repo.findById(body.paperId) : null;
     const warnings = [...lookup.warnings];
     let pdf: { status: string; stagingToken?: string; sizeBytes?: number; sha256?: string } = { status: "not_found" };
+    const storage = new R2Storage(c.env.PAPER_PDFS);
     try {
-      const pdfUrl = lookup.arxiv?.pdfUrl || metadata.pdfUrl;
-      if (!pdfUrl) throw new Error("PDF_NOT_AVAILABLE");
-      const bytes = lookup.arxiv ? await fetchArxivPdf(lookup.arxiv, configuredPdfLimit(c.env.MAX_PDF_BYTES), fetcher) : await fetchHostedPdf(pdfUrl, configuredPdfLimit(c.env.MAX_PDF_BYTES), fetcher);
-      const staged = await new R2Storage(c.env.PAPER_PDFS).stage(bytes);
-      pdf = { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 };
+      if (body.stagingToken?.trim()) {
+        const stagedSource = await storage.getStagedFile(body.stagingToken.trim());
+        if (!stagedSource) throw new Error("STAGED_FILE_NOT_FOUND");
+        pdf = { status: "staged", stagingToken: body.stagingToken.trim() };
+      } else if (existingPaper?.r2Key) {
+        pdf = { status: "preserved" };
+      } else {
+        const pdfUrl = lookup.arxiv?.pdfUrl || metadata.pdfUrl;
+        if (!pdfUrl) throw new Error("PDF_NOT_AVAILABLE");
+        const bytes = lookup.arxiv ? await fetchArxivPdf(lookup.arxiv, configuredPdfLimit(c.env.MAX_PDF_BYTES), fetcher) : await fetchHostedPdf(pdfUrl, configuredPdfLimit(c.env.MAX_PDF_BYTES), fetcher);
+        const staged = await storage.stage(bytes);
+        pdf = { status: "staged", stagingToken: staged.token, sizeBytes: staged.sizeBytes, sha256: staged.sha256 };
+      }
     } catch (error) {
       const code = errorMessage(error);
       pdf = { status: code === "PDF_TOO_LARGE" ? "too_large" : "not_found" };
       warnings.push(code === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
+    }
+    if (!metadata.abstract?.trim()) {
+      const source = pdf.status === "staged"
+        ? await storage.getStagedFile(pdf.stagingToken as string)
+        : existingPaper?.r2Key
+          ? await storage.getObject(existingPaper.id)
+          : null;
+      if (source) {
+        try {
+          metadata = { ...metadata, abstract: await extractHostedAbstract(c.env, source) };
+        } catch {
+          // Abstract extraction is a best-effort enrichment; metadata/PDF import still succeeds.
+        }
+      }
     }
     return c.json({ paper: metadata, pdf, warnings });
   } catch (error) {
@@ -588,7 +670,19 @@ app.post("/api/search", async (c) => {
     if (!query) return jsonError(c, 400, "QUERY_REQUIRED", "Enter a question or topic to search for.");
     const { search, embedder } = await searchRepository(c.env);
     const result = await search.query(query, Array.isArray(body.tags) ? body.tags : [], body.tagMode === "and" ? "and" : "or", Number(body.limit) || 20, embedder);
-    return c.json(result);
+    const warnings = [...(result.warnings || [])];
+    let groups: Awaited<ReturnType<typeof groupLibraryResults>> = [];
+    if (result.hits.length && c.env.OPENAI_API_KEY) {
+      try {
+        const analysis = analysisRepository(c.env);
+        const settings = await analysis.getSettings();
+        const client = new OpenAiLlmClient({ openaiApiKey: async () => c.env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
+        groups = await groupLibraryResults(result.hits, query, client, settings.openaiModel, (paperId) => analysis.getSummary(paperId));
+      } catch {
+        warnings.push("The papers were found, but thematic grouping was unavailable.");
+      }
+    }
+    return c.json({ ...result, groups, warnings });
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The library search could not be completed.");
   }
@@ -611,11 +705,10 @@ app.get("/papers/:id", async (c) => {
   if (!paper) return c.html(hostedShell("Paper not found", "error", `<main class="shell cloud-library"><section class="panel"><h1>Paper not found</h1><p><a href="/">Return to the library</a></p></section></main>`), 404);
   const analysis = analysisRepository(c.env);
   const summary = await analysis.getSummary(paper.id);
-  const questions = await analysis.listQuestions(paper.id, false, false);
-  const bibtex = hostedBibtex(paper);
+  const questions = await analysis.listQuestions(paper.id);
   const summaryComplete = summary?.status === "complete";
-  const summaryContent = summaryComplete && summary.content ? `<div class="analysis-content"><pre>${escapeHtml(summary.content)}</pre></div>` : "";
-  const questionDots = questions.map((question) => `<span class="question-progress-dot${question.answer?.status === "complete" ? " is-answered" : ""}" data-question-overview-dot="${escapeHtml(question.id)}" aria-hidden="true"></span>`).join("");
+  const summaryContent = summaryComplete && summary.content ? `<div class="analysis-content">${hostedRenderedAnalysis(summary.content)}</div>` : "";
+  const summaryMeta = summary ? analysisMeta(summary.provider, summary.model, summary.generatedAt, summary.durationMs) : "";
   const paperMeta = [paper.authors.length ? `<span class="paper-authors">${escapeHtml(paper.authors.join(", "))}</span>` : "No authors recorded", paper.acceptedVenue || paper.journalRef || "", paper.year ? String(paper.year) : ""].filter(Boolean).join(" · ");
   const metadataRows = [
     `<dt>Authors</dt><dd>${escapeHtml(paper.authors.join(", ") || "No authors recorded")}</dd>`,
@@ -628,9 +721,10 @@ app.get("/papers/:id", async (c) => {
     `<dt>Document</dt><dd>${paper.r2Key ? `<a href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noreferrer">PDF</a>` : `<span class="muted">Not stored</span>`}</dd>`,
     `<dt>Added</dt><dd>${escapeHtml(new Date(paper.createdAt).toLocaleString("en-GB"))}</dd>`,
   ].filter(Boolean).join("");
-  const citeSection = `<details class="detail-section bibtex-section"><summary>Cite</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">BibTeX</p><button class="button button-secondary" type="button" data-copy-bibtex>Copy</button></div><textarea class="bibtex-text" data-bibtex readonly rows="${Math.max(3, bibtex.split(/\r?\n/).length)}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea></div></details>`;
+  const citeSection = renderCitationSection(paper);
   return c.html(hostedShell(paper.title, "paper", `<main class="shell cloud-library paper-detail-page" data-paper-id="${escapeHtml(paper.id)}">
-    <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1 id="paper-title">${escapeHtml(paper.title)}</h1><p id="paper-meta" class="muted">${paperMeta}</p></header>${paper.abstract ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p id="paper-abstract" class="abstract">${escapeHtml(paper.abstract)}</p></section>` : `<section id="paper-abstract-section" class="detail-section abstract-section" hidden><h2>Abstract</h2><p id="paper-abstract" class="abstract"></p></section>`}${paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div id="paper-tags" class="paper-tags large">${paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" ")}</div></section>` : `<section id="paper-tags-section" class="detail-section detail-tags" hidden><h2>Tags</h2><div id="paper-tags" class="paper-tags large"></div></section>`}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadataRows}</dl></details>${citeSection}<details class="detail-section analysis-section" data-summary-section><summary><span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body"><div id="paper-summary">${summaryContent}</div><div class="analysis-actions summary-actions"><div class="summary-action-buttons"><button class="button button-secondary button-small" type="button" data-summary-mode="quick"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>${summaryComplete ? "Regenerate summary" : "Generate summary"}</span></button><button class="button button-secondary button-small" type="button" data-summary-mode="full"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Full summary</span></button></div><span id="analysis-status" class="form-status" role="status"></span></div></div></details><section class="detail-section analysis-questions"><details><summary>Questions</summary><p class="muted">Ask an additional question about this paper.</p><div class="inline-form"><input id="paper-question-input" placeholder="What would you like to know?" autocomplete="off"><button id="paper-question-button" class="button button-secondary button-small" type="button"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask</span></button></div><div id="paper-question-answer" class="analysis-result" hidden></div></details><div class="question-section-actions"><span class="question-overview-progress" aria-label="${questions.filter((question) => question.answer?.status === "complete").length} of ${questions.length} questions answered" title="${questions.filter((question) => question.answer?.status === "complete").length} of ${questions.length} questions answered">${questionDots}</span></div></section></div></article>
+    <section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${encodeURIComponent(paper.id)}/edit" aria-label="Edit paper" title="Edit paper"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit</span></a><button id="paper-delete" class="icon-button icon-button-danger" type="button" aria-label="Delete paper" title="Delete paper"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Del</span></button></div></section>
+    <article class="panel paper-detail"><div class="detail-content"><header class="paper-detail-heading"><h1 id="paper-title">${escapeHtml(paper.title)}</h1><p id="paper-meta" class="muted">${paperMeta}</p></header>${paper.abstract ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p id="paper-abstract" class="abstract">${escapeHtml(paper.abstract)}</p></section>` : `<section id="paper-abstract-section" class="detail-section abstract-section" hidden><h2>Abstract</h2><p id="paper-abstract" class="abstract"></p></section>`}${paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div id="paper-tags" class="paper-tags large">${paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" ")}</div></section>` : `<section id="paper-tags-section" class="detail-section detail-tags" hidden><h2>Tags</h2><div id="paper-tags" class="paper-tags large"></div></section>`}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadataRows}</dl></details>${citeSection}<details class="detail-section analysis-section" data-summary-section><summary><span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body"><div id="paper-summary">${summaryContent}${summaryMeta}</div><div class="analysis-actions summary-actions"><div class="summary-action-buttons"><button class="button button-secondary button-small" type="button" data-summary-mode="quick"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>${summaryComplete ? "Regenerate summary" : "Generate summary"}</span></button><button class="button button-secondary button-small" type="button" data-summary-mode="full"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Full summary</span></button></div><span id="analysis-status" class="form-status" role="status"></span></div></div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse summary" title="Collapse summary"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button></div></details>${renderQuestionsSection(questions)}</div></article>
   </main>`));
 });
 
@@ -713,25 +807,7 @@ app.post("/api/abstract/extract", async (c) => {
         ? await storage.getObject(body.paperId)
         : null;
     if (!source) return jsonError(c, 409, "PDF_NOT_FOUND", "Upload or save a PDF before extracting its abstract.");
-    if (!c.env.AI) return jsonError(c, 501, "PDF_EXTRACTOR_UNAVAILABLE", "Hosted PDF extraction is not configured.");
-    const converted = await c.env.AI.toMarkdown(
-      { name: "paper.pdf", blob: new Blob([await source.arrayBuffer()], { type: "application/pdf" }) },
-      { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
-    );
-    if (converted.format === "error" || !converted.data?.trim()) return jsonError(c, 422, "PDF_TEXT_EMPTY", "The PDF text could not be extracted.");
-    const settings = await analysisRepository(c.env).getSettings();
-    if (settings.provider !== "openai") return jsonError(c, 409, "OLLAMA_HOSTED_UNSUPPORTED", "Hosted abstract extraction requires the OpenAI provider.");
-    const client = new OpenAiLlmClient({ openaiApiKey: async () => c.env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
-    const extracted = await client.complete({
-      model: settings.openaiModel,
-      temperature: 0,
-      messages: [
-        { role: "system", content: "You extract paper abstracts exactly from PDF text. Return only the abstract as plain text. Do not summarize, rewrite, or invent text." },
-        { role: "user", content: `Extract the paper's abstract from the supplied opening pages. Return only the abstract. If no abstract is present, return exactly NOT_FOUND.\n\n${takeFirstPages(converted.data.trim(), 4).slice(0, 30_000)}` },
-      ],
-    });
-    const abstract = cleanHostedAbstract(extracted);
-    if (!abstract) return jsonError(c, 422, "ABSTRACT_NOT_FOUND", "No abstract could be found in the PDF.");
+    const abstract = await extractHostedAbstract(c.env, source);
     return c.json({ abstract });
   } catch (error) {
     return jsonError(c, 400, errorMessage(error), "The abstract could not be extracted from the PDF.");
@@ -870,10 +946,13 @@ app.post("/api/papers/bulk-delete", async (c) => {
   const repo = new D1PaperRepository(c.env.DB);
   const storage = new R2Storage(c.env.PAPER_PDFS);
   try {
-    const body = await c.req.json<{ selectedIds?: string[] }>();
+    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; selectedIds?: string[]; untagged?: boolean; all?: boolean }>();
     const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
-    if (!ids.length) return jsonError(c, 400, "SELECTION_REQUIRED", "Select at least one paper.");
-    const papers = (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper));
+    const filters = (body.tags || []).filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0).map((tag) => tag.trim());
+    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+    const papers = ids.length
+      ? (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper))
+      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged });
     const moved: Array<NonNullable<Awaited<ReturnType<R2Storage["moveToTrash"]>>>> = [];
     try {
       for (const paper of papers) if (paper.r2Key) {
@@ -894,18 +973,47 @@ app.post("/api/papers/bulk-delete", async (c) => {
 
 app.post("/api/papers/bulk-tags", async (c) => {
   try {
-    const body = await c.req.json<{ selectedIds?: string[]; name?: string; action?: string }>();
+    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; untagged?: boolean; all?: boolean; selectedIds?: string[]; name?: string; action?: string }>();
     const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
+    const filters = (body.tags || []).filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0).map((tag) => tag.trim());
     const name = body.name?.trim() || "";
-    if (!ids.length) return jsonError(c, 400, "SELECTION_REQUIRED", "Select at least one paper.");
+    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
     if (!name) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter a tag name.");
     if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
-    const tags = new D1PaperRepository(c.env.DB).tags;
-    if (body.action === "add") await tags.addToPapers(ids, name);
-    else await tags.removeFromPapers(ids, name);
-    return c.json({ ok: true, updated: ids.length, action: body.action, tag: name.toLocaleLowerCase() });
+    const repo = new D1PaperRepository(c.env.DB);
+    const papers = ids.length
+      ? (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper))
+      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged });
+    if (body.action === "add") await repo.tags.addToPapers(papers.map((paper) => paper.id), name);
+    else await repo.tags.removeFromPapers(papers.map((paper) => paper.id), name);
+    return c.json({ ok: true, updated: papers.length, action: body.action, tag: name.toLocaleLowerCase() });
   } catch (error) {
     return jsonError(c, 400, errorMessage(error), "The selected paper tags could not be updated.");
+  }
+});
+
+app.get("/api/export/pdfs", async (c) => {
+  try {
+    const repo = new D1PaperRepository(c.env.DB);
+    const url = new URL(c.req.url);
+    const selected = [...new Set(url.searchParams.getAll("selected").filter((id) => /^[a-z0-9_-]+$/i.test(id)))];
+    const filters = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
+    const papers = selected.length
+      ? await repo.list({ ids: selected, sort: parseSortOrder(url.searchParams.get("sort")) })
+      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", sort: parseSortOrder(url.searchParams.get("sort")) });
+    const storage = new R2Storage(c.env.PAPER_PDFS);
+    const usedNames = new Set<string>();
+    const files: WorkerZipFile[] = [];
+    for (const paper of papers) {
+      if (!paper.r2Key) continue;
+      const bytes = await storage.get(paper.id);
+      if (bytes) files.push({ name: hostedPdfFilename(paper.title, usedNames), bytes });
+    }
+    if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");
+    const archive = createWorkerZip(files);
+    return new Response(archive.buffer as ArrayBuffer, { headers: { "content-type": "application/zip", "content-disposition": "attachment; filename=paper-library-pdfs.zip", "cache-control": "no-store" } });
+  } catch (error) {
+    return jsonError(c, 500, errorMessage(error), "The PDFs could not be exported.");
   }
 });
 
@@ -965,6 +1073,7 @@ app.get("/api/papers/:id/summary/progress", async (c) => {
 app.post("/api/papers/:id/summary", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  if (!paper.r2Key) return jsonError(c, 409, "PDF_NOT_FOUND", "Store a PDF for this paper before generating a summary.");
   if (!c.env.ANALYSIS_QUEUE) return jsonError(c, 501, "SUMMARY_GENERATION_UNAVAILABLE", "Hosted summary generation is not enabled until the analysis queue is configured.");
   try {
     const body = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }));
@@ -984,7 +1093,7 @@ app.post("/api/papers/:id/summary", async (c) => {
 app.get("/api/papers/:id/questions", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
-  return c.json({ questions: await analysisRepository(c.env).listQuestions(paper.id), summary: await analysisRepository(c.env).getSummary(paper.id), generation: "not_available" });
+  return c.json({ questions: await analysisRepository(c.env).listQuestions(paper.id), summary: await analysisRepository(c.env).getSummary(paper.id), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
 });
 
 app.post("/api/papers/:id/questions", async (c) => {
@@ -1029,12 +1138,12 @@ const worker = {
   request: app.request.bind(app),
   async queue(batch: QueueBatch, env: CloudflareBindings): Promise<void> {
     const jobs = analysisJobs(env);
-    for (const message of batch.messages) {
+    await Promise.all(batch.messages.map(async (message) => {
       try {
         const claimed = await jobs.claim(message.body.jobId);
         if (!claimed) {
           message.ack();
-          continue;
+          return;
         }
         try {
           await executeAnalysisJob(env, claimed);
@@ -1045,7 +1154,7 @@ const worker = {
       } catch {
         message.retry();
       }
-    }
+    }));
   },
 };
 

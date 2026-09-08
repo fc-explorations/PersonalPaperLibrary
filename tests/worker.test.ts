@@ -328,6 +328,26 @@ describe("Cloudflare Worker API", () => {
     }
   });
 
+  it("parses hosted pasted citations before looking up metadata", async () => {
+    const env = bindings();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org/works?query.title=")) {
+        expect(url).toContain(encodeURIComponent("Correct Hosted Citation Lookup"));
+        return new Response(JSON.stringify({ message: { items: [{ title: ["Correct Hosted Citation Lookup"], author: [{ given: "Ada", family: "Lovelace" }], DOI: "10.1000/citation", published: { "date-parts": [[2020]] } }] } }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      const response = await worker.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "Ada Lovelace, G. Hopper. Correct Hosted Citation Lookup. 2020." }) }, env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ paper: { title: "Correct Hosted Citation Lookup", authors: ["Ada Lovelace"], year: 2020 } });
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
+  });
+
   it("stages the arXiv PDF when a title provider exposes an arXiv record", async () => {
     const env = bindings();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -412,14 +432,19 @@ describe("Cloudflare Worker API", () => {
     const paperId = (await create.json() as { paper: { id: string } }).paper.id;
     const messages: Array<{ jobId: string }> = [];
     env.ANALYSIS_QUEUE = { send: async (message) => { messages.push(message); } };
-    env.AI = { toMarkdown: async () => ({ format: "text", data: "Paper text extracted from the hosted PDF." }) };
+    env.AI = { toMarkdown: async () => ({ format: "text", data: "Opening page text.\fLater pages contain the decisive result." }) };
     env.OPENAI_API_KEY = "test-key";
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ choices: [{ message: { content: "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG" } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    let prompt = "";
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      prompt = String((JSON.parse(String(init?.body || "{}")) as { messages?: Array<{ content?: string }> }).messages?.[1]?.content || "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    });
     try {
       const queued = await worker.request(`/api/papers/${paperId}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "quick" }) }, env);
       expect(queued.status).toBe(202);
       const acknowledged: string[] = [];
       await worker.queue({ messages: [{ body: messages[0], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
+      expect(prompt).toContain("Later pages contain the decisive result.");
       expect(acknowledged).toEqual(["ack"]);
       const progress = await worker.request(`/api/papers/${paperId}/summary/progress`, {}, env);
       const result = await progress.json() as { job: { status: string }; };
