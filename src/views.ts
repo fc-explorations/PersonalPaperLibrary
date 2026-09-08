@@ -128,7 +128,7 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=44">
+  <link rel="stylesheet" href="/styles.css?v=46">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
@@ -453,21 +453,21 @@ function field(label: string, name: string, value: unknown, options: { type?: st
 function sourceUrlField(value: unknown): string {
   const url = typeof value === "string" ? value.trim() : "";
   const validUrl = /^https?:\/\//i.test(url);
-  return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small form-utility-button" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>${goIcon()}<span>Go</span></a></div></label>`;
+  return `<label>Source URL<div class="field-with-action"><input name="sourceUrl" type="text" value="${escapeHtml(value)}"><a class="button button-secondary button-small form-utility-button edit-action-button" data-source-url-go href="${validUrl ? escapeHtml(url) : "#"}" target="_blank" rel="noreferrer"${validUrl ? "" : " hidden"}>${goIcon()}<span>Go</span></a></div></label>`;
 }
 
 function abstractField(value: unknown): string {
-  return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small form-utility-button" type="button" data-extract-abstract>${analysisIcon()}<span>From PDF</span></button></div></label>`;
+  return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small form-utility-button edit-action-button" type="button" data-extract-abstract>${analysisIcon()}<span>From PDF</span></button></div></label>`;
 }
 
 export function bibtexImportField(formId: string): string {
-  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
+  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button edit-action-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
 }
 
 function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
   const saveButton = isEdit ? "" : `<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>Save paper</span></button>`;
   const lookupLabel = isEdit ? "Find" : "Find metadata";
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>${lookupLabel}</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary edit-action-button" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>${lookupLabel}</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {
@@ -477,9 +477,9 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const authorCount = (data.authors || []).length;
   const authorRows = Math.max(3, Math.min(authorCount || 3, 10));
   const openPdfUrl = isEdit && data.r2Key ? `/api/papers/${escapeHtml(data.id)}/pdf` : "";
-  const openPdfButton = `<a class="button button-secondary button-small form-utility-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
+  const openPdfButton = `<a class="button button-secondary button-small form-utility-button edit-action-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
   const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
-  const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
+  const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button edit-action-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
   const fields = `${titleField}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
@@ -561,7 +561,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
 
 export function renderEditPage(paper: PaperRecord): string {
   const formId = `paper-form-${paper.id}`;
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button edit-action-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {
