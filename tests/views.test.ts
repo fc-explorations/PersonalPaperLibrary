@@ -53,6 +53,7 @@ describe("add page rendering", () => {
   it("shows the folder-tag switch enabled by default", () => {
     const html = renderAddPage();
 
+    expect(html).toContain(`<span class="brand-version" aria-label="Version ${APP_VERSION_LABEL}">${APP_VERSION_LABEL}</span>`);
     expect(html).toContain('data-folder-tag-toggle checked');
     expect(html).toContain('data-folder-tag-value>True</span>');
     expect(html).toContain("Use folder as tag");

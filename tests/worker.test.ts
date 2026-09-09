@@ -237,6 +237,7 @@ describe("Cloudflare Worker API", () => {
     const response = await worker.request("/add", {}, env);
     expect(response.status).toBe(200);
     const html = await response.text();
+    expect(html).toContain(`<span class="brand-version" aria-label="Version v${APP_VERSION}">v${APP_VERSION}</span>`);
     expect(html).toContain('input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf"');
     expect(html).toContain('data-folder-pdf-input');
     expect(html).toContain('data-folder-zip-input');

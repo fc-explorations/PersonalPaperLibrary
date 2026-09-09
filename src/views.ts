@@ -135,7 +135,7 @@ function layout(title: string, body: string, showHeader = true): string {
 </head>
 <body>
   <div class="render-root">
-    ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
+    ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}${brandVersion()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
     <script src="/app.js?v=43" defer></script>
@@ -145,6 +145,10 @@ function layout(title: string, body: string, showHeader = true): string {
 
 function wordmark(): string {
   return `<span class="wordmark"><span>Personal</span><span class="wordmark-paper">Paper</span><span>Library</span></span>`;
+}
+
+function brandVersion(): string {
+  return `<span class="brand-version" aria-label="Version ${escapeHtml(APP_VERSION_LABEL)}">${escapeHtml(APP_VERSION_LABEL)}</span>`;
 }
 
 function addAction(): string {
