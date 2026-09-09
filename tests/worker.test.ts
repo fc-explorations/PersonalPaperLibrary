@@ -246,13 +246,16 @@ describe("Cloudflare Worker API", () => {
     expect(html).toContain('data-lookup-metadata');
     expect(html).toContain("Primary category");
     expect(html).not.toContain("Open web resource");
+    expect(html.indexOf('data-upload-form')).toBeLessThan(html.indexOf("Import"));
+    expect(html).toContain('id="single-pdf-input" name="file" type="file"');
+    expect(html).toContain("Upload PDF");
     const settings = await worker.request("/settings", {}, env);
     const settingsHtml = await settings.text();
     expect(settingsHtml).toContain("Automatic backups run daily at midnight UTC");
     expect(settingsHtml).toContain('id="backup-list"');
     expect(settingsHtml).toContain("<h2>Credits</h2>");
     expect(settingsHtml).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
-    expect(settingsHtml).toContain("<strong>Version:</strong> v2.0.1");
+    expect(settingsHtml).toContain("<strong>Version:</strong> v2.1.0");
     expect(settingsHtml).toContain("<summary>HowTo</summary>");
     expect(settingsHtml).toContain("Never invent metadata");
     const library = await worker.request("/", {}, env);

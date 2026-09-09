@@ -60,5 +60,8 @@ describe("add page rendering", () => {
     expect(html).toContain("Import");
     expect(html).toContain("From Folder");
     expect(html).toContain("From ZIP");
+    expect(html.indexOf('data-upload-form')).toBeLessThan(html.indexOf("Import"));
+    expect(html).toContain('id="single-pdf-input" name="file" type="file"');
+    expect(html).toContain("Upload PDF");
   });
 });
