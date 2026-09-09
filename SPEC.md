@@ -98,7 +98,7 @@ If the user supplies an explicit version, preserve it in the stored identifier a
 
 ### Refresh citation metadata
 
-The add and edit forms provide a `Find metadata` action. Lookup precedence is:
+The add and edit forms provide a `Find` action. Lookup precedence is:
 
 1. Exact arXiv ID through arXiv.
 2. Exact DOI through Crossref.
