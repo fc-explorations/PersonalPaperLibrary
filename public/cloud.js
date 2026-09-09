@@ -24,6 +24,10 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
 }
 
+function displayTagName(tag) {
+  return String(tag).toLowerCase() === "no pdf" ? "NO PDF" : tag;
+}
+
 function updateOperationProgress(progress, finished, total) {
   if (!progress || !total) return;
   const percent = Math.min(100, Math.round((finished / total) * 100));
@@ -387,7 +391,7 @@ function hostedLibrarySelectionUrl(ids) {
 }
 
 function paperCard(paper) {
-  const tags = (paper.tags || []).map((tag) => `<a class="tag" href="${libraryUrl(libraryState(), { tags: [tag], untagged: false, page: 1 })}">${escapeHtml(tag)}</a>`).join(" ");
+  const tags = (paper.tags || []).map((tag) => `<a class="tag" href="${libraryUrl(libraryState(), { tags: [tag], untagged: false, page: 1 })}">${escapeHtml(displayTagName(tag))}</a>`).join(" ");
   const authors = paper.authors || [];
   const authorLine = authors.length <= 3 ? authors.join(", ") : `${authors.slice(0, 3).join(", ")} et al.`;
   const venue = paper.acceptedVenue || paper.journalRef || "";
@@ -399,13 +403,18 @@ function paperCard(paper) {
 }
 
 function renderLibraryTags(tags, state) {
-  const tagLinks = tags.map((tag) => {
+  const noPdfTag = tags.find((tag) => tag.toLowerCase() === "no pdf") || "no pdf";
+  const customTags = tags.filter((tag) => tag.toLowerCase() !== "no pdf");
+  const tagLinks = customTags.map((tag) => {
     const selected = state.tags.some((value) => value.toLowerCase() === tag.toLowerCase());
     const nextTags = selected ? state.tags.filter((value) => value.toLowerCase() !== tag.toLowerCase()) : [...state.tags, tag];
-    return `<a class="tag${selected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: nextTags, untagged: false, page: 1 })}" aria-pressed="${selected}">${escapeHtml(tag)}</a>`;
+    return `<a class="tag${selected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: nextTags, untagged: false, page: 1 })}" aria-pressed="${selected}">${escapeHtml(displayTagName(tag))}</a>`;
   }).join(" ");
+  const noPdfSelected = state.tags.some((tag) => tag.toLowerCase() === noPdfTag.toLowerCase());
+  const noPdfTags = noPdfSelected ? state.tags.filter((tag) => tag.toLowerCase() !== noPdfTag.toLowerCase()) : [...state.tags, noPdfTag];
+  const noPdfLink = `<a class="tag${noPdfSelected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: noPdfTags, untagged: false, page: 1 })}" aria-pressed="${noPdfSelected}">NO PDF</a>`;
   const allSelected = !state.tags.length && !state.untagged;
-  return `<span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button${state.tagMode === "and" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "and", page: 1 })}">AND</a> <a class="tag tag-mode-button${state.tagMode === "or" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "or", page: 1 })}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag${allSelected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: false, page: 1 })}">ALL</a> <a class="tag${state.untagged ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: !state.untagged, page: 1 })}">NONE</a> ${tagLinks}`;
+  return `<span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button${state.tagMode === "and" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "and", page: 1 })}">AND</a> <a class="tag tag-mode-button${state.tagMode === "or" ? " tag-selected" : ""}" href="${libraryUrl(state, { tagMode: "or", page: 1 })}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag${allSelected ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: false, page: 1 })}">ALL</a> <a class="tag${state.untagged ? " tag-selected" : ""}" href="${libraryUrl(state, { tags: [], untagged: !state.untagged, page: 1 })}">NONE</a> ${noPdfLink} ${tagLinks}`;
 }
 
 let hostedLibraryView = { body: null, state: null, tags: [] };
@@ -425,7 +434,7 @@ function libraryExportUrl(state, selectedIds = []) {
 }
 
 function bulkTagEditor(context, tags) {
-  const options = tags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
+  const options = tags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(displayTagName(tag))}</option>`).join("");
   return `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(context.q || "")}" data-selection-tags="${escapeHtml(JSON.stringify(context.tags || []))}" data-selection-tag-mode="${escapeHtml(context.tagMode || "or")}" data-selection-untagged="${context.untagged ? "true" : "false"}" data-selection-ids="${escapeHtml(JSON.stringify(context.selectedIds || []))}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${options}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add"><span class="material-symbols-outlined" aria-hidden="true">add</span><span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags><span class="material-symbols-outlined" aria-hidden="true">close</span><span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>`;
 }
 
@@ -649,6 +658,13 @@ async function saveHostedPaperForm(form, { redirect = false, statusMessage = "Sa
       form.dataset.paperId = saved.paper.id;
       enableHostedPaperAutosave(form);
     }
+    const stagingToken = form.elements.namedItem("stagingToken");
+    if (stagingToken) stagingToken.value = "";
+    const paperPdfLink = form.querySelector("[data-paper-pdf-link]");
+    if (paperPdfLink && saved.paper?.id) {
+      paperPdfLink.hidden = !saved.paper.r2Key;
+      if (saved.paper.r2Key) paperPdfLink.href = `/api/papers/${encodeURIComponent(saved.paper.id)}/pdf`;
+    }
     if (redirect) window.location.href = `/papers/${encodeURIComponent(saved.paper.id)}`;
     else setStatus(status, statusMessage);
     return saved;
@@ -710,8 +726,8 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
       await saveHostedPaperForm(form, { statusMessage });
     } else {
       renderHostedPreview(body);
-      await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? body.warnings.join(" ") : "Metadata found and saved." });
-      setStatus(status, "Metadata found and saved.");
+      const saved = await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? body.warnings.join(" ") : "Metadata found and saved." });
+      setStatus(status, saved ? "Metadata found and saved." : "Metadata found. Fix the error below and retry.", !saved);
     }
   } catch (error) {
     setStatus(status, error.message, true);
@@ -1306,7 +1322,7 @@ async function initPaper() {
     if (abstract && paper.abstract) { abstract.textContent = paper.abstract; abstractSection.hidden = false; void typesetHostedMath([abstract]); }
     const tagsSection = document.querySelector("#paper-tags-section");
     const tags = document.querySelector("#paper-tags");
-    if (tags && paper.tags?.length) { tags.innerHTML = paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" "); if (tagsSection) tagsSection.hidden = false; }
+    if (tags && paper.tags?.length) { tags.innerHTML = paper.tags.map((tag) => `<span class="tag">${escapeHtml(displayTagName(tag))}</span>`).join(" "); if (tagsSection) tagsSection.hidden = false; }
     const existing = await request(`/api/papers/${encodeURIComponent(id)}/summary`);
     if (existing.summary?.status === "complete") {
       summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(existing.summary.content)}</div>${renderHostedAnalysisMeta(existing.summary)}`;
@@ -1385,7 +1401,7 @@ async function initImport() {
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");
       const saved = await saveHostedPaperForm(document.querySelector("#paper-form-new"), { statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
       const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF saved." : "Metadata found and saved.";
-      setStatus(status, saved && staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage);
+      setStatus(status, saved ? (staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage) : "Metadata found. Fix the error below and retry.", !saved);
     } catch (error) {
       staged = undefined;
       preview.hidden = true;

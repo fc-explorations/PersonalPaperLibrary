@@ -886,6 +886,13 @@ async function savePaperForm(form, { redirect = false, statusMessage = "Saved." 
       form.dataset.paperId = result.paper.id;
       enablePaperAutosave(form);
     }
+    const stagingToken = form.elements.namedItem("stagingToken");
+    if (stagingToken) stagingToken.value = "";
+    const paperPdfLink = form.querySelector("[data-paper-pdf-link]");
+    if (paperPdfLink && result.paper?.id) {
+      paperPdfLink.hidden = !result.paper.r2Key;
+      if (result.paper.r2Key) paperPdfLink.href = `/api/papers/${encodeURIComponent(result.paper.id)}/pdf`;
+    }
     if (redirect) window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
     else setStatus(form, statusMessage);
     return result;
@@ -1034,7 +1041,7 @@ document.querySelector("[data-replace-upload]")?.addEventListener("submit", asyn
     const paperForm = document.querySelector("[data-paper-form]");
     setValue(paperForm, "stagingToken", body.pdf.stagingToken);
     if (paperForm?.dataset.paperId) await savePaperForm(paperForm, { statusMessage: "Replacement PDF staged and saved." });
-    else setStatus(form, "Replacement staged. Save paper to apply it.");
+    else setStatus(form, "Replacement staged. It will be applied automatically when the paper is saved.");
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }

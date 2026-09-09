@@ -500,9 +500,11 @@ describe("HTTP application", () => {
     expect(paper.tags).toContain("no pdf");
     const page = await (await context.app.request(`/papers/${paper.id}`)).text();
     expect(page).toContain('<dt>Document</dt><dd><span class="muted">Not stored</span></dd>');
-    expect(page).toContain(">no pdf</a>");
+    expect(page).toContain(">NO PDF</a>");
     const library = await (await context.app.request("/?tag=no%20pdf")).text();
-    expect(library).toContain(">no pdf</a>");
+    expect(library).toContain(">NO PDF</a>");
+    expect(library.indexOf(">ALL</a>")).toBeLessThan(library.indexOf(">NONE</a>"));
+    expect(library.indexOf(">NONE</a>")).toBeLessThan(library.indexOf(">NO PDF</a>"));
     expect(library).not.toContain("pdf-missing-badge");
     expect(page).not.toContain('aria-label="Open web resource"');
     const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();

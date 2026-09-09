@@ -106,11 +106,11 @@ The add and edit forms provide a `Find` action. Lookup precedence is:
 4. Title search through OpenAlex.
 5. Title search through Semantic Scholar.
 
-Populate the form with the matched authors, publication date/year, venue or journal reference, abstract, DOI, and source URL. Preserve the user's current title and require the user to review and save the result. A failed lookup must leave the existing form unchanged.
+Populate the form with the matched authors, publication date/year, venue or journal reference, abstract, DOI, and source URL, then save the result automatically. Preserve the user's current title where no better title is found. A failed lookup must leave the existing form unchanged.
 
-After metadata is found, try to obtain a PDF from the matched record's canonical arXiv PDF URL, open-access PDF URL, or publisher PDF link. Stage the first valid PDF locally and carry its staging token through the review form so that saving the metadata commits it with the paper. PDF retrieval is best-effort: an unavailable or invalid PDF must produce a warning while leaving the metadata result usable for manual upload.
+After metadata is found, try to obtain a PDF from the matched record's canonical arXiv PDF URL, open-access PDF URL, or publisher PDF link. Stage the first valid PDF locally and carry its staging token through the form so that the automatic save commits it with the paper. PDF retrieval is best-effort: an unavailable or invalid PDF must produce a warning while leaving the metadata result usable for manual upload.
 
-When automatic retrieval fails but the metadata includes a direct PDF URL, arXiv page, publisher page, or DOI resource, show an `Open web resource` action beside `Find metadata`. Prefer an arXiv page, then the DOI resolver, then a publisher landing page, over a direct PDF candidate that has already failed. The action opens the highest-priority available resource in a new tab and does not alter the stored record.
+When automatic retrieval fails but the metadata includes a direct PDF URL, arXiv page, publisher page, or DOI resource, show an `Open web resource` action beside `Find`. Prefer an arXiv page, then the DOI resolver, then a publisher landing page, over a direct PDF candidate that has already failed. The action opens the highest-priority available resource in a new tab and does not alter the stored record.
 
 ### Add from a local PDF
 

@@ -1,6 +1,7 @@
 import type { PaperRecord, PaperMetadata, SortOrder } from "./types.js";
 import type { TagFilterMode } from "./repositories/papers.js";
 import type { SummaryRecord, StoredQuestion } from "./repositories/analysis.js";
+import { NO_PDF_TAG } from "./services/system-tags.js";
 import { APP_VERSION_LABEL } from "./version.js";
 
 export function escapeHtml(value: unknown): string {
@@ -137,7 +138,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-    <script src="/app.js?v=42" defer></script>
+    <script src="/app.js?v=43" defer></script>
 </body>
 </html>`;
 }
@@ -305,7 +306,11 @@ export function renderCitationSection(paper: PaperRecord): string {
 }
 
 function tagLinks(tags: string[], selected?: string): string {
-  return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(" ");
+  return tags.map((tag) => `<a class="tag ${selected?.toLowerCase() === tag.toLowerCase() ? "tag-selected" : ""}" href="/?tag=${encodeURIComponent(tag)}">${escapeHtml(displayTagName(tag))}</a>`).join(" ");
+}
+
+function displayTagName(tag: string): string {
+  return tag.toLowerCase() === NO_PDF_TAG ? "NO PDF" : tag;
 }
 
 function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all: boolean | "none" = false, untagged = false, page = 1, pageSize = 50, tagMode: TagFilterMode = "or", noTags = false): string {
@@ -344,7 +349,7 @@ function groupTagLinks(tags: string[], selected: string[], q: string | undefined
   return tags.map((tag) => {
     const isSelected = selected.some((value) => value.toLowerCase() === tag.toLowerCase());
     const next = isSelected ? selected.filter((value) => value.toLowerCase() !== tag.toLowerCase()) : [...selected, tag];
-    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${isSelected}">${escapeHtml(tag)}</a>`;
+    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${isSelected}">${escapeHtml(displayTagName(tag))}</a>`;
   }).join(" ");
 }
 
@@ -380,7 +385,7 @@ function paperCard(paper: PaperRecord, selectedIds: string[] = []): string {
 }
 
 export function renderAskLibraryPage(tags: string[]): string {
-  const tagOptions = tags.map((tag) => `<button class="tag ask-tag-button" type="button" data-library-tag="${escapeHtml(tag)}" aria-pressed="false">${escapeHtml(tag)}</button>`).join("");
+  const tagOptions = tags.map((tag) => `<button class="tag ask-tag-button" type="button" data-library-tag="${escapeHtml(tag)}" aria-pressed="false">${escapeHtml(displayTagName(tag))}</button>`).join("");
   const body = `<section class="page-heading ask-heading"><h1>Ask the library</h1></section>
   <section class="panel ask-library-page" data-library-ask>
     <form id="library-query-form" data-library-query class="ask-query-form"><div class="ask-query-input-row"><textarea id="library-query-input" name="query" rows="3" maxlength="1000" required placeholder="Which papers study uncertainty calibration without using ensembles?"></textarea></div><div class="ask-query-controls-row"><div class="ask-query-toolbar"><div class="ask-tag-filter"><span class="ask-control-label">Search within</span><div class="ask-tag-selection"><div class="tag-mode-switch" role="group" aria-label="Tag matching mode"><span class="tag-mode-label">Match:</span><button class="tag tag-mode-button" type="button" data-library-tag-mode="and" aria-pressed="false">AND</button><button class="tag tag-mode-button tag-selected" type="button" data-library-tag-mode="or" aria-pressed="true">OR</button></div><div class="ask-tag-row"><span class="tag-mode-label">Tags:</span><div class="ask-tag-options"><button class="tag tag-selected ask-tag-button" type="button" data-library-tag-all aria-pressed="true">ALL</button>${tagOptions || `<span class="muted">No tags yet</span>`}</div></div></div></div></div><div class="ask-submit-row"><button class="button button-secondary button-small ask-rephrase" type="button" data-library-query-rephrase>${analysisIcon()}<span>Rephrase</span></button><button class="button button-secondary button-small ask-submit" type="submit" form="library-query-form" data-library-query-submit>${analysisIcon()}<span>Ask</span></button></div></div><p class="form-status" data-library-query-status role="status"></p></form>
@@ -402,12 +407,16 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
   const allSelected = Boolean(query.all);
   const untaggedSelected = Boolean(query.untagged);
   const allTagsSelected = allSelected;
+  const noPdfSelected = selectedFilters.some((tag) => tag.toLowerCase() === NO_PDF_TAG);
+  const customTags = tags.filter((tag) => tag.toLowerCase() !== NO_PDF_TAG);
+  const noPdfFilters = noPdfSelected ? selectedFilters.filter((tag) => tag.toLowerCase() !== NO_PDF_TAG) : [...selectedFilters, NO_PDF_TAG];
+  const noPdfLink = `<a class="tag ${noPdfSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, noPdfFilters, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${noPdfSelected}">NO PDF</a>`;
   const downloadQuery = selectedIds.length ? librarySelectionQuery(selectedIds) : libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
   const storedPdfCount = query.storedPdfCount ?? papers.filter((paper) => paper.r2Key).length;
   const selectionCount = selectedIds.length || total;
   const hasSelection = Boolean(total && (selectedIds.length || query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
-  const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
+  const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(displayTagName(tag))}</option>`).join("");
   const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
   const selectionIds = escapeHtml(JSON.stringify(selectedIds));
@@ -430,7 +439,7 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allSelected ? "none" : true, false, 1, pageSize, tagMode)}" aria-pressed="${allTagsSelected}">ALL</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode)}" aria-pressed="${untaggedSelected}">NONE</a> ${groupTagLinks(tags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize)}</section>
+  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allSelected ? "none" : true, false, 1, pageSize, tagMode)}" aria-pressed="${allTagsSelected}">ALL</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode)}" aria-pressed="${untaggedSelected}">NONE</a> ${noPdfLink} ${groupTagLinks(customTags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize)}</section>
   <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions" data-local-bulk-actions>${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}${papers.length ? "" : " empty-paper-list"}">${papers.length ? papers.map((paper) => paperCard(paper, selectedIds)).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
   return layout("Library", body);
@@ -469,7 +478,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
   const openPdfUrl = isEdit && data.r2Key ? `/api/papers/${escapeHtml(data.id)}/pdf` : "";
   const openPdfButton = `<a class="button button-secondary button-small form-utility-button edit-action-button" data-paper-pdf-link${openPdfUrl ? ` href="${openPdfUrl}"` : ""} target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF"${openPdfUrl ? "" : " hidden"}>${openIcon()}<span>Open</span></a>`;
   const titleField = `<label>Title<div class="field-with-action title-field"><input name="title" type="text" value="${escapeHtml(data.title)}" placeholder="Paper title">${openPdfButton}</div></label>`;
-  const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button edit-action-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
+  const tagsField = `<div class="tag-field"><label>Tags<input name="tags" type="text" value="${escapeHtml((data.tags || []).map(displayTagName).join(", "))}" placeholder="topic, project, method"></label><button class="button button-secondary button-small form-utility-button edit-action-button" type="button" data-suggest-tags>${analysisIcon()}<span>Suggest</span></button><div class="tag-suggestions" data-tag-suggestions hidden><div class="tag-suggestions-heading"><strong>Suggested tags</strong><span class="muted" data-tag-suggestions-status></span></div><div class="tag-suggestion-list" data-tag-suggestion-list></div><button class="button button-secondary button-small" type="button" data-apply-tag-suggestions>Add selected tags</button></div></div>`;
   const fields = `${titleField}
     ${field("Authors", "authors", (data.authors || []).join("\n"), { rows: authorRows, placeholder: "One author per line" })}
     <div class="form-row">${field("Year", "year", data.year, { type: "number", placeholder: "2025" })}${field("Published date", "publishedDate", data.publishedDate, { placeholder: "2025-01-01" })}</div>
@@ -489,7 +498,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
 
 export function renderAddPage(): string {
   const body = `<section class="add-grid add-options">
-    <div class="panel"><h2>Find a paper</h2><p class="muted">Accepted inputs include a paper title or pasted citation, a DOI (for example, 10.1234/abc or a doi.org link), ISBN-10 or ISBN-13, an arXiv ID or link (for example, 2401.12345), or a URL to the paper.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Title, citation, DOI, ISBN, arXiv ID, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form><form class="find-pdf-upload" data-upload-form><p class="muted upload-help">Already have the file? Upload one PDF directly to create an editable paper record. You can review and complete its metadata before saving.</p><div class="inline-form"><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required data-single-pdf-input><button class="button button-secondary" type="submit">${uploadIcon()}<span>Upload PDF</span></button></div><p class="form-status" role="status"></p></form></div>
+    <div class="panel"><h2>Find a paper</h2><p class="muted">Accepted inputs include a paper title or pasted citation, a DOI (for example, 10.1234/abc or a doi.org link), ISBN-10 or ISBN-13, an arXiv ID or link (for example, 2401.12345), or a URL to the paper.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Title, citation, DOI, ISBN, arXiv ID, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form><form class="find-pdf-upload" data-upload-form><p class="muted upload-help">Already have the file? Upload one PDF directly to create an editable paper record.</p><div class="inline-form"><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required data-single-pdf-input><button class="button button-secondary" type="submit">${uploadIcon()}<span>Upload PDF</span></button></div><p class="form-status" role="status"></p></form></div>
     <div class="add-file-options"><div class="panel"><h2>Import</h2><p class="muted">Import PDFs in bulk from a folder or ZIP archive. Each PDF becomes an editable paper record with its filename as the initial title; metadata is enriched when possible. ZIPs may include subfolders, and only PDF files are imported. You can optionally add the containing folder name as a tag, with up to 200 PDFs per batch.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="folder-import-pickers"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>From Folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple class="sr-only" data-folder-pdf-input></div><div class="file-picker"><label class="button button-secondary" for="folder-zip-input"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span><span>From ZIP</span></label><input id="folder-zip-input" name="files" type="file" accept="application/zip,.zip" class="sr-only" data-folder-zip-input></div></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-progress" data-bulk-progress hidden role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-bulk-progress-fill></span></div><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
   <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Paper details</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" data-pdf-status></span>${formActions("paper-form-new")}</div></div><div data-preview-form>${renderPaperForm(undefined, "add", true)}${bibtexImportField("paper-form-new")}</div><div class="warnings" data-warnings></div></section>`;
