@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AnalysisRepository } from "../src/repositories/analysis.js";
 import { LibrarySearchRepository } from "../src/repositories/library-search.js";
 import { PaperRepository } from "../src/repositories/papers.js";
-import { groupLibraryResults } from "../src/services/library-query.js";
+import { groupLibraryResults, rephraseLibraryQuery } from "../src/services/library-query.js";
 
 function database() {
   const db = new Database(":memory:");
@@ -64,5 +64,28 @@ describe("library result grouping", () => {
     const client = { complete: async () => JSON.stringify({ groups: [{ name: "Theme", description: "A theme", paperIds: ["paper-1", "not-a-paper"], evidence: "Supported" }] }) };
     const groups = await groupLibraryResults(hits, "find papers about this theme", client, "test", () => null);
     expect(groups).toEqual([{ name: "Theme", description: "A theme", paperIds: ["paper-1"], evidence: "Supported" }]);
+  });
+});
+
+describe("library query rephrasing", () => {
+  it("asks the model to translate Boolean syntax into natural language", async () => {
+    let systemPrompt = "";
+    const client = {
+      complete: async ({ messages }: { model: string; messages: Array<{ role: string; content: string }>; temperature: number }) => {
+        systemPrompt = messages[0]?.content || "";
+        return '(graph neural networks OR graph convolutional networks OR graph attention networks OR GNN OR GCN OR GAT) AND (survey OR review OR overview OR taxonomy OR tutorial) AND (applications OR domains OR datasets OR benchmarks OR theory OR optimization OR training) AND (social networks OR citation networks OR molecular graphs OR chemical graphs OR knowledge graphs OR recommender systems OR program analysis OR traffic networks)';
+      },
+    };
+
+    const query = await rephraseLibraryQuery('(GNN OR "graph neural networks") AND (node classification OR link prediction)', client, "test");
+
+    expect(query).toContain("Find papers relating to all of these topic groups:");
+    expect(query).toContain("graph neural networks, graph convolutional networks");
+    expect(query).toContain("survey, review, overview, taxonomy, or tutorial");
+    expect(query).not.toMatch(/\b(?:AND|OR)\b/);
+    expect(query).not.toMatch(/[()]/);
+    expect(systemPrompt).toContain("natural-language query");
+    expect(systemPrompt).toContain("translate it into ordinary language");
+    expect(systemPrompt).toContain("Do not use Boolean operators as syntax");
   });
 });
