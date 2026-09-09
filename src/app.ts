@@ -38,7 +38,7 @@ import { parseBibtex } from "./services/bibtex.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { NO_PDF_TAG, tagsForPdfStatus } from "./services/system-tags.js";
 import { isbnFromInput, normalizeIsbn, parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
-import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
+import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage, renderBibtexExport } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 import { APP_VERSION } from "./version.js";
@@ -1447,6 +1447,15 @@ export function createApp(dependencies: AppDependencies = {}) {
     const files = papers.flatMap((paper) => existsSync(storage.getPath(paper.id)) ? [{ name: pdfFilename(paper.title, usedNames), path: storage.getPath(paper.id) }] : []);
     if (!files.length) return jsonError(c, 404, "PDF_NOT_FOUND", "No stored PDFs were found in the current results.");
     return c.body(createZipStream(files), 200, { "Content-Type": "application/zip", "Content-Disposition": "attachment; filename=paper-library-pdfs.zip" });
+  });
+
+  app.get("/api/export/bibtex", (c) => {
+    const { q, tag, tagMode, untagged, selected } = requestFilters(c);
+    const papers = repo.list(selected?.length ? { ids: selected, sort: parseSortOrder(c.req.query("sort")) } : { q, tag, tagMode, untagged, sort: parseSortOrder(c.req.query("sort")) });
+    c.header("Content-Disposition", "attachment; filename=paper-library.bib");
+    c.header("Content-Type", "application/x-bibtex; charset=utf-8");
+    c.header("Cache-Control", "no-store");
+    return c.body(renderBibtexExport(papers));
   });
 
   app.get("/api/tags", (c) => c.json({ tags: repo.tags.list() }));

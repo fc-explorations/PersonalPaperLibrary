@@ -251,6 +251,26 @@ function bibtexEntry(paper: PaperRecord): string {
   return [`@${type}{${bibtexKey(paper)},`, ...fields.map(([name, value], index) => `  ${name} = {${bibtexEscape(value)}}${index === fields.length - 1 ? "" : ","}`), "}"].join("\n");
 }
 
+/** Render one exportable BibTeX entry, rejecting records without the required title. */
+export function renderBibtexEntry(paper: PaperRecord): string {
+  if (!paper || typeof paper.title !== "string" || !paper.title.trim()) throw new Error("BIBTEX_TITLE_MISSING");
+  return bibtexEntry(paper);
+}
+
+/** Render all valid entries while isolating malformed records from the rest of an export. */
+export function renderBibtexExport(papers: PaperRecord[]): string {
+  const entries: string[] = [];
+  for (const paper of papers) {
+    try {
+      const entry = renderBibtexEntry(paper);
+      if (entry.trim()) entries.push(entry);
+    } catch {
+      // A single malformed record should not prevent the remaining papers from exporting.
+    }
+  }
+  return entries.length ? `${entries.join("\n\n")}\n` : "";
+}
+
 function citationAuthorParts(author: string): { family: string; given: string } {
   const parts = author.split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length > 1) return { family: parts[0], given: parts.slice(1).join(" ") };
@@ -303,7 +323,7 @@ function citationStyles(paper: PaperRecord): Array<{ label: string; text: string
 }
 
 export function renderCitationSection(paper: PaperRecord): string {
-  const bibtex = bibtexEntry(paper);
+  const bibtex = renderBibtexEntry(paper);
   const bibtexRows = Math.max(3, bibtex.split(/\r?\n/).length);
   const compactCitations = citationStyles(paper).map(({ label, text, html }) => `<article class="citation-style"><div class="citation-style-heading"><strong>${escapeHtml(label)}</strong><button class="button button-secondary button-small" type="button" data-copy-citation="${escapeHtml(text)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span><span>Copy</span></button></div><p class="citation-text">${html}</p></article>`).join("");
   return `<details class="detail-section bibtex-section"><summary>Cite</summary><div class="bibtex-body"><div class="bibtex-heading"><p class="eyebrow">BibTeX</p><button class="button button-secondary" type="button" data-copy-bibtex><span class="material-symbols-outlined" aria-hidden="true">content_copy</span><span>Copy</span></button></div><textarea class="bibtex-text" data-bibtex readonly rows="${bibtexRows}" aria-label="BibTeX entry">${escapeHtml(bibtex)}</textarea><div class="citation-styles"><p class="eyebrow">Compact styles</p>${compactCitations}</div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse Cite" title="Collapse Cite"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button></div></div></details>`;
@@ -424,7 +444,7 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
   const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
   const selectionIds = escapeHtml(JSON.stringify(selectedIds));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${selectionIds}">${searchIcon()}<span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${selectionCount}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${selectionIds}">${searchIcon()}<span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button><a class="button button-secondary" href="/api/export/bibtex?${downloadQuery}">${downloadIcon()}<span>Export BibTeX</span></a>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${selectionCount}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
   const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}" data-selection-tag-mode="${tagMode}" data-selection-ids="${selectionIds}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const pageCount = Math.ceil(total / pageSize);
   const pageLinks = paginationPages(page, pageCount).map((pageNumber) => pageNumber === "ellipsis"

@@ -27,7 +27,7 @@ import { OpenAiLlmClient } from "./services/llm.js";
 import { suggestTags } from "./services/tag-suggestions.js";
 import { NO_PDF_TAG, tagsForPdfStatus } from "./services/system-tags.js";
 import { groupLibraryResults, rephraseLibraryQuery } from "./services/library-query.js";
-import { analysisMeta, bibtexImportField, renderCitationSection, renderHowToSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
+import { analysisMeta, bibtexImportField, renderBibtexExport, renderCitationSection, renderHowToSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 import { APP_VERSION_LABEL } from "./version.js";
 
@@ -1318,6 +1318,21 @@ app.get("/api/export/pdfs", async (c) => {
     return new Response(archive.buffer as ArrayBuffer, { headers: { "content-type": "application/zip", "content-disposition": "attachment; filename=paper-library-pdfs.zip", "cache-control": "no-store" } });
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The PDFs could not be exported.");
+  }
+});
+
+app.get("/api/export/bibtex", async (c) => {
+  try {
+    const repo = new D1PaperRepository(c.env.DB);
+    const url = new URL(c.req.url);
+    const selected = [...new Set(url.searchParams.getAll("selected").filter((id) => /^[a-z0-9_-]+$/i.test(id)))];
+    const filters = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
+    const papers = selected.length
+      ? await repo.list({ ids: selected, sort: parseSortOrder(url.searchParams.get("sort")) })
+      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", sort: parseSortOrder(url.searchParams.get("sort")) });
+    return new Response(renderBibtexExport(papers), { headers: { "content-type": "application/x-bibtex; charset=utf-8", "content-disposition": "attachment; filename=paper-library.bib", "cache-control": "no-store" } });
+  } catch (error) {
+    return jsonError(c, 500, errorMessage(error), "The BibTeX could not be exported.");
   }
 });
 

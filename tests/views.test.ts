@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAddPage, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
+import { renderAddPage, renderBibtexExport, renderLibrary, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION_LABEL } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -79,5 +79,43 @@ describe("paper form rendering", () => {
     expect(fieldNames(editForm)).toEqual(fieldNames(addForm));
     expect(editForm).toContain('data-mode="edit"');
     expect(addForm).toContain('data-mode="add"');
+  });
+});
+
+describe("BibTeX export rendering", () => {
+  it("keeps valid entries when an individual record is malformed", () => {
+    const valid = {
+      id: "valid",
+      title: "A Valid Paper",
+      authors: ["Ada Lovelace"],
+      categories: [],
+      metadataSource: "manual" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      tags: [],
+    };
+    const malformed = { ...valid, id: "malformed", title: "" };
+
+    const bibtex = renderBibtexExport([malformed, valid]);
+
+    expect(bibtex).toContain("A Valid Paper");
+    expect(bibtex).not.toContain("@misc{papernd");
+    expect(bibtex).toContain("@misc{lovelace");
+  });
+
+  it("shows BibTeX export only for filtered or selected results", () => {
+    const paper = {
+      id: "paper-1",
+      title: "A Paper",
+      authors: [],
+      categories: [],
+      metadataSource: "manual" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      tags: [],
+    };
+
+    expect(renderLibrary([paper], [], { total: 1 })).not.toContain("Export BibTeX");
+    expect(renderLibrary([paper], [], { q: "paper", total: 1 })).toContain("/api/export/bibtex?");
   });
 });

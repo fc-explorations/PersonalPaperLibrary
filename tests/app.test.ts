@@ -302,6 +302,25 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("exports BibTeX for the filtered paper set", async () => {
+    const context = testApp();
+    const first = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "First export paper", authors: ["Ada Lovelace"], year: 2024, metadataSource: "manual" }) });
+    expect(first.status).toBe(201);
+    const second = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Second paper", authors: ["Alan Turing"], metadataSource: "manual" }) });
+    expect(second.status).toBe(201);
+
+    const response = await context.app.request("/api/export/bibtex?q=First%20export");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/x-bibtex");
+    expect(response.headers.get("content-disposition")).toContain("paper-library.bib");
+    const bibtex = await response.text();
+    expect(bibtex).toContain("First export paper");
+    expect(bibtex).not.toContain("Second paper");
+
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("can import a folder without applying its name as a tag", async () => {
     const context = testApp();
     const form = new FormData();
