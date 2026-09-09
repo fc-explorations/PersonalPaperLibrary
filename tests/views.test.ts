@@ -18,6 +18,7 @@ describe("theme settings rendering", () => {
     expect(html).toContain("Credits");
     expect(html).toContain("Ideation:");
     expect(html).toContain("Fabrizio Costa");
+    expect(html).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
     expect(html).toContain(`Version:</strong> ${APP_VERSION_LABEL}`);
   });
 });
