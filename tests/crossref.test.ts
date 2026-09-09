@@ -45,6 +45,17 @@ describe("Crossref lookup", () => {
     expect(result).toMatchObject({ doi: "10.1000/article", authors: ["Sepp Hochreiter"], year: 1997 });
   });
 
+  it("ignores missing date parts instead of returning a literal null date", async () => {
+    const fetcher = async () => new Response(JSON.stringify({ message: {
+      ...work,
+      published: { "date-parts": [[null]] },
+      issued: { "date-parts": [[2020, 4, 3]] },
+    } }), { status: 200 });
+    const result = await lookupCrossref({ doi: "10.1007/example" }, fetcher);
+    expect(result.publishedDate).toBe("2020-4-3");
+    expect(result.publishedDate).not.toContain("null");
+  });
+
   it("rejects a near-match that shares generic title words", async () => {
     const fetcher = async () => new Response(JSON.stringify({ message: { items: [{ title: ["Generating 3D Facial Expressions with Recurrent Neural Networks"] }] } }), { status: 200 });
     await expect(lookupCrossref({ title: "Generating Sequences With Recurrent Neural Networks" }, fetcher)).rejects.toThrow("CROSSREF_NO_MATCH");

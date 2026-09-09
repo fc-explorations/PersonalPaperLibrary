@@ -1,6 +1,7 @@
 export const DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024;
 const DOI_PATTERN = /^10\.\d{4,9}\/[\-._;()/:A-Z0-9]+$/i;
 const DATE_PATTERN = /^\d{4}(?:-\d{1,2}(?:-\d{1,2})?)?(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+const MISSING_DATE_TEXT = /^(?:n\/?a|not available|null|undefined|unknown)$/i;
 const SORT_ORDERS = ["newest", "oldest", "year-desc", "year-asc", "title"] as const;
 
 export type ValidSortOrder = typeof SORT_ORDERS[number];
@@ -10,7 +11,7 @@ export function parseSortOrder(value: unknown): ValidSortOrder {
 }
 
 export function parseOptionalDate(value: unknown): string | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
+  if (value === undefined || value === null || (typeof value === "string" && (!value.trim() || MISSING_DATE_TEXT.test(value.trim())))) return undefined;
   if (typeof value !== "string" || !DATE_PATTERN.test(value.trim())) throw new Error("INVALID_DATE");
   return value.trim();
 }

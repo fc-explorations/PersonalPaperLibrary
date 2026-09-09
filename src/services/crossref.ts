@@ -14,10 +14,10 @@ interface CrossrefWork {
   volume?: string;
   issue?: string;
   page?: string;
-  published?: { "date-parts"?: number[][] };
-  "published-print"?: { "date-parts"?: number[][] };
-  "published-online"?: { "date-parts"?: number[][] };
-  issued?: { "date-parts"?: number[][] };
+  published?: { "date-parts"?: Array<Array<number | null>> };
+  "published-print"?: { "date-parts"?: Array<Array<number | null>> };
+  "published-online"?: { "date-parts"?: Array<Array<number | null>> };
+  issued?: { "date-parts"?: Array<Array<number | null>> };
   "is-referenced-by-count"?: number;
 }
 
@@ -46,8 +46,24 @@ function normalizeDoi(input: string): string {
 }
 
 function dateFromWork(work: CrossrefWork): string | undefined {
-  const parts = work["published-print"]?.["date-parts"]?.[0] || work["published-online"]?.["date-parts"]?.[0] || work.published?.["date-parts"]?.[0] || work.issued?.["date-parts"]?.[0];
-  return parts?.length ? parts.map(String).join("-") : undefined;
+  const isInteger = (value: number | null | undefined): value is number => Number.isInteger(value);
+  const candidates = [
+    work["published-print"]?.["date-parts"]?.[0],
+    work["published-online"]?.["date-parts"]?.[0],
+    work.published?.["date-parts"]?.[0],
+    work.issued?.["date-parts"]?.[0],
+  ];
+  for (const parts of candidates) {
+    const year = parts?.[0];
+    if (!isInteger(year) || year < 1) continue;
+    const normalized = [year];
+    const month = parts?.[1];
+    if (isInteger(month) && month >= 1 && month <= 12) normalized.push(month);
+    const day = parts?.[2];
+    if (normalized.length === 2 && isInteger(day) && day >= 1 && day <= 31) normalized.push(day);
+    return normalized.join("-");
+  }
+  return undefined;
 }
 
 function mapWork(work: CrossrefWork): PaperMetadata {
