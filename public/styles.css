@@ -450,7 +450,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .analysis-progress-dot.is-complete { border-color: var(--accent); background: var(--accent); }
 .question-group-body { margin-top: 14px; padding: 0; }
 .question-group-body > p { max-width: 78ch; margin: 0 0 2px; font-size: .95rem; line-height: 1.5; }
-.question-item { display: grid; grid-template-columns: minmax(0, 1fr) var(--analysis-action-width); column-gap: 32px; align-items: start; margin-top: 0; border-bottom: 1px solid var(--section-border); padding: 22px 0; }
+.question-item { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); column-gap: 32px; align-items: start; margin-top: 0; border-bottom: 1px solid var(--section-border); padding: 22px 0; }
 .question-item h3 { grid-column: 1; max-width: 78ch; margin: 0 0 6px; font-size: 1rem; font-weight: 650; line-height: 1.45; }
 .question-item .question-answer, .question-item .question-answer-meta, .question-item .question-empty, .question-item > .status-error, .question-item > .status-warning { grid-column: 1; }
 .question-item .question-answer { margin-top: 4px; }
