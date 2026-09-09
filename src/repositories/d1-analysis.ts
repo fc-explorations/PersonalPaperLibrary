@@ -50,6 +50,7 @@ export class D1AnalysisRepository {
     return row ? {
       paperId,
       content: String(row.content),
+      quickSummary: optional(row.quick_summary),
       provider: String(row.provider),
       model: String(row.model),
       generatedAt: String(row.generated_at),
@@ -69,6 +70,7 @@ export class D1AnalysisRepository {
       summaries.set(paperId, {
         paperId,
         content: String(row.content),
+        quickSummary: optional(row.quick_summary),
         provider: String(row.provider),
         model: String(row.model),
         generatedAt: String(row.generated_at),
@@ -84,7 +86,7 @@ export class D1AnalysisRepository {
 
   async saveSummary(summary: SummaryRecord): Promise<void> {
     const now = new Date().toISOString();
-    await this.db.prepare("INSERT INTO paper_summaries (paper_id, content, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id) DO UPDATE SET content=excluded.content, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at").bind(summary.paperId, summary.content, summary.provider, summary.model, summary.generatedAt, summary.durationMs ?? null, summary.sourcePdfSha256 || null, summary.promptVersion, summary.status, summary.errorMessage || null, now).run();
+    await this.db.prepare("INSERT INTO paper_summaries (paper_id, content, quick_summary, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id) DO UPDATE SET content=excluded.content, quick_summary=excluded.quick_summary, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at").bind(summary.paperId, summary.content, summary.quickSummary || null, summary.provider, summary.model, summary.generatedAt, summary.durationMs ?? null, summary.sourcePdfSha256 || null, summary.promptVersion, summary.status, summary.errorMessage || null, now).run();
   }
 
   async markFileChanged(paperId: string, sha256?: string): Promise<void> {
@@ -112,7 +114,7 @@ export class D1AnalysisRepository {
 
   async listQuestions(paperId: string, includeInactive = false, syncCatalog = true): Promise<StoredQuestion[]> {
     if (syncCatalog) await this.ensureQuestions(paperId);
-    const rows = await all<D1Row>(this.db, "SELECT q.*, a.content AS answer_content, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id WHERE q.paper_id = ? AND (? = 1 OR q.is_active = 1) ORDER BY q.question_order, q.created_at", paperId, includeInactive ? 1 : 0);
+    const rows = await all<D1Row>(this.db, "SELECT q.*, a.content AS answer_content, a.quick_summary AS answer_quick_summary, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id WHERE q.paper_id = ? AND (? = 1 OR q.is_active = 1) ORDER BY q.question_order, q.created_at", paperId, includeInactive ? 1 : 0);
     return rows.map((row) => {
       const questionDefinitionHash = optional(row.answer_question_definition_hash);
       const answerStatus = row.answer_status === null || row.answer_status === undefined ? undefined : String(row.answer_status) as QuestionAnswer["status"];
@@ -131,6 +133,7 @@ export class D1AnalysisRepository {
         isActive: Boolean(row.is_active),
         answer: row.answer_content === null || row.answer_content === undefined ? undefined : {
           content: String(row.answer_content),
+          quickSummary: optional(row.answer_quick_summary),
           provider: String(row.answer_provider),
           model: String(row.answer_model),
           generatedAt: String(row.answer_generated_at),
@@ -146,7 +149,7 @@ export class D1AnalysisRepository {
   }
 
   async listQuestionsByPaper(includeInactive = false): Promise<Map<string, StoredQuestion[]>> {
-    const rows = await all<D1Row>(this.db, `SELECT q.*, a.content AS answer_content, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id ${includeInactive ? "" : "WHERE q.is_active = 1"} ORDER BY q.paper_id, q.question_order, q.created_at`);
+    const rows = await all<D1Row>(this.db, `SELECT q.*, a.content AS answer_content, a.quick_summary AS answer_quick_summary, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id ${includeInactive ? "" : "WHERE q.is_active = 1"} ORDER BY q.paper_id, q.question_order, q.created_at`);
     const questions = new Map<string, StoredQuestion[]>();
     for (const row of rows) {
       const questionDefinitionHash = optional(row.answer_question_definition_hash);
@@ -167,6 +170,7 @@ export class D1AnalysisRepository {
         isActive: Boolean(row.is_active),
         answer: row.answer_content === null || row.answer_content === undefined ? undefined : {
           content: String(row.answer_content),
+          quickSummary: optional(row.answer_quick_summary),
           provider: String(row.answer_provider),
           model: String(row.answer_model),
           generatedAt: String(row.answer_generated_at),
@@ -207,6 +211,6 @@ export class D1AnalysisRepository {
 
   async saveAnswer(paperId: string, questionId: string, answer: QuestionAnswer): Promise<void> {
     const now = new Date().toISOString();
-    await this.db.prepare("INSERT INTO paper_question_answers (paper_id, question_id, content, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, question_definition_hash, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id, question_id) DO UPDATE SET content=excluded.content, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, question_definition_hash=excluded.question_definition_hash, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at").bind(paperId, questionId, answer.content, answer.provider, answer.model, answer.generatedAt, answer.durationMs ?? null, answer.sourcePdfSha256 || null, answer.promptVersion, answer.questionDefinitionHash || null, answer.status, answer.errorMessage || null, now).run();
+    await this.db.prepare("INSERT INTO paper_question_answers (paper_id, question_id, content, quick_summary, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, question_definition_hash, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id, question_id) DO UPDATE SET content=excluded.content, quick_summary=excluded.quick_summary, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, question_definition_hash=excluded.question_definition_hash, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at").bind(paperId, questionId, answer.content, answer.quickSummary || null, answer.provider, answer.model, answer.generatedAt, answer.durationMs ?? null, answer.sourcePdfSha256 || null, answer.promptVersion, answer.questionDefinitionHash || null, answer.status, answer.errorMessage || null, now).run();
   }
 }

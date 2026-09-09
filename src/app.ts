@@ -30,6 +30,7 @@ import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } fr
 import { MATH_FORMATTING_INSTRUCTION, OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
 import { groupLibraryResults, rephraseLibraryQuery } from "./services/library-query.js";
 import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
+import { compactQuickSummary, generateQuickSummary } from "./services/quick-summary.js";
 import { createZipStream, extractPdfFiles, type ExtractedZipFile } from "./services/zip.js";
 import { createSnapshotArchive, receiveSnapshotUpload, stageSnapshotRestore } from "./services/snapshot.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
@@ -557,7 +558,10 @@ export function createApp(dependencies: AppDependencies = {}) {
         });
       }
       if (!hasRequiredSummaryHeadings(finalContent)) throw new Error("SUMMARY_FORMAT_INVALID");
-      const summary = { paperId, content: finalContent, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" as const };
+      let quickSummary: string;
+      try { quickSummary = await generateQuickSummary(selected.client, selected.model, finalContent, 2); }
+      catch { quickSummary = compactQuickSummary(finalContent, 2); }
+      const summary = { paperId, content: finalContent, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" as const };
       analysis.saveSummary(summary);
       return summary;
     } catch (error) {
@@ -578,7 +582,10 @@ export function createApp(dependencies: AppDependencies = {}) {
     try {
       const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
       const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: `Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence. ${MATH_FORMATTING_INSTRUCTION}` }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
-      const record = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" as const };
+      let quickSummary: string;
+      try { quickSummary = await generateQuickSummary(selected.client, selected.model, answer, 1); }
+      catch { quickSummary = compactQuickSummary(answer, 1); }
+      const record = { content: answer, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" as const };
       analysis.saveAnswer(paperId, questionId, record);
       return record;
     } catch (error) {

@@ -17,6 +17,7 @@ class MemoryD1 implements D1Database {
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0002_analysis_jobs.sql", import.meta.url), "utf8"));
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0004_isbn.sql", import.meta.url), "utf8"));
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0006_bibtex.sql", import.meta.url), "utf8"));
+    this.db.exec(readFileSync(new URL("../migrations/cloudflare/0007_quick_analysis_summaries.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -89,7 +90,7 @@ function bindings(): CloudflareBindings & { d1: MemoryD1; r2: MemoryR2 } {
 }
 
 const testPdf = await PDFDocument.create();
-for (let index = 0; index < 6; index += 1) testPdf.addPage();
+for (let index = 0; index < 24; index += 1) testPdf.addPage();
 const pdf = new Uint8Array(await testPdf.save());
 
 describe("Cloudflare Worker API", () => {
@@ -556,15 +557,15 @@ describe("Cloudflare Worker API", () => {
     const paperId = (await create.json() as { paper: { id: string } }).paper.id;
     const messages: Array<{ jobId: string }> = [];
     env.ANALYSIS_QUEUE = { send: async (message) => { messages.push(message); } };
-    let convertedPageCount = 0;
+    const convertedPageCounts: number[] = [];
     env.AI = { toMarkdown: async ({ blob }) => {
-      convertedPageCount = (await PDFDocument.load(await blob.arrayBuffer())).getPageCount();
-      return { format: "text", data: `Opening page text. ${"The hosted extractor returned representative paper text. ".repeat(5)}` };
+      convertedPageCounts.push((await PDFDocument.load(await blob.arrayBuffer())).getPageCount());
+      return { format: "text", data: `Opening page text. Batch ${convertedPageCounts.length}. ${"The hosted extractor returned representative paper text. ".repeat(5)}` };
     } };
     env.OPENAI_API_KEY = "test-key";
-    let prompt = "";
+    const prompts: string[] = [];
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
-      prompt = String((JSON.parse(String(init?.body || "{}")) as { messages?: Array<{ content?: string }> }).messages?.[1]?.content || "");
+      prompts.push(String((JSON.parse(String(init?.body || "{}")) as { messages?: Array<{ content?: string }> }).messages?.[1]?.content || ""));
       return new Response(JSON.stringify({ choices: [{ message: { content: "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG" } }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     try {
@@ -572,15 +573,22 @@ describe("Cloudflare Worker API", () => {
       expect(queued.status).toBe(202);
       const acknowledged: string[] = [];
       await worker.queue({ messages: [{ body: messages[0], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
-      expect(convertedPageCount).toBe(4);
-      expect(prompt).toContain("Opening page text.");
-      expect(prompt).not.toContain("Later pages contain the decisive result.");
+      expect(convertedPageCounts).toEqual([4]);
+      expect(prompts.some((prompt) => prompt.includes("Opening page text."))).toBe(true);
+      expect(prompts.some((prompt) => prompt.includes("Text to condense"))).toBe(true);
+      expect(prompts.every((prompt) => !prompt.includes("Later pages contain the decisive result."))).toBe(true);
       expect(acknowledged).toEqual(["ack"]);
       const progress = await worker.request(`/api/papers/${paperId}/summary/progress`, {}, env);
       const result = await progress.json() as { job: { status: string }; };
       expect(result.job.status).toBe("complete");
       const summary = await worker.request(`/api/papers/${paperId}/summary`, {}, env);
       expect((await summary.json() as { summary: { status: string } }).summary.status).toBe("complete");
+
+      const fullQueued = await worker.request(`/api/papers/${paperId}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "full" }) }, env);
+      expect(fullQueued.status).toBe(202);
+      await worker.queue({ messages: [{ body: messages[1], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
+      expect(convertedPageCounts).toEqual([4, 10, 10, 4]);
+      expect(prompts.some((prompt) => prompt.includes("Batch 2") && prompt.includes("Batch 3"))).toBe(true);
     } finally {
       vi.unstubAllGlobals();
       env.d1.db.close();

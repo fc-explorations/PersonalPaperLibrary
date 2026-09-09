@@ -29,9 +29,9 @@ const REQUIRED_SCHEMA: Record<string, string[]> = {
   tags: ["id", "name", "created_at"],
   paper_tags: ["paper_id", "tag_id"],
   app_settings: ["name", "value", "updated_at"],
-  paper_summaries: ["paper_id", "content", "provider", "model", "generated_at", "duration_ms", "source_pdf_sha256", "prompt_version", "status", "error_message", "updated_at"],
+  paper_summaries: ["paper_id", "content", "quick_summary", "provider", "model", "generated_at", "duration_ms", "source_pdf_sha256", "prompt_version", "status", "error_message", "updated_at"],
   paper_questions: ["paper_id", "question_id", "group_id", "group_title", "group_description", "question_order", "label", "prompt", "definition_hash", "is_custom", "is_active", "created_at"],
-  paper_question_answers: ["paper_id", "question_id", "content", "provider", "model", "generated_at", "duration_ms", "source_pdf_sha256", "prompt_version", "question_definition_hash", "status", "error_message", "updated_at"],
+  paper_question_answers: ["paper_id", "question_id", "content", "quick_summary", "provider", "model", "generated_at", "duration_ms", "source_pdf_sha256", "prompt_version", "question_definition_hash", "status", "error_message", "updated_at"],
   paper_search_index: ["paper_id", "search_text", "content_hash", "embedding_json", "embedding_provider", "embedding_model", "status", "error_message", "updated_at"],
   paper_search_fts: ["paper_id", "content"],
 };
@@ -47,6 +47,7 @@ const REQUIRED_MIGRATIONS = [
   "0009_isbn.sql",
   "0010_no_pdf_tag.sql",
   "0011_bibtex.sql",
+  "0012_quick_analysis_summaries.sql",
 ];
 
 type SnapshotArchive = {

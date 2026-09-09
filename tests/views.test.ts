@@ -103,6 +103,20 @@ describe("paper PDF link rendering", () => {
   });
 });
 
+describe("analysis quick summaries", () => {
+  it("renders compact summary text beside the detailed analysis", () => {
+    const paper = { id: "paper-1", title: "A Paper", authors: [], categories: [], tags: [] } as any;
+    const summary = { paperId: "paper-1", content: "# Problem\nDetailed analysis.", quickSummary: "Summary overview.", provider: "test", model: "test", generatedAt: "2026-01-01T00:00:00.000Z", promptVersion: "test", status: "complete" } as any;
+    const question = { paperId: "paper-1", id: "question-1", groupId: "group", groupTitle: "Group", groupDescription: "Description", label: "What happened?", prompt: "Explain.", order: 0, definitionHash: "hash", isCustom: false, isActive: true, answer: { content: "Detailed answer.", quickSummary: "Answer overview.", provider: "test", model: "test", generatedAt: "2026-01-01T00:00:00.000Z", promptVersion: "test", status: "complete" } } as any;
+
+    const html = renderPaperPage(paper, summary, [question]);
+
+    expect(html).toContain("Quick summary");
+    expect(html).toContain("Summary overview.");
+    expect(html).toContain("Answer overview.");
+  });
+});
+
 describe("BibTeX export rendering", () => {
   it("keeps valid entries when an individual record is malformed", () => {
     const valid = {

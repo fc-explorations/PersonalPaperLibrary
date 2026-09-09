@@ -8,6 +8,7 @@ import type { R2BucketLike } from "./r2-storage.js";
 import type { AiSettings, QuestionAnswer, SummaryRecord } from "../repositories/analysis.js";
 import { hostedQuestionDefinitions } from "./question-catalog.js";
 import { PDFDocument } from "pdf-lib";
+import { compactQuickSummary, generateQuickSummary } from "./quick-summary.js";
 
 interface MarkdownConversionResult {
   format: "markdown" | "text" | "error";
@@ -34,6 +35,7 @@ type SelectedLlm = { client: LlmClient; provider: "openai"; model: string };
 const SUMMARY_CHUNK_CONCURRENCY = 4;
 const MIN_EXTRACTED_TEXT_CHARACTERS = 200;
 const QUICK_SUMMARY_PAGE_COUNT = 4;
+const PDF_PAGE_BATCH_SIZE = 10;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -65,21 +67,11 @@ async function mapWithConcurrency<Input, Output>(items: Input[], limit: number, 
 
 type PdfExtractionScope = "full" | "opening-pages";
 
-async function openingPagesPdf(bytes: ArrayBuffer, pageCount: number): Promise<Uint8Array> {
-  const source = await PDFDocument.load(bytes);
-  const pageTotal = Math.min(pageCount, source.getPageCount());
-  if (!pageTotal) throw new Error("PDF_TEXT_EMPTY");
-  const excerpt = await PDFDocument.create();
-  const pages = await excerpt.copyPages(source, Array.from({ length: pageTotal }, (_, index) => index));
-  pages.forEach((page) => excerpt.addPage(page));
-  return excerpt.save({ useObjectStreams: true, addDefaultPage: false });
-}
-
 async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }, scope: PdfExtractionScope = "full"): Promise<ExtractedPaper> {
   if (!env.AI) throw new Error("PDF_EXTRACTOR_UNAVAILABLE");
   if (!paper.r2Key) throw new Error("PDF_NOT_FOUND");
   const cacheKey = paper.pdfSha256
-    ? `${scope === "opening-pages" ? "analysis-text-opening-v1" : "analysis-text-v2"}/${paper.id}/${paper.pdfSha256}.txt`
+    ? `${scope === "opening-pages" ? "analysis-text-opening-v1" : "analysis-text-v3"}/${paper.id}/${paper.pdfSha256}.txt`
     : undefined;
   if (cacheKey) {
     const cached = await env.PAPER_PDFS.get(cacheKey);
@@ -88,17 +80,29 @@ async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r
   const object = await env.PAPER_PDFS.get(paper.r2Key);
   if (!object) throw new Error("PDF_NOT_FOUND");
   const pdfBytes = await object.arrayBuffer();
-  // The quick summary must be page-limited before conversion. Converting the full
-  // PDF first can exceed Workers AI's string-size limit before we can truncate it.
-  const inputBytes = scope === "opening-pages" ? await openingPagesPdf(pdfBytes, QUICK_SUMMARY_PAGE_COUNT) : pdfBytes;
-  const inputBuffer = new Uint8Array(inputBytes.byteLength);
-  inputBuffer.set(inputBytes instanceof ArrayBuffer ? new Uint8Array(inputBytes) : inputBytes);
-  const result = await env.AI.toMarkdown(
-    { name: `${paper.id}.pdf`, blob: new Blob([inputBuffer.buffer as ArrayBuffer], { type: "application/pdf" }) },
-    { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
-  );
-  if (result.format === "error" || !result.data?.trim()) throw new Error(result.error || "PDF_TEXT_EMPTY");
-  const text = result.data.trim();
+  const source = await PDFDocument.load(pdfBytes);
+  const pageTotal = Math.min(scope === "opening-pages" ? QUICK_SUMMARY_PAGE_COUNT : source.getPageCount(), source.getPageCount());
+  if (!pageTotal) throw new Error("PDF_TEXT_EMPTY");
+
+  // Convert at most ten pages per request. A single conversion of a long PDF can
+  // exceed Workers AI's 50M-character response limit before analysis can begin.
+  const extracted: string[] = [];
+  for (let startPage = 0; startPage < pageTotal; startPage += PDF_PAGE_BATCH_SIZE) {
+    const endPage = Math.min(startPage + PDF_PAGE_BATCH_SIZE, pageTotal);
+    const batch = await PDFDocument.create();
+    const pages = await batch.copyPages(source, Array.from({ length: endPage - startPage }, (_, index) => startPage + index));
+    pages.forEach((page) => batch.addPage(page));
+    const batchBytes = await batch.save({ useObjectStreams: true, addDefaultPage: false });
+    const inputBuffer = new Uint8Array(batchBytes.byteLength);
+    inputBuffer.set(batchBytes);
+    const result = await env.AI.toMarkdown(
+      { name: `${paper.id}-pages-${startPage + 1}-${endPage}.pdf`, blob: new Blob([inputBuffer.buffer as ArrayBuffer], { type: "application/pdf" }) },
+      { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
+    );
+    if (result.format === "error" || !result.data?.trim()) throw new Error(result.error || "PDF_TEXT_EMPTY");
+    extracted.push(result.data.trim());
+  }
+  const text = extracted.join("\n\n").trim();
   if (text.length < MIN_EXTRACTED_TEXT_CHARACTERS) throw new Error("PDF_TEXT_INSUFFICIENT");
   if (cacheKey) await env.PAPER_PDFS.put(cacheKey, text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
   return { text, sha256: paper.pdfSha256 };
@@ -153,7 +157,10 @@ async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analy
       content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Reformat the draft below into valid Markdown without losing information. Use exactly these headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Each heading must be a Markdown heading. Preserve all factual content and do not add other top-level headings. Draft:\n\n${content}`) });
     }
     if (!hasRequiredSummaryHeadings(content)) throw new Error("SUMMARY_FORMAT_INVALID");
-    const summary: SummaryRecord = { paperId: job.paperId, content, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" };
+    let quickSummary: string;
+    try { quickSummary = await generateQuickSummary(selected.client, selected.model, content, 2); }
+    catch { quickSummary = compactQuickSummary(content, 2); }
+    const summary: SummaryRecord = { paperId: job.paperId, content, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" };
     await analysis.saveSummary(summary);
   } catch (error) {
     await analysis.saveSummary({ paperId: job.paperId, content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "error", errorMessage: errorMessage(error) });
@@ -171,7 +178,10 @@ async function answerQuestion(env: WorkerAnalysisEnvironment, job: AnalysisJob, 
     const summary = await analysis.getSummary(job.paperId);
     const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
     const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: `Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence. ${MATH_FORMATTING_INSTRUCTION}` }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
-    const record: QuestionAnswer = { content: answer, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" };
+    let quickSummary: string;
+    try { quickSummary = await generateQuickSummary(selected.client, selected.model, answer, 1); }
+    catch { quickSummary = compactQuickSummary(answer, 1); }
+    const record: QuestionAnswer = { content: answer, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" };
     await analysis.saveAnswer(job.paperId, question.id, record);
   } catch (error) {
     await analysis.saveAnswer(job.paperId, question.id, { content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "error", errorMessage: errorMessage(error) });

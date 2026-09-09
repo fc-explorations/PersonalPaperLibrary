@@ -1,5 +1,5 @@
-export const SUMMARY_PROMPT_VERSION = "summary-v2";
-export const QUESTION_PROMPT_VERSION = "question-v1";
+export const SUMMARY_PROMPT_VERSION = "summary-v3";
+export const QUESTION_PROMPT_VERSION = "question-v2";
 export const SUMMARY_HEADINGS = ["Problem", "Core Idea", "Method", "Experimental Setup", "Main Findings", "Limitations", "Why It Matters"] as const;
 
 const APPENDIX_HEADING = /^(?:appendix|appendices|supplementary\s+(?:material|appendix)|supplemental\s+(?:material|appendix)|supporting\s+(?:information|material))(?:\s+[A-Z0-9]+)?(?:\s*[:.\-]\s*.*)?$/i;

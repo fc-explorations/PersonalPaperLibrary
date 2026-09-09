@@ -1226,6 +1226,17 @@ function showQuestionAnswer(item, answer, answerHtml) {
   const generatedAt = new Date(answer.generatedAt).toLocaleString("en-GB");
   meta.textContent = `${answer.provider} · ${answer.model} · ${generatedAt}${formatAnalysisDuration(answer.durationMs)}`;
 
+  if (answer.quickSummary) {
+    let quickSummary = item.querySelector(".analysis-quick-summary");
+    if (!quickSummary) {
+      quickSummary = document.createElement("aside");
+      quickSummary.className = "analysis-quick-summary";
+      quickSummary.innerHTML = `<p class="analysis-quick-summary-label">Quick summary</p><div class="analysis-quick-summary-content"></div>`;
+      item.querySelector(".question-actions")?.append(quickSummary);
+    }
+    quickSummary.querySelector(".analysis-quick-summary-content").textContent = answer.quickSummary;
+  }
+
   const label = item.querySelector("[data-generate-question] span:last-child");
   if (label) label.textContent = "Regenerate answer";
 

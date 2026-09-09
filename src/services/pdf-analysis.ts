@@ -5,8 +5,8 @@ import { promisify } from "node:util";
 import type { LlmClient } from "./llm.js";
 
 const execFileAsync = promisify(execFile);
-export const SUMMARY_PROMPT_VERSION = "summary-v2";
-export const QUESTION_PROMPT_VERSION = "question-v1";
+export const SUMMARY_PROMPT_VERSION = "summary-v3";
+export const QUESTION_PROMPT_VERSION = "question-v2";
 export const ABSTRACT_PROMPT_VERSION = "abstract-v1";
 export const SUMMARY_HEADINGS = ["Problem", "Core Idea", "Method", "Experimental Setup", "Main Findings", "Limitations", "Why It Matters"] as const;
 

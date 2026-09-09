@@ -19,7 +19,7 @@ function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: 
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, isbn TEXT, bibtex TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
   const migrationInsert = db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)");
-  ["0001_initial.sql", "0002_ai_analysis.sql", "0003_custom_questions.sql", "0004_analysis_duration.sql", "0005_accepted_venue.sql", "0006_question_definition_hash.sql", "0007_question_activity.sql", "0008_library_search.sql", "0009_isbn.sql", "0010_no_pdf_tag.sql", "0011_bibtex.sql"].forEach((name) => migrationInsert.run(name, new Date().toISOString()));
+  ["0001_initial.sql", "0002_ai_analysis.sql", "0003_custom_questions.sql", "0004_analysis_duration.sql", "0005_accepted_venue.sql", "0006_question_definition_hash.sql", "0007_question_activity.sql", "0008_library_search.sql", "0009_isbn.sql", "0010_no_pdf_tag.sql", "0011_bibtex.sql", "0012_quick_analysis_summaries.sql"].forEach((name) => migrationInsert.run(name, new Date().toISOString()));
   const defaultFetcher = async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("api.crossref.org")) return new Response(JSON.stringify({ message: { items: [{ title: ["Test arXiv Paper"], author: [{ given: "Test", family: "Author" }], DOI: "10.1000/test", "container-title": ["Test Journal"], published: { "date-parts": [[2024]] } }] } }), { status: 200 });
@@ -850,7 +850,8 @@ describe("HTTP application", () => {
     expect(generatedSummary.content).toContain("# Why It Matters");
     expect(generatedSummary.model).toBe("gpt-4.1-mini");
     expect(generatedSummary.durationMs).toBeTypeOf("number");
-    expect(calls).toBe(2);
+    expect(generatedSummary.quickSummary).toBe("Generated answer");
+    expect(calls).toBe(4);
     const questions = await (await context.app.request(`/api/papers/${paperId}/questions`)).json();
     expect(questions.questions).toHaveLength(13);
     expect(questions.questions.map((question: { groupTitle: string }) => question.groupTitle)).toContain("Evaluate");

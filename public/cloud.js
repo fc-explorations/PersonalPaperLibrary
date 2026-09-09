@@ -367,6 +367,20 @@ function markHostedSummaryComplete() {
   dot.setAttribute("title", "Summary available");
 }
 
+function updateHostedSummaryQuickSummary(value) {
+  if (!value) return;
+  const actions = document.querySelector("[data-summary-section] .summary-actions");
+  if (!actions) return;
+  let quickSummary = actions.querySelector(".analysis-quick-summary");
+  if (!quickSummary) {
+    quickSummary = document.createElement("aside");
+    quickSummary.className = "analysis-quick-summary";
+    quickSummary.innerHTML = `<p class="analysis-quick-summary-label">Quick summary</p><div class="analysis-quick-summary-content"></div>`;
+    actions.append(quickSummary);
+  }
+  quickSummary.querySelector(".analysis-quick-summary-content").innerHTML = renderHostedMarkdown(value);
+}
+
 async function runQuestion(paperId, question, onUpdate) {
   onUpdate("Answer", "Queued…");
   const queued = await request(`/api/papers/${encodeURIComponent(paperId)}/questions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: question.trim(), prompt: question.trim() }) });
@@ -1234,6 +1248,18 @@ function updateHostedQuestionOverview(item) {
   }
 }
 
+function updateHostedQuickSummary(item, value) {
+  if (!item || !value) return;
+  let quickSummary = item.querySelector(".analysis-quick-summary");
+  if (!quickSummary) {
+    quickSummary = document.createElement("aside");
+    quickSummary.className = "analysis-quick-summary";
+    quickSummary.innerHTML = `<p class="analysis-quick-summary-label">Quick summary</p><div class="analysis-quick-summary-content"></div>`;
+    item.querySelector(".question-actions")?.append(quickSummary);
+  }
+  quickSummary.querySelector(".analysis-quick-summary-content").innerHTML = renderHostedMarkdown(value);
+}
+
 async function generateHostedQuestion(button) {
   const detail = document.querySelector(".paper-detail-page");
   const paperId = detail?.dataset.paperId;
@@ -1255,6 +1281,7 @@ async function generateHostedQuestion(button) {
     meta.className = "analysis-meta question-answer-meta muted";
     meta.textContent = `${question.answer.provider} · ${question.answer.model} · ${new Date(question.answer.generatedAt).toLocaleString("en-GB")}${typeof question.answer.durationMs === "number" ? ` · ${Math.floor(question.answer.durationMs / 60000)}:${String(Math.floor(question.answer.durationMs / 1000) % 60).padStart(2, "0")}` : ""}`;
     item.querySelector(".question-actions")?.before(meta);
+    updateHostedQuickSummary(item, question.answer.quickSummary);
     typesetHostedMath([answer]);
     setStatus(status, "Saved.");
     updateHostedQuestionOverview(question);
@@ -1378,7 +1405,7 @@ async function initPaper() {
   });
   document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, async (heading, content, record) => { const queued = content === "Queued…"; summary.innerHTML = `<div class="analysis-content${queued ? " analysis-queued" : ""}">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
+    try { await runSummary(id, async (heading, content, record) => { if (content === "Queued…") { setStatus(analysisStatus, content); return; } summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; updateHostedSummaryQuickSummary(record?.quickSummary); markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
     catch (error) { setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
   }));
@@ -1387,7 +1414,7 @@ async function initPaper() {
     const question = input?.value || window.prompt("What would you like to ask about this paper?");
     if (!question?.trim()) return;
     event.currentTarget.disabled = true;
-    try { await runQuestion(id, question, (heading, content) => { showAnalysisResult(answer, heading, content); setStatus(analysisStatus, `${heading} ready.`); }); }
+    try { await runQuestion(id, question, (heading, content) => { if (content !== "Queued…") showAnalysisResult(answer, heading, content); setStatus(analysisStatus, content === "Queued…" ? content : `${heading} ready.`); }); }
     catch (error) { showAnalysisResult(answer, "Answer unavailable", error.message, true); setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
   });
