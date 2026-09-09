@@ -28,7 +28,7 @@ import { suggestTags } from "./services/tag-suggestions.js";
 import { groupLibraryResults } from "./services/library-query.js";
 import { analysisMeta, bibtexImportField, renderCitationSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
-import { APP_VERSION } from "./version.js";
+import { APP_VERSION_LABEL } from "./version.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -143,12 +143,12 @@ function hostedShell(title: string, page: string, body: string): string {
     ? withBackupPanel.replace('<button id="backup-create" class="button" type="button">Create hosted backup</button>', '<button id="backup-create" class="button" type="button">Create hosted backup</button><button id="backup-initialize" class="button button-secondary" type="button">Initialize daily + monthly</button>')
     : withBackupPanel;
   const withCredits = page === "settings"
-    ? withInitialization.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="settings-subsection credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION}</p></div></div></section></main>`)
+    ? withInitialization.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION_LABEL}</p></div></div></section></main>`)
     : withInitialization;
   return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=58")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=59")
     .replace(/cloud\.js\?v=10/g, "cloud.js?v=33")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }

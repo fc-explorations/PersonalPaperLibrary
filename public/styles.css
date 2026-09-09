@@ -39,7 +39,7 @@ a { color: var(--accent); }
 .backup-restore > p { margin: -7px 0 2px; }
 .backup-restore > label { display: grid; gap: 7px; color: #5b574f; font-size: .95rem; font-weight: 700; }
 .backup-restore-actions { grid-column: 2; grid-row: 3 / span 2; align-self: end; width: 100%; display: flex; justify-content: stretch !important; margin-top: 2px; }
-.backup-restore-actions .button { width: 100%; min-width: 240px; min-height: 56px; padding: .85rem 1.35rem; }
+.backup-restore-actions .button { width: 100%; min-width: 240px; }
 .hosted-backup-panel + .panel { margin-top: 48px; }
 .paper-select { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 2px 8px 0 0; }
 .paper-select input { width: auto; }

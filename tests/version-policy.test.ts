@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+// The release script is intentionally plain ESM so it can run without a build step.
+// @ts-expect-error The JavaScript release module is covered by the runtime tests below.
 import { incrementVersion, parseVersion, releaseTypeForCommits, readSynchronizedVersion } from "../scripts/version-policy.mjs";
 
 describe("version policy", () => {
@@ -28,4 +30,3 @@ describe("version policy", () => {
     expect(readSynchronizedVersion()).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
-

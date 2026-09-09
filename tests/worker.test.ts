@@ -251,7 +251,7 @@ describe("Cloudflare Worker API", () => {
     expect(settingsHtml).toContain("Automatic backups run daily at midnight UTC");
     expect(settingsHtml).toContain('id="backup-list"');
     expect(settingsHtml).toContain("<h2>Credits</h2>");
-    expect(settingsHtml).toContain("<strong>Version:</strong> 2.0.1");
+    expect(settingsHtml).toContain("<strong>Version:</strong> v2.0.1");
     const library = await worker.request("/", {}, env);
     expect(await library.text()).toMatch(/id="library-search-form"[\s\S]*id="library-tags"[\s\S]*id="bulk-actions"/);
     const paper = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ui-edit-paper", title: "UI edit paper", metadataSource: "manual" }) }, env);

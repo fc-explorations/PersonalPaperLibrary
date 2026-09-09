@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderAddPage, renderMarkdown, renderSettingsPage } from "../src/views.js";
-import { APP_VERSION } from "../src/version.js";
+import { APP_VERSION_LABEL } from "../src/version.js";
 
 describe("theme settings rendering", () => {
   it("shows the derived background colors preview", () => {
@@ -18,7 +18,7 @@ describe("theme settings rendering", () => {
     expect(html).toContain("Credits");
     expect(html).toContain("Ideation:");
     expect(html).toContain("Fabrizio Costa");
-    expect(html).toContain(`Version:</strong> ${APP_VERSION}`);
+    expect(html).toContain(`Version:</strong> ${APP_VERSION_LABEL}`);
   });
 });
 
