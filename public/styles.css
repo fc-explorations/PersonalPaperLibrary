@@ -63,6 +63,7 @@ a { color: var(--accent); }
 .cloud-nav a { color: var(--muted); text-decoration: none; }
 .cloud-nav a:hover { color: var(--accent); }
 .site-header { --brand-pile-size: clamp(2.55rem, 5vw, 4rem); --brand-gap: clamp(5px, .75vw, 9px); }
+.site-header .brand-lockup { display: inline-flex; align-items: flex-end; min-width: 0; }
 .site-header .brand { display: inline-flex; align-items: center; gap: 0; font-size: clamp(2rem, 5vw, 3.3rem); line-height: 1.15; }
 .site-header .brand::before { content: ""; display: block; width: var(--brand-pile-size); height: var(--brand-pile-size); flex: 0 0 auto; margin-right: var(--brand-gap); background: url("/pile.png") center / contain no-repeat; }
 .site-header .wordmark-paper { -webkit-text-stroke-width: 5px; }
@@ -71,7 +72,7 @@ a { color: var(--accent); }
 .site-header .brand::after { content: ""; position: absolute; z-index: 0; left: calc(var(--brand-pile-size) + var(--brand-gap)); bottom: .08em; width: 0; height: max(2px, .06em); border-radius: 999px; background: var(--text); transition: width .5s ease; }
 .site-header .brand:hover::after, .site-header .brand:focus-visible::after { width: calc(100% - var(--brand-pile-size) - var(--brand-gap) - .5em); }
 .site-header .brand .wordmark { position: relative; z-index: 1; }
-.site-header .brand .brand-version { position: relative; z-index: 1; align-self: baseline; margin: 0 0 0 .35rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
+.site-header .brand-lockup .brand-version { position: relative; z-index: 1; margin: 0 0 .32em .35rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .site-header .brand::after { transition: none; } }
 .header-library-button { border-color: transparent; }
 .header-library-button:hover { background: var(--accent-soft); }
@@ -498,7 +499,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 25px 0; }
 @media (max-width: 720px) { .form-utility-button { width: min(140px, 100%); min-width: 0; } }
 @media (max-width: 720px) { .library-primary-actions { width: 100%; } .library-primary-actions .ask-library-button { flex: 1; } .ask-heading { align-items: stretch; } .ask-library-page, .ask-indexing-panel { padding: 22px 18px 18px; } .ask-query-input-row { align-items: stretch; flex-direction: column; } .ask-query-controls-row { grid-template-columns: 1fr; } .ask-submit, .ask-rephrase { width: 100%; } .ask-query-toolbar { align-items: stretch; flex-direction: column; } .ask-tag-filter { display: flex; align-items: stretch; flex-direction: column; } .ask-tag-selection { width: 100%; } .ask-group-toggle { justify-content: flex-start; } .ask-indexing-row { align-items: flex-start; flex-direction: column; } .ask-indexing-actions { width: 100%; justify-content: flex-end; } .ask-index-button { width: auto; } }
 @media (max-width: 720px) { .site-header .brand { font-size: clamp(2.05rem, 10vw, 4rem); } }
-@media (max-width: 720px) { .site-header .brand .brand-version { margin-left: .225rem; font-size: .6rem; } }
+@media (max-width: 720px) { .site-header .brand-lockup .brand-version { margin-left: .225rem; margin-bottom: .28em; font-size: .6rem; } }
 @media (max-width: 720px) { .hosted-backup-panel { padding: 24px 18px; } .backup-heading, .backup-library-heading { align-items: stretch; flex-direction: column; } .backup-entry { align-items: stretch; flex-direction: column; gap: 12px; } .backup-entry-actions { justify-content: flex-start; } .backup-entry-actions .button { flex: 1 1 auto; } .backup-restore { grid-template-columns: 1fr; } .backup-restore > h3, .backup-restore > p, .backup-restore > label, .backup-restore-actions { grid-column: 1; grid-row: auto; } .backup-restore-actions .button { width: 100%; } }
 .edit-page .edit-action-button { width: 140px; min-width: 140px; min-height: var(--control-height); padding: .68rem 1rem; font-size: inherit; }
 @media (max-width: 720px) { .edit-page > .edit-heading { flex-direction: row; align-items: center; gap: 12px; padding: 24px 0 16px; } .edit-page > .edit-heading h1 { min-width: 0; margin: 0; font-size: clamp(1.55rem, 7vw, 2.2rem); } .edit-page .edit-actions-top { flex: 0 0 auto; } .edit-page .edit-actions-top .form-actions-row { flex-direction: row; align-items: center; } .edit-page .edit-actions-top .edit-action-button { width: min(140px, 100%); min-width: 0; } }

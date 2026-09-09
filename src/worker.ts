@@ -126,10 +126,12 @@ function hostedShell(title: string, page: string, body: string): string {
     <script src="/cloud.js?v=10" defer></script>
   </body>
 </html>`;
-  const withBrandVersion = markup.replace(
-    '<span class="wordmark">Library</span></a>',
-    `<span class="wordmark">Library</span><span class="brand-version" aria-label="Version ${escapeHtml(APP_VERSION_LABEL)}">${escapeHtml(APP_VERSION_LABEL)}</span></a>`,
-  );
+  const withBrandVersion = markup
+    .replace('<a class="brand" href="/" aria-label="PersonalPaperLibrary">', '<div class="brand-lockup"><a class="brand" href="/" aria-label="PersonalPaperLibrary">')
+    .replace(
+      '<span class="wordmark">Library</span></a>',
+      `<span class="wordmark">Library</span></a><span class="brand-version" aria-label="Version ${escapeHtml(APP_VERSION_LABEL)}">${escapeHtml(APP_VERSION_LABEL)}</span></div>`,
+    );
   const withRenderScaleSettings = withBrandVersion.replace(
     '<div class="settings-group"><h2>Entries per page</h2>',
     '<div class="settings-group"><h2>Rendering scale</h2><p class="muted">Scale the complete interface to fit more content on smaller screens.</p><div class="width-options"><label class="width-option"><input type="radio" name="renderScale" value="100" data-theme-setting="renderScale"><span>100%</span></label><label class="width-option"><input type="radio" name="renderScale" value="90" data-theme-setting="renderScale"><span>90%</span></label><label class="width-option"><input type="radio" name="renderScale" value="80" data-theme-setting="renderScale"><span>80%</span></label><label class="width-option"><input type="radio" name="renderScale" value="70" data-theme-setting="renderScale"><span>70%</span></label><label class="width-option"><input type="radio" name="renderScale" value="60" data-theme-setting="renderScale"><span>60%</span></label><label class="width-option"><input type="radio" name="renderScale" value="50" data-theme-setting="renderScale"><span>50%</span></label></div></div><div class="settings-group"><h2>Entries per page</h2>',

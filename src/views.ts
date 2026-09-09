@@ -136,7 +136,7 @@ function layout(title: string, body: string, showHeader = true): string {
 </head>
 <body>
   <div class="render-root">
-    ${showHeader ? `<header class="site-header"><div class="shell"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}${brandVersion()}</a><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
+    ${showHeader ? `<header class="site-header"><div class="shell"><div class="brand-lockup"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a>${brandVersion()}</div><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
     <script src="/app.js?v=43" defer></script>
