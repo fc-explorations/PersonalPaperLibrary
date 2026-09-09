@@ -150,7 +150,7 @@ function hostedShell(title: string, page: string, body: string): string {
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
     .replace(/styles\.css\?v=33/g, "styles.css?v=59")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=33")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=34")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -350,7 +350,7 @@ async function lookupHostedMetadata(input: string, fetcher: typeof fetch, parsed
       await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library has no record for this ISBN." });
       return {
         metadata: { title: fallbackTitle?.trim() || `ISBN ${isbn}`, authors: [], categories: [], isbn, metadataSource: "manual" },
-        warnings: ["No Open Library record was found for this ISBN. The ISBN was retained; review the existing metadata and save manually."],
+        warnings: ["No Open Library record was found for this ISBN. The ISBN was retained; review the saved metadata and edit it if needed."],
         partial: true,
       };
     }

@@ -63,5 +63,8 @@ describe("add page rendering", () => {
     expect(html.indexOf('data-upload-form')).toBeLessThan(html.indexOf("Import"));
     expect(html).toContain('id="single-pdf-input" name="file" type="file"');
     expect(html).toContain("Upload PDF");
+    expect(html).toContain('<span>Find</span>');
+    expect(html).toContain('data-bibtex-import');
+    expect(html).not.toContain('Save paper');
   });
 });
