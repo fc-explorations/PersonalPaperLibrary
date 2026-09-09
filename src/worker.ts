@@ -16,7 +16,7 @@ import { lookupOpenLibrary } from "./services/openlibrary.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { parseBibtex } from "./services/bibtex.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
-import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupManifest } from "./services/cloud-backup.js";
+import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_MONTHLY_TTL_MS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupKind, type CloudBackupManifest } from "./services/cloud-backup.js";
 import { DEFAULT_MAX_PDF_BYTES, isbnFromInput, normalizeIsbn, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
 import type { AiSettings } from "./repositories/analysis.js";
 import type { MetadataSource, PaperDraftInput, PaperMetadata } from "./types.js";
@@ -28,6 +28,7 @@ import { suggestTags } from "./services/tag-suggestions.js";
 import { groupLibraryResults } from "./services/library-query.js";
 import { analysisMeta, bibtexImportField, renderCitationSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
+import { APP_VERSION } from "./version.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -49,6 +50,10 @@ interface QueueBatch {
 
 type LookupProgressEvent = { phase: "sources" | "enrichment" | "pdf"; current: number; total: number; source?: string; message: string };
 type LookupProgressReporter = (event: LookupProgressEvent) => Promise<void> | void;
+type ScheduledController = { cron: string; scheduledTime: number };
+
+const DAILY_BACKUP_CRON = "0 0 * * *";
+const MONTHLY_BACKUP_CRON = "0 0 1 * *";
 
 function progressStream(c: Context, operation: (report: LookupProgressReporter) => Promise<Response>): Response {
   const response = streamText(c, async (stream) => {
@@ -128,11 +133,20 @@ function hostedShell(title: string, page: string, body: string): string {
     /<div class="settings-group"><h2>Entries per page<\/h2><p class="muted">Choose how many papers appear on each library page\.<\/p><div class="width-options">.*?<\/div><\/div>/,
     '<div class="settings-group"><h2>Entries per page</h2><p class="muted">Choose how many papers appear on each library page.</p><div class="width-options"><label class="width-option"><input type="radio" name="pageSize" value="5" data-theme-setting="pageSize"><span>5</span></label><label class="width-option"><input type="radio" name="pageSize" value="7" data-theme-setting="pageSize"><span>7</span></label><label class="width-option"><input type="radio" name="pageSize" value="10" data-theme-setting="pageSize"><span>10</span></label><label class="width-option"><input type="radio" name="pageSize" value="25" data-theme-setting="pageSize"><span>25</span></label><label class="width-option"><input type="radio" name="pageSize" value="50" data-theme-setting="pageSize"><span>50</span></label><label class="width-option"><input type="radio" name="pageSize" value="100" data-theme-setting="pageSize"><span>100</span></label></div></div>',
   );
-  return withPageSizeSettings
+  const withBackupPanel = page === "settings"
+    ? withPageSizeSettings.replace(
+      /<section class="panel"><div class="section-heading"><h2>Hosted backup<\/h2>[\s\S]*?<\/section>/,
+      `<section class="panel hosted-backup-panel"><div class="section-heading backup-heading"><div><h2>Hosted backup</h2><p class="muted backup-description">Automatic backups run daily at midnight UTC and monthly on the first day of the month. Daily copies are kept for 30 days; monthly copies are kept for 12 months.</p></div><span id="backup-status" class="muted" role="status"></span></div><div class="backup-actions"><button id="backup-create" class="button" type="button">Create hosted backup</button><a id="backup-download" class="button button-secondary" hidden>Download manifest</a></div><div class="backup-library"><div class="backup-library-heading"><div><h3>Available backups</h3><p class="muted">Choose a daily or monthly copy to download it or prepare it for restoration.</p></div><button id="backup-refresh" class="button button-secondary button-small" type="button">Refresh</button></div><p id="backup-list-status" class="form-status" role="status"></p><div id="backup-list" class="backup-list"></div></div><div class="backup-restore"><h3>Restore a backup</h3><p class="muted">Select a backup above, or paste a backup ID if you received one separately.</p><label>Selected backup<input id="backup-id" autocomplete="off" placeholder="Select or paste a backup ID"></label><label>Restore mode<select id="backup-mode"><option value="merge">Merge into current library</option><option value="replace">Replace current library (creates a safety backup)</option></select></label><div class="form-actions backup-restore-actions"><button id="backup-restore" class="button button-secondary" type="button">Restore backup</button></div></div></section>`,
+    )
+    : withPageSizeSettings;
+  const withCredits = page === "settings"
+    ? withBackupPanel.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="settings-subsection credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION}</p></div></div></section></main>`)
+    : withBackupPanel;
+  return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=54")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=29")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=55")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=30")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -643,13 +657,14 @@ app.get("/api/export/metadata", async (c) => {
   });
 });
 
-async function createHostedBackup(env: CloudflareBindings): Promise<{ storage: R2Storage; manifest: CloudBackupManifest }> {
+async function createHostedBackup(env: CloudflareBindings, options: { kind?: CloudBackupKind } = {}): Promise<{ storage: R2Storage; manifest: CloudBackupManifest }> {
   const storage = new R2Storage(env.PAPER_PDFS);
   const repo = new D1PaperRepository(env.DB);
   const analysis = analysisRepository(env);
   const backupId = globalThis.crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + CLOUD_BACKUP_TTL_MS).toISOString();
+  const ttl = options.kind === "monthly" ? CLOUD_BACKUP_MONTHLY_TTL_MS : CLOUD_BACKUP_TTL_MS;
+  const expiresAt = new Date(Date.now() + ttl).toISOString();
   const entries: CloudBackupManifest["papers"] = [];
   try {
     for await (const paper of repo.iterateAll()) {
@@ -664,7 +679,7 @@ async function createHostedBackup(env: CloudflareBindings): Promise<{ storage: R
       }
       entries.push({ paper: backupPaperMetadata(paper), pdf, summary: (await analysis.getSummary(paper.id)) || undefined, questions: await analysis.listQuestions(paper.id, true, false) });
     }
-    const manifest = createCloudBackupManifest({ backupId, createdAt, expiresAt, papers: entries });
+    const manifest = createCloudBackupManifest({ backupId, createdAt, expiresAt, papers: entries, kind: options.kind });
     await storage.putBackupManifest(backupId, JSON.stringify(manifest, null, 2));
     return { storage, manifest };
   } catch (error) {
@@ -672,6 +687,42 @@ async function createHostedBackup(env: CloudflareBindings): Promise<{ storage: R
     throw error;
   }
 }
+
+async function cleanupExpiredHostedBackups(env: CloudflareBindings, now = Date.now()): Promise<number> {
+  const storage = new R2Storage(env.PAPER_PDFS);
+  let removed = 0;
+  for (const backupId of await storage.listBackupIds()) {
+    const raw = await storage.getBackupManifest(backupId);
+    if (!raw) continue;
+    try {
+      const manifest = parseCloudBackupManifest(JSON.parse(raw), 0);
+      if (Date.parse(manifest.expiresAt) <= now) {
+        await storage.deleteBackup(backupId);
+        removed += 1;
+      }
+    } catch {
+      // Leave malformed or already-inaccessible backups for manual inspection.
+    }
+  }
+  return removed;
+}
+
+app.get("/api/backups", async (c) => {
+  const storage = new R2Storage(c.env.PAPER_PDFS);
+  const backups: Array<{ backupId: string; kind: CloudBackupKind; createdAt: string; expiresAt: string; papers: number; pdfs: number; manifestUrl: string }> = [];
+  for (const backupId of await storage.listBackupIds()) {
+    const raw = await storage.getBackupManifest(backupId);
+    if (!raw) continue;
+    try {
+      const manifest = parseCloudBackupManifest(JSON.parse(raw));
+      backups.push({ backupId: manifest.backupId, kind: manifest.kind || "manual", createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` });
+    } catch {
+      // Expired or malformed manifests are not offered as restorable backups.
+    }
+  }
+  backups.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  return c.json({ backups });
+});
 
 app.post("/api/backups", async (c) => {
   try {
@@ -1323,6 +1374,12 @@ app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 const worker = {
   fetch: app.fetch,
   request: app.request.bind(app),
+  async scheduled(controller: ScheduledController, env: CloudflareBindings): Promise<void> {
+    const kind = controller.cron === MONTHLY_BACKUP_CRON ? "monthly" : controller.cron === DAILY_BACKUP_CRON ? "daily" : undefined;
+    if (!kind) return;
+    await createHostedBackup(env, { kind });
+    await cleanupExpiredHostedBackups(env);
+  },
   async queue(batch: QueueBatch, env: CloudflareBindings): Promise<void> {
     const jobs = analysisJobs(env);
     await Promise.all(batch.messages.map(async (message) => {

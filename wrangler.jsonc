@@ -12,6 +12,9 @@
 		"directory": "./public",
 		"binding": "ASSETS"
 	},
+	"triggers": {
+		"crons": ["0 0 * * *", "0 0 1 * *"]
+	},
 	"ai": {
 		"binding": "AI"
 	},

@@ -989,6 +989,33 @@ async function initSettings() {
   const backupMode = document.querySelector("#backup-mode");
   const backupRestore = document.querySelector("#backup-restore");
   const backupStatus = document.querySelector("#backup-status");
+  const backupRefresh = document.querySelector("#backup-refresh");
+  const backupList = document.querySelector("#backup-list");
+  const backupListStatus = document.querySelector("#backup-list-status");
+  const backupKindLabels = { daily: "Daily backups", monthly: "Monthly backups", manual: "Manual backups" };
+  const formatBackupDate = (value) => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const renderBackups = (backups) => {
+    if (!backupList) return;
+    const groups = ["daily", "monthly", "manual"].map((kind) => ({ kind, items: backups.filter((backup) => backup.kind === kind) })).filter((group) => group.items.length);
+    backupList.innerHTML = groups.length ? groups.map((group) => `<section class="backup-kind"><div class="backup-kind-heading"><h4>${backupKindLabels[group.kind]}</h4><span class="muted">${group.items.length} available</span></div><div class="backup-entry-list">${group.items.map((backup) => `<article class="backup-entry"><div class="backup-entry-info"><strong>${escapeHtml(formatBackupDate(backup.createdAt))}</strong><span class="muted">${backup.papers} paper${backup.papers === 1 ? "" : "s"} · ${backup.pdfs} PDF${backup.pdfs === 1 ? "" : "s"} · expires ${escapeHtml(new Date(backup.expiresAt).toLocaleDateString())}</span></div><div class="backup-entry-actions"><a class="button button-secondary button-small" href="${escapeHtml(backup.manifestUrl)}">Download</a><button class="button button-secondary button-small" type="button" data-backup-select="${escapeHtml(backup.backupId)}">Use for restore</button></div></article>`).join("")}</div></section>`).join("") : `<p class="muted backup-empty">No active backups found yet.</p>`;
+  };
+  const loadBackups = async () => {
+    if (!backupList) return;
+    try {
+      setStatus(backupListStatus, "Loading backups…");
+      const result = await request("/api/backups");
+      renderBackups(result.backups || []);
+      setStatus(backupListStatus, result.backups?.length ? "" : "No active backups found yet.");
+    } catch (error) { setStatus(backupListStatus, error.message, true); }
+  };
+  backupRefresh?.addEventListener("click", loadBackups);
+  backupList?.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-backup-select]") : null;
+    if (!target) return;
+    backupId.value = target.dataset.backupSelect || "";
+    setStatus(backupStatus, "Backup selected for restore.");
+    document.querySelector("#backup-id")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   backupCreate?.addEventListener("click", async () => {
     backupCreate.disabled = true;
     try {
@@ -998,6 +1025,7 @@ async function initSettings() {
       backupDownload.href = result.manifestUrl;
       backupDownload.hidden = false;
       setStatus(backupStatus, `Backup ready: ${result.papers} paper${result.papers === 1 ? "" : "s"}, ${result.pdfs} PDF${result.pdfs === 1 ? "" : "s"}. Expires ${new Date(result.expiresAt).toLocaleDateString()}.`);
+      await loadBackups();
     } catch (error) { setStatus(backupStatus, error.message, true); }
     finally { backupCreate.disabled = false; }
   });
@@ -1024,6 +1052,7 @@ async function initSettings() {
     } catch (error) { setStatus(backupStatus, error.message, true); }
     finally { backupRestore.disabled = false; }
   });
+  await loadBackups();
 }
 
 async function initAsk() {

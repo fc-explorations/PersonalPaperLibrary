@@ -160,6 +160,20 @@ export class R2Storage {
     if (keys.length) await this.bucket.delete(keys);
   }
 
+  async listBackupIds(): Promise<string[]> {
+    const ids = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await this.bucket.list({ prefix: BACKUP_PREFIX, cursor, limit: 1_000 });
+      for (const object of page.objects) {
+        const match = object.key.match(/^backups\/([a-f0-9-]{36})\/(?:manifest\.json|papers\/)/i);
+        if (match) ids.add(match[1]);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return [...ids];
+  }
+
   async delete(paperId: string): Promise<void> {
     assertPaperId(paperId);
     await this.bucket.delete(this.paperKey(paperId));

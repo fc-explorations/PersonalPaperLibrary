@@ -4,7 +4,10 @@ import type { StoredQuestion, SummaryRecord } from "../repositories/analysis.js"
 export const CLOUD_BACKUP_FORMAT = "personal-paper-library-cloud-backup";
 export const CLOUD_BACKUP_VERSION = 1;
 export const CLOUD_BACKUP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const CLOUD_BACKUP_MONTHLY_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 export const CLOUD_BACKUP_MAX_PAPERS = 10_000;
+
+export type CloudBackupKind = "manual" | "daily" | "monthly";
 
 export type CloudBackupPdf = {
   key: string;
@@ -22,6 +25,7 @@ export type CloudBackupPaper = {
 export type CloudBackupManifest = {
   format: typeof CLOUD_BACKUP_FORMAT;
   version: typeof CLOUD_BACKUP_VERSION;
+  kind?: CloudBackupKind;
   backupId: string;
   createdAt: string;
   expiresAt: string;
@@ -36,16 +40,21 @@ function paperIdValid(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9_-]+$/i.test(value);
 }
 
+function backupKindValid(value: unknown): value is CloudBackupKind {
+  return value === "manual" || value === "daily" || value === "monthly";
+}
+
 function backupError(code: string): Error {
   return new Error(code);
 }
 
-export function createCloudBackupManifest(input: { backupId: string; createdAt: string; expiresAt: string; papers: CloudBackupPaper[] }): CloudBackupManifest {
+export function createCloudBackupManifest(input: { backupId: string; createdAt: string; expiresAt: string; papers: CloudBackupPaper[]; kind?: CloudBackupKind }): CloudBackupManifest {
   if (!backupIdValid(input.backupId)) throw backupError("BACKUP_ID_INVALID");
   if (input.papers.length > CLOUD_BACKUP_MAX_PAPERS) throw backupError("BACKUP_TOO_MANY_PAPERS");
   return {
     format: CLOUD_BACKUP_FORMAT,
     version: CLOUD_BACKUP_VERSION,
+    ...(input.kind ? { kind: input.kind } : {}),
     backupId: input.backupId,
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
@@ -57,6 +66,7 @@ export function parseCloudBackupManifest(value: unknown, now = Date.now()): Clou
   if (!value || typeof value !== "object") throw backupError("BACKUP_MANIFEST_INVALID");
   const record = value as Record<string, unknown>;
   if (record.format !== CLOUD_BACKUP_FORMAT || record.version !== CLOUD_BACKUP_VERSION) throw backupError("BACKUP_VERSION_UNSUPPORTED");
+  if (record.kind !== undefined && !backupKindValid(record.kind)) throw backupError("BACKUP_MANIFEST_INVALID");
   if (!backupIdValid(record.backupId) || typeof record.createdAt !== "string" || typeof record.expiresAt !== "string") throw backupError("BACKUP_MANIFEST_INVALID");
   const expiresAt = Date.parse(record.expiresAt);
   if (!Number.isFinite(expiresAt)) throw backupError("BACKUP_MANIFEST_INVALID");

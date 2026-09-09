@@ -159,6 +159,20 @@ describe("Cloudflare Worker API", () => {
     env.d1.db.close();
   });
 
+  it("creates daily and monthly backups from scheduled triggers", async () => {
+    const env = bindings();
+    await worker.scheduled({ cron: "0 0 * * *", scheduledTime: Date.now() }, env);
+    await worker.scheduled({ cron: "0 0 1 * *", scheduledTime: Date.now() }, env);
+    const manifests = [...env.r2.objects.entries()]
+      .filter(([key]) => key.endsWith("/manifest.json"))
+      .map(([, value]) => JSON.parse(new TextDecoder().decode(value.bytes)) as { kind: string; expiresAt: string });
+    expect(manifests.map((manifest) => manifest.kind).sort()).toEqual(["daily", "monthly"]);
+    expect(Date.parse(manifests.find((manifest) => manifest.kind === "monthly")!.expiresAt) - Date.now()).toBeGreaterThan(364 * 24 * 60 * 60 * 1000);
+    const listing = await worker.request("/api/backups", {}, env);
+    expect((await listing.json() as { backups: Array<{ kind: string }> }).backups.map((backup) => backup.kind).sort()).toEqual(["daily", "monthly"]);
+    env.d1.db.close();
+  });
+
   it("requires configured Access authentication when enabled", async () => {
     const env = bindings();
     env.ACCESS_REQUIRED = "true";
@@ -221,6 +235,13 @@ describe("Cloudflare Worker API", () => {
     expect(html).toContain('data-lookup-metadata');
     expect(html).toContain("Primary category");
     expect(html).not.toContain("Open web resource");
+    const settings = await worker.request("/settings", {}, env);
+    const settingsHtml = await settings.text();
+    expect(settingsHtml).toContain("Automatic backups run daily at midnight UTC");
+    expect(settingsHtml).toContain('id="backup-list"');
+    expect(settingsHtml).toContain("Use for restore");
+    expect(settingsHtml).toContain("<h2>Credits</h2>");
+    expect(settingsHtml).toContain("<strong>Version:</strong> 2.0.1");
     const library = await worker.request("/", {}, env);
     expect(await library.text()).toMatch(/id="library-search-form"[\s\S]*id="library-tags"[\s\S]*id="bulk-actions"/);
     const paper = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ui-edit-paper", title: "UI edit paper", metadataSource: "manual" }) }, env);
