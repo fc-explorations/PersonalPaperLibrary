@@ -665,7 +665,10 @@ async function saveHostedPaperForm(form, { redirect = false, statusMessage = "Sa
       paperPdfLink.hidden = !saved.paper.r2Key;
       if (saved.paper.r2Key) paperPdfLink.href = `/api/papers/${encodeURIComponent(saved.paper.id)}/pdf`;
     }
-    if (redirect) window.location.href = `/papers/${encodeURIComponent(saved.paper.id)}`;
+    if (redirect) {
+      const destination = redirect === "edit" ? `/papers/${encodeURIComponent(saved.paper.id)}/edit` : `/papers/${encodeURIComponent(saved.paper.id)}`;
+      window.location.href = destination;
+    }
     else setStatus(status, statusMessage);
     return saved;
   } catch (error) {
@@ -726,7 +729,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
       await saveHostedPaperForm(form, { statusMessage });
     } else {
       renderHostedPreview(body);
-      const saved = await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? body.warnings.join(" ") : "Metadata found and saved." });
+      const saved = await saveHostedPaperForm(form, { redirect: "edit", statusMessage: body.warnings?.length ? body.warnings.join(" ") : "Metadata found and saved." });
       setStatus(status, saved ? "Metadata found and saved." : "Metadata found. Fix the error below and retry.", !saved);
     }
   } catch (error) {
@@ -1399,7 +1402,7 @@ async function initImport() {
       }, (progress) => updateLookupProgress(button, progress, form));
       renderHostedPreview(staged);
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");
-      const saved = await saveHostedPaperForm(document.querySelector("#paper-form-new"), { statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
+      const saved = await saveHostedPaperForm(document.querySelector("#paper-form-new"), { redirect: "edit", statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
       const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF saved." : "Metadata found and saved.";
       setStatus(status, saved ? (staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage) : "Metadata found. Fix the error below and retry.", !saved);
     } catch (error) {

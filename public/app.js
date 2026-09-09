@@ -732,7 +732,7 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
       form.insertAdjacentHTML("beforeend", `<a class="inline-link" data-existing-paper href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
     } else {
       renderPreview(body);
-      const saved = await savePaperForm(document.querySelector("[data-preview] [data-paper-form]"), { statusMessage: "Metadata found and saved." });
+      const saved = await savePaperForm(document.querySelector("[data-preview] [data-paper-form]"), { redirect: "edit", statusMessage: "Metadata found and saved." });
       setStatus(form, saved ? "Metadata found and saved." : "Metadata found. Fix the error below and retry.", !saved);
     }
   } catch (error) {
@@ -893,7 +893,10 @@ async function savePaperForm(form, { redirect = false, statusMessage = "Saved." 
       paperPdfLink.hidden = !result.paper.r2Key;
       if (result.paper.r2Key) paperPdfLink.href = `/api/papers/${encodeURIComponent(result.paper.id)}/pdf`;
     }
-    if (redirect) window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
+    if (redirect) {
+      const destination = redirect === "edit" ? `/papers/${encodeURIComponent(result.paper.id)}/edit` : `/papers/${encodeURIComponent(result.paper.id)}`;
+      window.location.href = destination;
+    }
     else setStatus(form, statusMessage);
     return result;
   } catch (error) {
@@ -961,7 +964,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     updateWebResource(form, result.paper, result.pdf);
     const pdfMessage = result.pdf?.status === "staged" ? " PDF ready to store." : "";
     const warningMessage = result.warnings?.length ? ` ${result.warnings.join(" ")}` : "";
-    await savePaperForm(form, { statusMessage: `Metadata found via ${result.provider}; saved.${pdfMessage}${warningMessage}` });
+    await savePaperForm(form, { redirect: form.dataset.paperId ? false : "edit", statusMessage: `Metadata found via ${result.provider}; saved.${pdfMessage}${warningMessage}` });
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   } finally {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAddPage, renderMarkdown, renderSettingsPage } from "../src/views.js";
+import { renderAddPage, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION_LABEL } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -66,5 +66,17 @@ describe("add page rendering", () => {
     expect(html).toContain('<span>Find</span>');
     expect(html).toContain('data-bibtex-import');
     expect(html).not.toContain('Save paper');
+  });
+});
+
+describe("paper form rendering", () => {
+  it("keeps the Find-created form and dedicated Edit form on the same fields", () => {
+    const addForm = renderPaperForm(undefined, "add", true);
+    const editForm = renderPaperForm({ id: "paper-1", title: "Existing paper" }, "edit", true);
+    const fieldNames = (html: string) => [...html.matchAll(/<(?:input|textarea)[^>]*\bname="([^"]+)"/g)].map((match) => match[1]);
+
+    expect(fieldNames(editForm)).toEqual(fieldNames(addForm));
+    expect(editForm).toContain('data-mode="edit"');
+    expect(addForm).toContain('data-mode="add"');
   });
 });
