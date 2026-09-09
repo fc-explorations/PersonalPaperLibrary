@@ -644,6 +644,11 @@ async function saveHostedPaperForm(form, { redirect = false, statusMessage = "Sa
   try {
     const editing = form.dataset.mode === "edit" && form.dataset.paperId;
     const saved = await request(editing ? `/api/papers/${encodeURIComponent(form.dataset.paperId)}` : "/api/papers", { method: editing ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...hostedPaperBody(form), ...(editing ? { id: form.dataset.paperId } : {}) }) });
+    if (!editing && saved.paper?.id) {
+      form.dataset.mode = "edit";
+      form.dataset.paperId = saved.paper.id;
+      enableHostedPaperAutosave(form);
+    }
     if (redirect) window.location.href = `/papers/${encodeURIComponent(saved.paper.id)}`;
     else setStatus(status, statusMessage);
     return saved;
@@ -655,10 +660,11 @@ async function saveHostedPaperForm(form, { redirect = false, statusMessage = "Sa
 
 document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await saveHostedPaperForm(form, { redirect: !form.dataset.paperId });
+  await saveHostedPaperForm(form);
 }));
 
 const hostedAutosaveStates = new WeakMap();
+const hostedAutosaveForms = new WeakSet();
 function scheduleHostedPaperAutosave(form, delay = 650) {
   if (form.dataset.mode !== "edit") return;
   const state = hostedAutosaveStates.get(form) || { timer: 0, saving: false, queued: false };
@@ -675,10 +681,14 @@ function scheduleHostedPaperAutosave(form, delay = 650) {
   hostedAutosaveStates.set(form, state);
 }
 
-document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach((form) => {
+function enableHostedPaperAutosave(form) {
+  if (!form || hostedAutosaveForms.has(form)) return;
+  hostedAutosaveForms.add(form);
   form.addEventListener("input", () => scheduleHostedPaperAutosave(form));
   form.addEventListener("change", () => scheduleHostedPaperAutosave(form, 0));
-});
+}
+
+document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach(enableHostedPaperAutosave);
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = document.querySelector(`#${button.getAttribute("form") || "paper-form-new"}`);
@@ -700,7 +710,8 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
       await saveHostedPaperForm(form, { statusMessage });
     } else {
       renderHostedPreview(body);
-      setStatus(status, "Metadata found. Review it, then save.");
+      await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? body.warnings.join(" ") : "Metadata found and saved." });
+      setStatus(status, "Metadata found and saved.");
     }
   } catch (error) {
     setStatus(status, error.message, true);
@@ -723,8 +734,7 @@ document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.add
   try {
     const result = await request("/api/metadata/bibtex", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bibtex: input.value }) });
     applyHostedBibtex(form, result.metadata || {});
-    if (form.dataset.paperId) await saveHostedPaperForm(form, { statusMessage: "BibTeX imported and saved." });
-    else status.textContent = "BibTeX imported. Review the fields, then save.";
+    await saveHostedPaperForm(form, { statusMessage: "BibTeX imported and saved." });
   } catch (error) {
     status.textContent = error.message;
     status.classList.add("status-error");
@@ -744,8 +754,7 @@ document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.
     setStatus(status, "Extracting the abstract from the PDF…");
     const body = await request("/api/abstract/extract", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stagingToken: stagingToken || undefined, paperId: paperId || undefined }) });
     form.elements.namedItem("abstract").value = body.abstract || "";
-    if (form.dataset.mode === "edit") await saveHostedPaperForm(form, { statusMessage: "Abstract extracted and saved." });
-    else setStatus(status, "Abstract extracted from the PDF. Review it before saving.");
+    await saveHostedPaperForm(form, { statusMessage: "Abstract extracted and saved." });
   } catch (error) {
     setStatus(status, error.message, true);
   } finally {
@@ -793,9 +802,7 @@ document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => bu
   const names = [...tags, ...selected].filter((name, index, values) => values.findIndex((value) => value.toLowerCase() === name.toLowerCase()) === index);
   form.elements.namedItem("tags").value = names.join(", ");
   panel.hidden = true;
-  const status = document.querySelector(`[data-form-status-for="${form.id}"]`);
-  if (form.dataset.mode === "edit") void saveHostedPaperForm(form, { statusMessage: `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added and saved.` });
-  else setStatus(status, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
+  void saveHostedPaperForm(form, { statusMessage: `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added and saved.` });
 }));
 
 document.querySelectorAll("[data-source-url-go]").forEach((link) => {
@@ -857,7 +864,8 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
     const body = await request("/api/uploads", { method: "POST", body: new FormData(form) });
     const file = form.querySelector("input[type=file]").files[0];
     renderHostedPreview({ paper: { title: file.name.replace(/\.pdf$/i, "").replace(/[._]+/g, " ").trim() }, pdf: body.pdf });
-    setStatus(form, "PDF ready. Add its metadata below.");
+    await saveHostedPaperForm(document.querySelector("#paper-form-new"), { statusMessage: "PDF saved. Add its metadata below." });
+    setStatus(form, "PDF saved. Add its metadata below.");
   } catch (error) {
     setStatus(form, error.message, true);
   }
@@ -1375,8 +1383,9 @@ async function initImport() {
       }, (progress) => updateLookupProgress(button, progress, form));
       renderHostedPreview(staged);
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");
-      const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF staged." : "Metadata found; save will create a metadata-only paper.";
-      setStatus(status, staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage);
+      const saved = await saveHostedPaperForm(document.querySelector("#paper-form-new"), { statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
+      const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF saved." : "Metadata found and saved.";
+      setStatus(status, saved && staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage);
     } catch (error) {
       staged = undefined;
       preview.hidden = true;

@@ -182,10 +182,6 @@ function downloadIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">download</span>`;
 }
 
-function saveIcon(): string {
-  return `<span class="material-symbols-outlined" aria-hidden="true">save</span>`;
-}
-
 function searchIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">search</span>`;
 }
@@ -460,10 +456,8 @@ export function bibtexImportField(formId: string): string {
   return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button edit-action-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
 }
 
-function formActions(data: Partial<PaperRecord & PaperMetadata>, isEdit: boolean, formId: string): string {
-  const saveButton = isEdit ? "" : `<button class="button" type="submit" form="${escapeHtml(formId)}">${saveIcon()}<span>Save paper</span></button>`;
-  const lookupLabel = isEdit ? "Find" : "Find metadata";
-  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary edit-action-button" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>${lookupLabel}</span></button>${saveButton}</div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
+function formActions(formId: string): string {
+  return `<div class="form-actions"><div class="form-actions-row"><div class="form-actions-right"><button class="button button-secondary edit-action-button" type="button" form="${escapeHtml(formId)}" data-lookup-metadata>${searchIcon()}<span>Find</span></button></div></div><span class="form-status" data-form-status-for="${escapeHtml(formId)}" role="status"></span></div>`;
 }
 
 export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mode: "add" | "edit" = "add", actionsOutside = false): string {
@@ -485,7 +479,7 @@ export function renderPaperForm(paper?: Partial<PaperRecord & PaperMetadata>, mo
     <div class="form-row">${field("DOI", "doi", data.doi)}${field("ISBN", "isbn", data.isbn, { placeholder: "9780262381369" })}</div>
     <div class="form-row">${field("arXiv ID", "arxivId", data.arxivId, { placeholder: "2401.12345" })}${sourceUrlField(data.sourceUrl)}</div>
     ${tagsField}`;
-  const actions = formActions(data, isEdit, formId);
+  const actions = formActions(formId);
   return `<form id="${escapeHtml(formId)}" class="paper-form" data-paper-form data-mode="${mode}" ${isEdit ? `data-paper-id="${escapeHtml(data.id)}"` : ""}>
     <input type="hidden" name="stagingToken" value="">
     ${actionsOutside ? "" : actions}
@@ -498,7 +492,7 @@ export function renderAddPage(): string {
     <div class="panel"><h2>Find a paper</h2><p class="muted">Accepted inputs include a paper title or pasted citation, a DOI (for example, 10.1234/abc or a doi.org link), ISBN-10 or ISBN-13, an arXiv ID or link (for example, 2401.12345), or a URL to the paper.</p><form data-import-form><div class="inline-form"><input name="input" required placeholder="Title, citation, DOI, ISBN, arXiv ID, or URL"><button class="button" type="submit">${searchIcon()}<span>Find</span></button></div><p class="form-status" role="status"></p></form><form class="find-pdf-upload" data-upload-form><p class="muted upload-help">Already have the file? Upload one PDF directly to create an editable paper record. You can review and complete its metadata before saving.</p><div class="inline-form"><input id="single-pdf-input" name="file" type="file" accept="application/pdf,.pdf" required data-single-pdf-input><button class="button button-secondary" type="submit">${uploadIcon()}<span>Upload PDF</span></button></div><p class="form-status" role="status"></p></form></div>
     <div class="add-file-options"><div class="panel"><h2>Import</h2><p class="muted">Import PDFs in bulk from a folder or ZIP archive. Each PDF becomes an editable paper record with its filename as the initial title; metadata is enriched when possible. ZIPs may include subfolders, and only PDF files are imported. You can optionally add the containing folder name as a tag, with up to 200 PDFs per batch.</p><form data-bulk-upload-form><div class="inline-form folder-import-controls"><div class="folder-import-pickers"><div class="file-picker"><label class="button button-secondary" for="folder-pdf-input">${folderIcon()}<span>From Folder</span></label><input id="folder-pdf-input" name="files" type="file" accept="application/pdf,.pdf" webkitdirectory multiple class="sr-only" data-folder-pdf-input></div><div class="file-picker"><label class="button button-secondary" for="folder-zip-input"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span><span>From ZIP</span></label><input id="folder-zip-input" name="files" type="file" accept="application/zip,.zip" class="sr-only" data-folder-zip-input></div></div><label class="folder-tag-toggle"><span>Use folder as tag</span><input type="checkbox" data-folder-tag-toggle checked><span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span><span class="folder-tag-value" data-folder-tag-value>True</span></label></div><p class="form-status" role="status"></p><div class="bulk-progress" data-bulk-progress hidden role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-bulk-progress-fill></span></div><div class="bulk-results" data-bulk-results></div></form></div></div>
   </section>
-  <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Review before saving</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" data-pdf-status></span>${formActions({}, false, "paper-form-new")}</div></div><div data-preview-form>${renderPaperForm(undefined, "add", true)}</div><div class="warnings" data-warnings></div></section>`;
+  <section class="panel preview-panel" data-preview hidden><div class="preview-header"><div><p class="eyebrow">Paper details</p><h2>Paper details</h2></div><div class="preview-actions"><span class="pdf-status" data-pdf-status></span>${formActions("paper-form-new")}</div></div><div data-preview-form>${renderPaperForm(undefined, "add", true)}${bibtexImportField("paper-form-new")}</div><div class="warnings" data-warnings></div></section>`;
   return layout("Add paper", body);
 }
 
@@ -557,7 +551,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
 
 export function renderEditPage(paper: PaperRecord): string {
   const formId = `paper-form-${paper.id}`;
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(paper, true, formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button edit-action-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button edit-action-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {
