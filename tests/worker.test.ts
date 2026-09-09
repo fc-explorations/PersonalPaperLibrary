@@ -302,6 +302,8 @@ describe("Cloudflare Worker API", () => {
 
   it("supports hosted library search with keyword fallback and index coverage", async () => {
     const env = bindings();
+    const askPage = await worker.request("/ask", {}, env);
+    expect(await askPage.text()).toContain("data-ask-rephrase");
     const create = await worker.request("/api/papers", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -316,6 +318,20 @@ describe("Cloudflare Worker API", () => {
     expect(search.status).toBe(200);
     expect(await search.json()).toMatchObject({ hits: [expect.objectContaining({ matchType: "keyword" })], warnings: expect.arrayContaining([expect.stringContaining("Semantic retrieval is unavailable")]) });
     env.d1.db.close();
+  });
+
+  it("rephrases a hosted library query with OpenAI", async () => {
+    const env = bindings();
+    env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ choices: [{ message: { content: "uncertainty calibration without ensemble models" } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const response = await worker.request("/api/search/rephrase", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "Find calibration papers that avoid ensembles" }) }, env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ query: "uncertainty calibration without ensemble models" });
+    } finally {
+      vi.unstubAllGlobals();
+      env.d1.db.close();
+    }
   });
 
   it("indexes and ranks hosted semantic search with the configured OpenAI embedding path", async () => {

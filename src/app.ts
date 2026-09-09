@@ -28,7 +28,7 @@ import { LibrarySearchRepository } from "./repositories/library-search.js";
 import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } from "./services/embeddings.js";
 import { MATH_FORMATTING_INSTRUCTION, OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
-import { groupLibraryResults } from "./services/library-query.js";
+import { groupLibraryResults, rephraseLibraryQuery } from "./services/library-query.js";
 import { ABSTRACT_PROMPT_VERSION, excludeAppendixMaterial, extractAbstractFromPdfText, extractPdfText, extractPdfTextExcerpt, hasRequiredSummaryHeadings, QUESTION_PROMPT_VERSION, sha256File, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, type PdfTextExtractor } from "./services/pdf-analysis.js";
 import { createZipStream, extractPdfFiles, type ExtractedZipFile } from "./services/zip.js";
 import { createSnapshotArchive, receiveSnapshotUpload, stageSnapshotRestore } from "./services/snapshot.js";
@@ -1165,6 +1165,20 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ query, tags, tagMode, hits: result.hits.map((hit) => ({ ...hit, paperUrl: `/papers/${encodeURIComponent(hit.paper.id)}` })), groups, coverage: result.coverage, warnings });
     } catch (error) {
       return jsonError(c, 502, errorMessage(error), "The library query could not be completed. Please retry.");
+    }
+  });
+
+  app.post("/api/library/query/rephrase", async (c) => {
+    try {
+      const body = await c.req.json<{ query?: unknown }>();
+      const query = typeof body.query === "string" ? body.query.trim() : "";
+      if (!query) return jsonError(c, 400, "LIBRARY_QUERY_REQUIRED", "Enter a question or search idea.");
+      if (query.length > 1000) return jsonError(c, 400, "LIBRARY_QUERY_TOO_LONG", "Keep the library query under 1,000 characters.");
+      const selected = selectedLlm(analysis.getSettings());
+      const rewritten = await rephraseLibraryQuery(query, selected.client, selected.model);
+      return c.json({ query: rewritten });
+    } catch (error) {
+      return jsonError(c, 502, errorMessage(error), "The library query could not be rephrased. Please retry.");
     }
   });
 

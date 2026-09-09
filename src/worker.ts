@@ -25,7 +25,7 @@ import { createWorkerZip, extractWorkerPdfFiles, type WorkerZipFile } from "./se
 import { takeFirstPages } from "./services/pdf-analysis-core.js";
 import { OpenAiLlmClient } from "./services/llm.js";
 import { suggestTags } from "./services/tag-suggestions.js";
-import { groupLibraryResults } from "./services/library-query.js";
+import { groupLibraryResults, rephraseLibraryQuery } from "./services/library-query.js";
 import { analysisMeta, bibtexImportField, renderCitationSection, renderHowToSection, renderMarkdown, renderPaperForm, renderQuestionsSection } from "./views.js";
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 import { APP_VERSION_LABEL } from "./version.js";
@@ -892,7 +892,7 @@ app.get("/ask", async (c) => {
   const tagOptions = tags.map((tag) => `<button class="tag ask-tag-button" type="button" data-ask-tag="${escapeHtml(tag)}" aria-pressed="false">${escapeHtml(tag)}</button>`).join("");
   return c.html(hostedShell("Ask the library", "ask", `<main class="shell cloud-library hosted-ask-page">
   <section class="page-heading ask-heading"><h1>Ask the library</h1></section>
-  <section class="panel ask-library-page"><form id="ask-form" class="ask-query-form"><div class="ask-query-input-row"><textarea id="ask-query" name="query" rows="3" maxlength="1000" required placeholder="Which papers study uncertainty calibration without using ensembles?"></textarea></div><div class="ask-query-controls-row"><div class="ask-query-toolbar"><div class="ask-tag-filter"><span class="ask-control-label">Search within</span><div class="ask-tag-selection"><div class="tag-mode-switch" role="group" aria-label="Tag matching mode"><span class="tag-mode-label">Match:</span><button class="tag tag-mode-button" type="button" data-ask-tag-mode="and" aria-pressed="false">AND</button><button class="tag tag-mode-button tag-selected" type="button" data-ask-tag-mode="or" aria-pressed="true">OR</button></div><div class="ask-tag-row"><span class="tag-mode-label">Tags:</span><div class="ask-tag-options"><button class="tag tag-selected ask-tag-button" type="button" data-ask-tag-all aria-pressed="true">ALL</button>${tagOptions || `<span class="muted">No tags yet</span>`}</div></div></div></div></div><div class="ask-submit-row"><button class="button button-secondary button-small ask-submit" type="submit"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask</span></button></div></div><p id="ask-status" class="form-status" role="status"></p></form><section id="ask-results" class="ask-results" hidden aria-live="polite"></section></section>
+  <section class="panel ask-library-page"><form id="ask-form" class="ask-query-form"><div class="ask-query-input-row"><textarea id="ask-query" name="query" rows="3" maxlength="1000" required placeholder="Which papers study uncertainty calibration without using ensembles?"></textarea></div><div class="ask-query-controls-row"><div class="ask-query-toolbar"><div class="ask-tag-filter"><span class="ask-control-label">Search within</span><div class="ask-tag-selection"><div class="tag-mode-switch" role="group" aria-label="Tag matching mode"><span class="tag-mode-label">Match:</span><button class="tag tag-mode-button" type="button" data-ask-tag-mode="and" aria-pressed="false">AND</button><button class="tag tag-mode-button tag-selected" type="button" data-ask-tag-mode="or" aria-pressed="true">OR</button></div><div class="ask-tag-row"><span class="tag-mode-label">Tags:</span><div class="ask-tag-options"><button class="tag tag-selected ask-tag-button" type="button" data-ask-tag-all aria-pressed="true">ALL</button>${tagOptions || `<span class="muted">No tags yet</span>`}</div></div></div></div></div><div class="ask-submit-row"><button class="button button-secondary button-small ask-rephrase" type="button" data-ask-rephrase><span class="material-symbols-outlined" aria-hidden="true">auto_fix_high</span><span>Rephrase</span></button><button class="button button-secondary button-small ask-submit" type="submit"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask</span></button></div></div><p id="ask-status" class="form-status" role="status"></p></form><section id="ask-results" class="ask-results" hidden aria-live="polite"></section></section>
   <section class="page-heading indexing-heading"><h1>Indexing</h1></section><div class="panel ask-indexing-panel"><div class="ask-indexing-row"><span id="ask-coverage" class="muted" role="status">Checking index coverage…</span><button id="ask-index" class="button button-secondary button-small" type="button"><span class="material-symbols-outlined" aria-hidden="true">refresh</span><span>Index papers</span></button></div><p class="form-status" id="ask-index-status" role="status"></p></div>
 </main>`));
 });
@@ -941,6 +941,23 @@ app.post("/api/search", async (c) => {
     return c.json({ ...result, groups, warnings });
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The library search could not be completed.");
+  }
+});
+
+app.post("/api/search/rephrase", async (c) => {
+  try {
+    const body = await c.req.json<{ query?: string }>();
+    const query = body.query?.trim() || "";
+    if (!query) return jsonError(c, 400, "QUERY_REQUIRED", "Enter a question or topic to rephrase.");
+    if (query.length > 1000) return jsonError(c, 400, "QUERY_TOO_LONG", "Keep the library query under 1,000 characters.");
+    if (!c.env.OPENAI_API_KEY) return jsonError(c, 503, "LLM_UNAVAILABLE", "Rephrasing is unavailable until an OpenAI key is configured.");
+    const analysis = analysisRepository(c.env);
+    const settings = await analysis.getSettings();
+    const client = new OpenAiLlmClient({ openaiApiKey: async () => c.env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) });
+    const rewritten = await rephraseLibraryQuery(query, client, settings.openaiModel);
+    return c.json({ query: rewritten });
+  } catch (error) {
+    return jsonError(c, 502, errorMessage(error), "The library query could not be rephrased. Please retry.");
   }
 });
 

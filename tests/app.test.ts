@@ -103,6 +103,8 @@ describe("HTTP application", () => {
     const askPage = await (await context.app.request("/ask")).text();
     expect(askPage).toContain('data-library-query');
     expect(askPage).toContain('data-library-query-submit');
+    expect(askPage).toContain('data-library-query-rephrase');
+    expect(askPage).toContain('>Rephrase</span>');
     expect(askPage).toContain('form="library-query-form"');
     expect(askPage).toContain("<h1>Indexing</h1>");
     expect(askPage).not.toContain("Ask a question about your library");
@@ -130,6 +132,15 @@ describe("HTTP application", () => {
     expect(editHtml).toContain("data-extract-abstract");
     expect(editHtml).toContain(">From PDF</span>");
     expect(editHtml).toContain(">Suggest</span>");
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
+  it("rephrases a library query with the configured LLM", async () => {
+    const context = testApp(undefined, undefined, { llmClient: { complete: async () => "uncertainty calibration methods without ensemble models" } });
+    const response = await context.app.request("/api/library/query/rephrase", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "How can I find papers about calibration without ensembles?" }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ query: "uncertainty calibration methods without ensemble models" });
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });
@@ -677,7 +688,7 @@ describe("HTTP application", () => {
     const archive = await unzipper.Open.buffer(Buffer.from(backupBytes));
     expect(archive.files.map((file) => file.path)).toEqual(expect.arrayContaining(["format.json", "library.sqlite", `pdfs/${saved.paper.id}.pdf`]));
     const format = JSON.parse((await archive.files.find((file) => file.path === "format.json")!.buffer()).toString("utf8"));
-    expect(format).toMatchObject({ format: "personal-paper-library-snapshot", formatVersion: 1, appVersion: "2.0.1" });
+    expect(format).toMatchObject({ format: "personal-paper-library-snapshot", formatVersion: 1, appVersion: "2.1.0" });
     expect(archive.files.some((file) => file.path === `pdfs/${saved.paper.id}.pdf`)).toBe(true);
 
     const target = testApp();

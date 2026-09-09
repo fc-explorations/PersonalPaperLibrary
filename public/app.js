@@ -610,6 +610,26 @@ libraryQueryForm?.addEventListener("submit", async (event) => {
   }
 });
 
+libraryQueryForm?.querySelector("[data-library-query-rephrase]")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const query = value(libraryQueryForm, "query").trim();
+  if (!query) {
+    if (libraryQueryStatus) { libraryQueryStatus.textContent = "Enter a question or search idea first."; libraryQueryStatus.classList.add("status-error"); }
+    return;
+  }
+  button.disabled = true;
+  if (libraryQueryStatus) { libraryQueryStatus.textContent = "Rephrasing the query…"; libraryQueryStatus.classList.remove("status-error"); }
+  try {
+    const body = await jsonRequest("/api/library/query/rephrase", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+    setValue(libraryQueryForm, "query", body.query);
+    if (libraryQueryStatus) libraryQueryStatus.textContent = "Query rephrased. Review it, then ask.";
+  } catch (error) {
+    if (libraryQueryStatus) { libraryQueryStatus.textContent = clientErrorMessage(error); libraryQueryStatus.classList.add("status-error"); }
+  } finally {
+    button.disabled = false;
+  }
+});
+
 const libraryIndexButtons = [...document.querySelectorAll("[data-library-index-continue]")];
 let libraryIndexPolling = false;
 libraryIndexButtons.forEach((button) => button.addEventListener("click", async () => {

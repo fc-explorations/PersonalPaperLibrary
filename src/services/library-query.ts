@@ -4,6 +4,23 @@ import type { SummaryRecord } from "../repositories/analysis.js";
 
 export type LibraryGroup = { name: string; description: string; paperIds: string[]; evidence: string };
 
+export async function rephraseLibraryQuery(query: string, client: LlmClient, model: string): Promise<string> {
+  const response = await client.complete({
+    model,
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: "Rewrite academic library search requests to improve retrieval. Capture the user's intent, key concepts, entities, methods, populations, outcomes, and constraints. Return only one concise rewritten search query. Do not answer the request, explain the rewrite, or invent facts. Preserve exclusions and keep the result under 1,000 characters." },
+      { role: "user", content: query },
+    ],
+  });
+  const rewritten = response.trim()
+    .replace(/^(?:rephrased|rewritten)\s+(?:query|search)\s*:\s*/i, "")
+    .replace(/^`|`$/g, "")
+    .trim();
+  if (!rewritten) throw new Error("LIBRARY_REPHRASE_EMPTY");
+  return rewritten.slice(0, 1000);
+}
+
 function parseJson(value: string): unknown {
   const fenced = value.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1] || value;
   return JSON.parse(fenced.trim());

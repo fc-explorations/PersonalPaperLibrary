@@ -1121,6 +1121,18 @@ async function initAsk() {
       renderResults(body); showCoverage(body.coverage); setStatus(status, `${body.hits.length} result${body.hits.length === 1 ? "" : "s"}.`);
     } catch (error) { setStatus(status, error.message, true); }
   });
+  form.querySelector("[data-ask-rephrase]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!query.value.trim()) { setStatus(status, "Enter a question or topic first.", true); return; }
+    button.disabled = true;
+    try {
+      setStatus(status, "Rephrasing the query…");
+      const body = await request("/api/search/rephrase", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: query.value.trim() }) });
+      query.value = body.query || query.value;
+      setStatus(status, "Query rephrased. Review it, then ask.");
+    } catch (error) { setStatus(status, error.message, true); }
+    finally { button.disabled = false; }
+  });
 }
 
 async function runHostedQuestion(paperId, questionId) {
