@@ -136,17 +136,20 @@ function hostedShell(title: string, page: string, body: string): string {
   const withBackupPanel = page === "settings"
     ? withPageSizeSettings.replace(
       /<section class="panel"><div class="section-heading"><h2>Hosted backup<\/h2>[\s\S]*?<\/section>/,
-      `<section class="panel hosted-backup-panel"><div class="section-heading backup-heading"><div><h2>Hosted backup</h2><p class="muted backup-description">Automatic backups run daily at midnight UTC and monthly on the first day of the month. Daily copies are kept for 30 days; monthly copies are kept for 12 months.</p></div><span id="backup-status" class="muted" role="status"></span></div><div class="backup-actions"><button id="backup-create" class="button" type="button">Create hosted backup</button><a id="backup-download" class="button button-secondary" hidden>Download manifest</a></div><div class="backup-library"><div class="backup-library-heading"><div><h3>Available backups</h3><p class="muted">Choose a daily or monthly copy to download it or prepare it for restoration.</p></div><button id="backup-refresh" class="button button-secondary button-small" type="button">Refresh</button></div><p id="backup-list-status" class="form-status" role="status"></p><div id="backup-list" class="backup-list"></div></div><div class="backup-restore"><h3>Restore a backup</h3><p class="muted">Select a backup above, or paste a backup ID if you received one separately.</p><label>Selected backup<input id="backup-id" autocomplete="off" placeholder="Select or paste a backup ID"></label><label>Restore mode<select id="backup-mode"><option value="merge">Merge into current library</option><option value="replace">Replace current library (creates a safety backup)</option></select></label><div class="form-actions backup-restore-actions"><button id="backup-restore" class="button button-secondary" type="button">Restore backup</button></div></div></section>`,
+      `<section class="panel hosted-backup-panel"><div class="section-heading backup-heading"><div><h2>Hosted backup</h2><p class="muted backup-description">Automatic backups run daily at midnight UTC and monthly on the first day of the month. Only the newest daily and monthly copy is retained.</p></div><span id="backup-status" class="muted" role="status"></span></div><div class="backup-actions"><button id="backup-create" class="button" type="button">Create hosted backup</button><a id="backup-download" class="button button-secondary" hidden>Download manifest</a></div><div class="backup-library"><div class="backup-library-heading"><div><h3>Available backups</h3><p class="muted">Choose a daily or monthly copy to download it or prepare it for restoration.</p></div><button id="backup-refresh" class="button button-secondary button-small" type="button">Refresh</button></div><p id="backup-list-status" class="form-status" role="status"></p><div id="backup-list" class="backup-list"></div></div><div class="backup-restore"><h3>Restore a backup</h3><p class="muted">Select a backup above, or paste a backup ID if you received one separately.</p><label>Selected backup<input id="backup-id" autocomplete="off" placeholder="Select or paste a backup ID"></label><label>Restore mode<select id="backup-mode"><option value="merge">Merge into current library</option><option value="replace">Replace current library (creates a safety backup)</option></select></label><div class="form-actions backup-restore-actions"><button id="backup-restore" class="button button-secondary" type="button">Restore backup</button></div></div></section>`,
     )
     : withPageSizeSettings;
-  const withCredits = page === "settings"
-    ? withBackupPanel.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="settings-subsection credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION}</p></div></div></section></main>`)
+  const withInitialization = page === "settings"
+    ? withBackupPanel.replace('<button id="backup-create" class="button" type="button">Create hosted backup</button>', '<button id="backup-create" class="button" type="button">Create hosted backup</button><button id="backup-initialize" class="button button-secondary" type="button">Initialize daily + monthly</button>')
     : withBackupPanel;
+  const withCredits = page === "settings"
+    ? withInitialization.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="settings-subsection credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa</p><p><strong>Version:</strong> ${APP_VERSION}</p></div></div></section></main>`)
+    : withInitialization;
   return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=55")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=31")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=57")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=33")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -657,38 +660,64 @@ app.get("/api/export/metadata", async (c) => {
   });
 });
 
-async function createHostedBackup(env: CloudflareBindings, options: { kind?: CloudBackupKind } = {}): Promise<{ storage: R2Storage; manifest: CloudBackupManifest }> {
+async function createHostedBackups(env: CloudflareBindings, options: Array<{ kind?: CloudBackupKind }>): Promise<Array<{ storage: R2Storage; manifest: CloudBackupManifest }>> {
   const storage = new R2Storage(env.PAPER_PDFS);
   const repo = new D1PaperRepository(env.DB);
   const analysis = analysisRepository(env);
-  const backupId = globalThis.crypto.randomUUID();
+  const summaries = await analysis.listSummariesByPaper();
+  const questions = await analysis.listQuestionsByPaper(true);
   const createdAt = new Date().toISOString();
-  const ttl = options.kind === "monthly" ? CLOUD_BACKUP_MONTHLY_TTL_MS : CLOUD_BACKUP_TTL_MS;
-  const expiresAt = new Date(Date.now() + ttl).toISOString();
-  const entries: CloudBackupManifest["papers"] = [];
+  const backups = options.map((option) => {
+    const ttl = option.kind === "monthly" ? CLOUD_BACKUP_MONTHLY_TTL_MS : CLOUD_BACKUP_TTL_MS;
+    return { backupId: globalThis.crypto.randomUUID(), expiresAt: new Date(Date.now() + ttl).toISOString(), kind: option.kind, entries: [] as CloudBackupManifest["papers"] };
+  });
   try {
-    for await (const paper of repo.iterateAll()) {
-      if (entries.length >= CLOUD_BACKUP_MAX_PAPERS) throw new Error("BACKUP_TOO_MANY_PAPERS");
-      let pdf;
-      if (paper.r2Key) {
-        const bytes = await storage.get(paper.id);
-        if (!bytes) throw new Error("BACKUP_PDF_MISSING");
-        const stored = await storage.putBackupPdf(backupId, paper.id, bytes);
-        if (paper.pdfSha256 && paper.pdfSha256 !== stored.sha256) throw new Error("BACKUP_PDF_HASH_MISMATCH");
-        pdf = stored;
-      }
-      entries.push({ paper: backupPaperMetadata(paper), pdf, summary: (await analysis.getSummary(paper.id)) || undefined, questions: await analysis.listQuestions(paper.id, true, false) });
+    const papers = [];
+    // Keep the hydrated author/tag queries below D1's bound-variable limit.
+    for await (const paper of repo.iterateAll(50)) {
+      if (papers.length >= CLOUD_BACKUP_MAX_PAPERS) throw new Error("BACKUP_TOO_MANY_PAPERS");
+      papers.push(paper);
     }
-    const manifest = createCloudBackupManifest({ backupId, createdAt, expiresAt, papers: entries, kind: options.kind });
-    await storage.putBackupManifest(backupId, JSON.stringify(manifest, null, 2));
-    return { storage, manifest };
+    // R2 operations are network-bound; process small batches concurrently while
+    // sharing one captured library state across all requested backup kinds.
+    for (let start = 0; start < papers.length; start += 10) {
+      const chunk = papers.slice(start, start + 10);
+      const rows = await Promise.all(chunk.map(async (paper) => {
+        let bytes: Uint8Array | null = null;
+        if (paper.r2Key) {
+          bytes = await storage.get(paper.id);
+          if (!bytes) throw new Error("BACKUP_PDF_MISSING");
+        }
+        const pdfs = await Promise.all(backups.map(async (backup) => {
+          if (!bytes) return undefined;
+          const stored = await storage.putBackupPdf(backup.backupId, paper.id, bytes);
+          if (paper.pdfSha256 && paper.pdfSha256 !== stored.sha256) throw new Error("BACKUP_PDF_HASH_MISMATCH");
+          return stored;
+        }));
+        return { paper, pdfs };
+      }));
+      for (const { paper, pdfs } of rows) {
+        backups.forEach((backup, index) => {
+          backup.entries.push({ paper: backupPaperMetadata(paper), pdf: pdfs[index], summary: summaries.get(paper.id), questions: questions.get(paper.id) || [] });
+        });
+      }
+    }
+    return await Promise.all(backups.map(async (backup) => {
+      const manifest = createCloudBackupManifest({ backupId: backup.backupId, createdAt, expiresAt: backup.expiresAt, papers: backup.entries, kind: backup.kind });
+      await storage.putBackupManifest(backup.backupId, JSON.stringify(manifest, null, 2));
+      return { storage, manifest };
+    }));
   } catch (error) {
-    await storage.deleteBackup(backupId).catch(() => {});
+    await Promise.all(backups.map((backup) => storage.deleteBackup(backup.backupId).catch(() => {})));
     throw error;
   }
 }
 
-async function cleanupExpiredHostedBackups(env: CloudflareBindings, now = Date.now()): Promise<number> {
+async function createHostedBackup(env: CloudflareBindings, options: { kind?: CloudBackupKind } = {}): Promise<{ storage: R2Storage; manifest: CloudBackupManifest }> {
+  return (await createHostedBackups(env, [options]))[0];
+}
+
+async function cleanupHostedBackups(env: CloudflareBindings, keepByKind: Partial<Record<CloudBackupKind, string>> = {}, now = Date.now()): Promise<number> {
   const storage = new R2Storage(env.PAPER_PDFS);
   let removed = 0;
   for (const backupId of await storage.listBackupIds()) {
@@ -696,7 +725,8 @@ async function cleanupExpiredHostedBackups(env: CloudflareBindings, now = Date.n
     if (!raw) continue;
     try {
       const manifest = parseCloudBackupManifest(JSON.parse(raw), 0);
-      if (Date.parse(manifest.expiresAt) <= now) {
+      const superseded = manifest.kind !== undefined && keepByKind[manifest.kind] !== undefined && keepByKind[manifest.kind] !== manifest.backupId;
+      if (Date.parse(manifest.expiresAt) <= now || superseded) {
         await storage.deleteBackup(backupId);
         removed += 1;
       }
@@ -707,6 +737,10 @@ async function cleanupExpiredHostedBackups(env: CloudflareBindings, now = Date.n
   return removed;
 }
 
+function hostedBackupDetails(manifest: CloudBackupManifest) {
+  return { backupId: manifest.backupId, kind: manifest.kind || "manual", createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` };
+}
+
 app.get("/api/backups", async (c) => {
   const storage = new R2Storage(c.env.PAPER_PDFS);
   const backups: Array<{ backupId: string; kind: CloudBackupKind; createdAt: string; expiresAt: string; papers: number; pdfs: number; manifestUrl: string }> = [];
@@ -715,7 +749,7 @@ app.get("/api/backups", async (c) => {
     if (!raw) continue;
     try {
       const manifest = parseCloudBackupManifest(JSON.parse(raw));
-      backups.push({ backupId: manifest.backupId, kind: manifest.kind || "manual", createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` });
+      backups.push(hostedBackupDetails(manifest));
     } catch {
       // Expired or malformed manifests are not offered as restorable backups.
     }
@@ -727,9 +761,19 @@ app.get("/api/backups", async (c) => {
 app.post("/api/backups", async (c) => {
   try {
     const { manifest } = await createHostedBackup(c.env);
-    return c.json({ backupId: manifest.backupId, createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` }, 201);
+    return c.json(hostedBackupDetails(manifest), 201);
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The hosted backup could not be created.");
+  }
+});
+
+app.post("/api/backups/initialize", async (c) => {
+  try {
+    const [daily, monthly] = await createHostedBackups(c.env, [{ kind: "daily" }, { kind: "monthly" }]);
+    await cleanupHostedBackups(c.env, { daily: daily.manifest.backupId, monthly: monthly.manifest.backupId });
+    return c.json({ daily: hostedBackupDetails(daily.manifest), monthly: hostedBackupDetails(monthly.manifest) }, 201);
+  } catch (error) {
+    return jsonError(c, 500, errorMessage(error), "The initial daily and monthly backups could not be created.");
   }
 });
 
@@ -1377,8 +1421,8 @@ const worker = {
   async scheduled(controller: ScheduledController, env: CloudflareBindings): Promise<void> {
     const kind = controller.cron === MONTHLY_BACKUP_CRON ? "monthly" : controller.cron === DAILY_BACKUP_CRON ? "daily" : undefined;
     if (!kind) return;
-    await createHostedBackup(env, { kind });
-    await cleanupExpiredHostedBackups(env);
+    const created = await createHostedBackup(env, { kind });
+    await cleanupHostedBackups(env, { [kind]: created.manifest.backupId });
   },
   async queue(batch: QueueBatch, env: CloudflareBindings): Promise<void> {
     const jobs = analysisJobs(env);

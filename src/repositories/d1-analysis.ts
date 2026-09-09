@@ -61,6 +61,27 @@ export class D1AnalysisRepository {
     } : null;
   }
 
+  async listSummariesByPaper(): Promise<Map<string, SummaryRecord>> {
+    const rows = await all<D1Row>(this.db, "SELECT * FROM paper_summaries");
+    const summaries = new Map<string, SummaryRecord>();
+    for (const row of rows) {
+      const paperId = String(row.paper_id);
+      summaries.set(paperId, {
+        paperId,
+        content: String(row.content),
+        provider: String(row.provider),
+        model: String(row.model),
+        generatedAt: String(row.generated_at),
+        durationMs: row.duration_ms === null || row.duration_ms === undefined ? undefined : Number(row.duration_ms),
+        sourcePdfSha256: optional(row.source_pdf_sha256),
+        promptVersion: String(row.prompt_version),
+        status: String(row.status) as SummaryRecord["status"],
+        errorMessage: optional(row.error_message),
+      });
+    }
+    return summaries;
+  }
+
   async saveSummary(summary: SummaryRecord): Promise<void> {
     const now = new Date().toISOString();
     await this.db.prepare("INSERT INTO paper_summaries (paper_id, content, provider, model, generated_at, duration_ms, source_pdf_sha256, prompt_version, status, error_message, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(paper_id) DO UPDATE SET content=excluded.content, provider=excluded.provider, model=excluded.model, generated_at=excluded.generated_at, duration_ms=excluded.duration_ms, source_pdf_sha256=excluded.source_pdf_sha256, prompt_version=excluded.prompt_version, status=excluded.status, error_message=excluded.error_message, updated_at=excluded.updated_at").bind(summary.paperId, summary.content, summary.provider, summary.model, summary.generatedAt, summary.durationMs ?? null, summary.sourcePdfSha256 || null, summary.promptVersion, summary.status, summary.errorMessage || null, now).run();
@@ -122,6 +143,44 @@ export class D1AnalysisRepository {
         },
       };
     });
+  }
+
+  async listQuestionsByPaper(includeInactive = false): Promise<Map<string, StoredQuestion[]>> {
+    const rows = await all<D1Row>(this.db, `SELECT q.*, a.content AS answer_content, a.provider AS answer_provider, a.model AS answer_model, a.generated_at AS answer_generated_at, a.duration_ms AS answer_duration_ms, a.source_pdf_sha256 AS answer_source_pdf_sha256, a.prompt_version AS answer_prompt_version, a.question_definition_hash AS answer_question_definition_hash, a.status AS answer_status, a.error_message AS answer_error_message FROM paper_questions q LEFT JOIN paper_question_answers a ON a.paper_id = q.paper_id AND a.question_id = q.question_id ${includeInactive ? "" : "WHERE q.is_active = 1"} ORDER BY q.paper_id, q.question_order, q.created_at`);
+    const questions = new Map<string, StoredQuestion[]>();
+    for (const row of rows) {
+      const questionDefinitionHash = optional(row.answer_question_definition_hash);
+      const answerStatus = row.answer_status === null || row.answer_status === undefined ? undefined : String(row.answer_status) as QuestionAnswer["status"];
+      const status = answerStatus && questionDefinitionHash !== String(row.definition_hash) ? "stale" : answerStatus;
+      const paperId = String(row.paper_id);
+      const question: StoredQuestion = {
+        paperId,
+        id: String(row.question_id),
+        groupId: String(row.group_id),
+        groupTitle: String(row.group_title),
+        groupDescription: String(row.group_description),
+        label: String(row.label),
+        prompt: String(row.prompt),
+        order: Number(row.question_order),
+        definitionHash: String(row.definition_hash),
+        isCustom: Boolean(row.is_custom),
+        isActive: Boolean(row.is_active),
+        answer: row.answer_content === null || row.answer_content === undefined ? undefined : {
+          content: String(row.answer_content),
+          provider: String(row.answer_provider),
+          model: String(row.answer_model),
+          generatedAt: String(row.answer_generated_at),
+          durationMs: row.answer_duration_ms === null || row.answer_duration_ms === undefined ? undefined : Number(row.answer_duration_ms),
+          sourcePdfSha256: optional(row.answer_source_pdf_sha256),
+          promptVersion: String(row.answer_prompt_version),
+          questionDefinitionHash,
+          status: status || "stale",
+          errorMessage: optional(row.answer_error_message),
+        },
+      };
+      questions.set(paperId, [...(questions.get(paperId) || []), question]);
+    }
+    return questions;
   }
 
   async addQuestion(paperId: string, label: string, prompt: string): Promise<StoredQuestion> {

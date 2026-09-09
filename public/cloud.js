@@ -989,6 +989,7 @@ async function initSettings() {
   const backupMode = document.querySelector("#backup-mode");
   const backupRestore = document.querySelector("#backup-restore");
   const backupStatus = document.querySelector("#backup-status");
+  const backupInitialize = document.querySelector("#backup-initialize");
   const backupRefresh = document.querySelector("#backup-refresh");
   const backupList = document.querySelector("#backup-list");
   const backupListStatus = document.querySelector("#backup-list-status");
@@ -1004,11 +1005,23 @@ async function initSettings() {
     try {
       setStatus(backupListStatus, "Loading backups…");
       const result = await request("/api/backups");
-      renderBackups(result.backups || []);
-      setStatus(backupListStatus, result.backups?.length ? "" : "No active backups found yet.");
+      const backups = result.backups || [];
+      renderBackups(backups);
+      if (backupInitialize) backupInitialize.hidden = backups.some((backup) => backup.kind === "daily") && backups.some((backup) => backup.kind === "monthly");
+      setStatus(backupListStatus, "");
     } catch (error) { setStatus(backupListStatus, error.message, true); }
   };
   backupRefresh?.addEventListener("click", loadBackups);
+  backupInitialize?.addEventListener("click", async () => {
+    backupInitialize.disabled = true;
+    try {
+      setStatus(backupStatus, "Creating the initial daily and monthly backups…");
+      const result = await request("/api/backups/initialize", { method: "POST" });
+      setStatus(backupStatus, `Initial daily and monthly backups ready: ${result.daily.papers} paper${result.daily.papers === 1 ? "" : "s"}, ${result.daily.pdfs} PDF${result.daily.pdfs === 1 ? "" : "s"}.`);
+      await loadBackups();
+    } catch (error) { setStatus(backupStatus, error.message, true); }
+    finally { backupInitialize.disabled = false; }
+  });
   backupList?.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target.closest("[data-backup-select]") : null;
     if (!target) return;

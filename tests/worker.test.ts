@@ -162,7 +162,9 @@ describe("Cloudflare Worker API", () => {
   it("creates daily and monthly backups from scheduled triggers", async () => {
     const env = bindings();
     await worker.scheduled({ cron: "0 0 * * *", scheduledTime: Date.now() }, env);
+    await worker.scheduled({ cron: "0 0 * * *", scheduledTime: Date.now() + 1 }, env);
     await worker.scheduled({ cron: "0 0 1 * *", scheduledTime: Date.now() }, env);
+    await worker.scheduled({ cron: "0 0 1 * *", scheduledTime: Date.now() + 1 }, env);
     const manifests = [...env.r2.objects.entries()]
       .filter(([key]) => key.endsWith("/manifest.json"))
       .map(([, value]) => JSON.parse(new TextDecoder().decode(value.bytes)) as { kind: string; expiresAt: string });
@@ -170,6 +172,15 @@ describe("Cloudflare Worker API", () => {
     expect(Date.parse(manifests.find((manifest) => manifest.kind === "monthly")!.expiresAt) - Date.now()).toBeGreaterThan(364 * 24 * 60 * 60 * 1000);
     const listing = await worker.request("/api/backups", {}, env);
     expect((await listing.json() as { backups: Array<{ kind: string }> }).backups.map((backup) => backup.kind).sort()).toEqual(["daily", "monthly"]);
+    env.d1.db.close();
+  });
+
+  it("initializes identical daily and monthly backups", async () => {
+    const env = bindings();
+    const response = await worker.request("/api/backups/initialize", { method: "POST" }, env);
+    expect(response.status).toBe(201);
+    const result = await response.json() as { daily: { kind: string; papers: number; pdfs: number }; monthly: { kind: string; papers: number; pdfs: number } };
+    expect(result).toMatchObject({ daily: { kind: "daily", papers: 0, pdfs: 0 }, monthly: { kind: "monthly", papers: 0, pdfs: 0 } });
     env.d1.db.close();
   });
 
