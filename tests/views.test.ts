@@ -21,6 +21,14 @@ describe("theme settings rendering", () => {
     expect(html).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
     expect(html).toContain(`Version:</strong> ${APP_VERSION_LABEL}`);
   });
+
+  it("shows collapsible LLM computer-use guidance first in settings", () => {
+    const html = renderSettingsPage();
+
+    expect(html.indexOf('<details class="settings-group howto-group">')).toBeLessThan(html.indexOf("Accent color"));
+    expect(html).toContain("<summary>HowTo</summary>");
+    expect(html).toContain("Never invent metadata");
+  });
 });
 
 describe("analysis Markdown rendering", () => {

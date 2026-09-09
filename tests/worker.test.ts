@@ -253,6 +253,8 @@ describe("Cloudflare Worker API", () => {
     expect(settingsHtml).toContain("<h2>Credits</h2>");
     expect(settingsHtml).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
     expect(settingsHtml).toContain("<strong>Version:</strong> v2.0.1");
+    expect(settingsHtml).toContain("<summary>HowTo</summary>");
+    expect(settingsHtml).toContain("Never invent metadata");
     const library = await worker.request("/", {}, env);
     expect(await library.text()).toMatch(/id="library-search-form"[\s\S]*id="library-tags"[\s\S]*id="bulk-actions"/);
     const paper = await worker.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ui-edit-paper", title: "UI edit paper", metadataSource: "manual" }) }, env);
