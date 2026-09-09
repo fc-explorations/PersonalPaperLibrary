@@ -948,6 +948,12 @@ function enablePaperAutosave(form) {
 }
 
 document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach(enablePaperAutosave);
+document.querySelectorAll("[data-bibtex-import]").forEach((input) => {
+  const form = document.querySelector(`#${input.getAttribute("form")}`) || input.closest("[data-paper-form]");
+  if (!form || form.dataset.mode !== "edit") return;
+  input.addEventListener("input", () => schedulePaperAutosave(form));
+  input.addEventListener("change", () => schedulePaperAutosave(form, 0));
+});
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = button.form || button.closest("[data-paper-form]");

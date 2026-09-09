@@ -735,6 +735,12 @@ function enableHostedPaperAutosave(form) {
 }
 
 document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach(enableHostedPaperAutosave);
+document.querySelectorAll("[data-bibtex-import]").forEach((input) => {
+  const form = document.querySelector(`#${input.getAttribute("form")}`) || input.closest("[data-paper-form]");
+  if (!form || form.dataset.mode !== "edit") return;
+  input.addEventListener("input", () => scheduleHostedPaperAutosave(form));
+  input.addEventListener("change", () => scheduleHostedPaperAutosave(form, 0));
+});
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = document.querySelector(`#${button.getAttribute("form") || "paper-form-new"}`);
