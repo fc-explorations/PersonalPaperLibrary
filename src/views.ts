@@ -180,6 +180,10 @@ function openIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>`;
 }
 
+function paperIcon(): string {
+  return `<span class="material-symbols-outlined" aria-hidden="true">description</span>`;
+}
+
 function goIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>`;
 }
@@ -574,6 +578,7 @@ export function renderQuestionsSection(questions: StoredQuestion[]): string {
 
 export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | null, questions: StoredQuestion[] = []): string {
   const paperLine = paperHeaderSummary(paper);
+  const pdfLink = paper.r2Key ? `<a class="paper-pdf-link" href="/api/papers/${encodeURIComponent(paper.id)}/pdf" target="_blank" rel="noopener noreferrer" aria-label="Open PDF" title="Open PDF">${paperIcon()}</a>` : "";
   const citeSection = renderCitationSection(paper);
   const metadata = [
     metadataRow("Authors", paper.authors.join(", ")),
@@ -590,7 +595,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
   const abstractSection = paper.abstract?.trim() ? `<section class="detail-section abstract-section"><h2>Abstract</h2><p class="abstract">${renderText(paper.abstract)}</p></section>` : "";
   const tagsSection = paper.tags.length ? `<section class="detail-section detail-tags"><h2>Tags</h2><div class="paper-tags large">${tagLinks(paper.tags)}</div></section>` : "";
   const body = `<section class="page-heading paper-heading"><h1>Paper</h1><div class="page-actions"><a class="icon-button" href="/papers/${paper.id}/edit" aria-label="Edit paper" title="Edit paper">${editIcon()}<span>Edit</span></a><button class="icon-button icon-button-danger" data-delete-paper="${paper.id}" aria-label="Delete paper" title="Delete paper">${deleteIcon()}<span>Del</span></button></div></section>
-  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><h1>${renderText(paper.title)}</h1>${paperLine ? `<p class="muted">${paperLine}</p>` : ""}</header>${abstractSection}${tagsSection}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadata}</dl></details>${citeSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}</div></article>`;
+  <article class="panel paper-detail" data-paper-id="${escapeHtml(paper.id)}"><div class="detail-content"><header class="paper-detail-heading"><div class="paper-title-row"><h1>${renderText(paper.title)}</h1>${pdfLink}</div>${paperLine ? `<p class="muted">${paperLine}</p>` : ""}</header>${abstractSection}${tagsSection}<details class="detail-section metadata-panel" aria-label="Paper information"><summary>Paper information</summary><dl class="metadata">${metadata}</dl></details>${citeSection}${renderSummarySection(summary)}${renderQuestionsSection(questions)}</div></article>`;
   return layout(paper.title, body);
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAddPage, renderBibtexExport, renderEditPage, renderLibrary, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
+import { renderAddPage, renderBibtexExport, renderEditPage, renderLibrary, renderMarkdown, renderPaperForm, renderPaperPage, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION_LABEL } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -87,6 +87,19 @@ describe("paper form rendering", () => {
 
     expect(html).toContain('name="bibtex"');
     expect(html).toContain("howpublished = {A useful detail}");
+  });
+});
+
+describe("paper PDF link rendering", () => {
+  it("shows a right-aligned PDF icon only when a PDF is stored", () => {
+    const base = { id: "paper-1", title: "Paper title", authors: [], categories: [], tags: [] } as any;
+    const withoutPdf = renderPaperPage(base);
+    const withPdf = renderPaperPage({ ...base, r2Key: "papers/paper-1.pdf" });
+
+    expect(withoutPdf).not.toContain("paper-pdf-link");
+    expect(withPdf).toContain('class="paper-title-row"');
+    expect(withPdf).toContain('class="paper-pdf-link" href="/api/papers/paper-1/pdf" target="_blank"');
+    expect(withPdf).toContain(">description</span>");
   });
 });
 

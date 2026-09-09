@@ -71,7 +71,7 @@ a { color: var(--accent); }
 .site-header .brand::after { content: ""; position: absolute; z-index: 0; left: calc(var(--brand-pile-size) + var(--brand-gap)); bottom: .08em; width: 0; height: max(2px, .06em); border-radius: 999px; background: var(--text); transition: width .5s ease; }
 .site-header .brand:hover::after, .site-header .brand:focus-visible::after { width: calc(100% - var(--brand-pile-size) - var(--brand-gap) - .5em); }
 .site-header .brand .wordmark { position: relative; z-index: 1; }
-.site-header .brand .brand-version { position: relative; z-index: 1; align-self: flex-end; margin: 0 0 .32em .35rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
+.site-header .brand .brand-version { position: relative; z-index: 1; align-self: baseline; margin: 0 0 0 .35rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .site-header .brand::after { transition: none; } }
 .header-library-button { border-color: transparent; }
 .header-library-button:hover { background: var(--accent-soft); }
@@ -97,6 +97,11 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 .55rem; }
 .paper-heading { display: flex; align-items: center; justify-content: space-between; padding-top: 28px; padding-bottom: 16px; }
 .paper-heading .page-actions { justify-content: flex-end; margin-top: 0; }
 .paper-detail-heading { margin: 0; padding: 0 0 24px 24px; border-bottom: 1px solid var(--border); }
+.paper-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.paper-title-row h1 { min-width: 0; margin-top: 0; }
+.paper-pdf-link { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; margin-top: .12em; padding: 4px; border-radius: 6px; color: var(--accent); line-height: 1; text-decoration: none; }
+.paper-pdf-link:hover { background: var(--accent-soft); }
+.paper-pdf-link .material-symbols-outlined { font-size: 1.7rem; }
 .paper-detail-heading h1 { font-size: clamp(1.7rem, 3.8vw, 2.5rem); }
 .paper-detail-heading .muted { color: var(--text); font-style: normal; }
 .paper-authors { font-style: italic; }
@@ -493,7 +498,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 25px 0; }
 @media (max-width: 720px) { .form-utility-button { width: min(140px, 100%); min-width: 0; } }
 @media (max-width: 720px) { .library-primary-actions { width: 100%; } .library-primary-actions .ask-library-button { flex: 1; } .ask-heading { align-items: stretch; } .ask-library-page, .ask-indexing-panel { padding: 22px 18px 18px; } .ask-query-input-row { align-items: stretch; flex-direction: column; } .ask-query-controls-row { grid-template-columns: 1fr; } .ask-submit, .ask-rephrase { width: 100%; } .ask-query-toolbar { align-items: stretch; flex-direction: column; } .ask-tag-filter { display: flex; align-items: stretch; flex-direction: column; } .ask-tag-selection { width: 100%; } .ask-group-toggle { justify-content: flex-start; } .ask-indexing-row { align-items: flex-start; flex-direction: column; } .ask-indexing-actions { width: 100%; justify-content: flex-end; } .ask-index-button { width: auto; } }
 @media (max-width: 720px) { .site-header .brand { font-size: clamp(2.05rem, 10vw, 4rem); } }
-@media (max-width: 720px) { .site-header .brand .brand-version { margin-left: .225rem; margin-bottom: .28em; font-size: .6rem; } }
+@media (max-width: 720px) { .site-header .brand .brand-version { margin-left: .225rem; font-size: .6rem; } }
 @media (max-width: 720px) { .hosted-backup-panel { padding: 24px 18px; } .backup-heading, .backup-library-heading { align-items: stretch; flex-direction: column; } .backup-entry { align-items: stretch; flex-direction: column; gap: 12px; } .backup-entry-actions { justify-content: flex-start; } .backup-entry-actions .button { flex: 1 1 auto; } .backup-restore { grid-template-columns: 1fr; } .backup-restore > h3, .backup-restore > p, .backup-restore > label, .backup-restore-actions { grid-column: 1; grid-row: auto; } .backup-restore-actions .button { width: 100%; } }
 .edit-page .edit-action-button { width: 140px; min-width: 140px; min-height: var(--control-height); padding: .68rem 1rem; font-size: inherit; }
 @media (max-width: 720px) { .edit-page > .edit-heading { flex-direction: row; align-items: center; gap: 12px; padding: 24px 0 16px; } .edit-page > .edit-heading h1 { min-width: 0; margin: 0; font-size: clamp(1.55rem, 7vw, 2.2rem); } .edit-page .edit-actions-top { flex: 0 0 auto; } .edit-page .edit-actions-top .form-actions-row { flex-direction: row; align-items: center; } .edit-page .edit-actions-top .edit-action-button { width: min(140px, 100%); min-width: 0; } }

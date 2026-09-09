@@ -126,7 +126,8 @@ describe("HTTP application", () => {
     expect(paperPage).toContain("<dt>Accepted venue</dt><dd>NeurIPS</dd>");
     expect(paperPage).toContain("booktitle = {NeurIPS}");
     expect(paperPage).toContain("data-copy-citation");
-    expect(paperPage).not.toContain('aria-label="Open PDF"');
+    expect(paperPage).toContain('class="paper-pdf-link"');
+    expect(paperPage).toContain('href="/api/papers/' + saved.paper.id + '/pdf" target="_blank"');
     const editPage = await context.app.request(`/papers/${saved.paper.id}/edit`);
     const editHtml = await editPage.text();
     expect(editHtml).toContain(`href="/api/papers/${saved.paper.id}/pdf"`);
