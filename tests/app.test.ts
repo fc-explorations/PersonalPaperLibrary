@@ -94,7 +94,8 @@ describe("HTTP application", () => {
     const paperPage = await (await context.app.request(`/papers/${saved.paper.id}`)).text();
     expect(paperPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');
     expect(paperPage.indexOf(">Cite</summary>")).toBeLessThan(paperPage.indexOf(">Summary</span>"));
-    expect(paperPage).toContain('<section class="detail-section analysis-questions" data-questions-section><details class="analysis-questions-disclosure"><summary><span>Questions</span><span class="question-overview-progress"');
+    expect(paperPage).toContain('<section class="detail-section analysis-questions" data-questions-section><details class="analysis-questions-disclosure"><summary><svg class="section-heading-icon"');
+    expect(paperPage).toContain('<span>Questions</span><span class="question-overview-progress"');
     expect(paperPage).toContain('data-question-overview-dot=');
     const libraryPage = await (await context.app.request("/")).text();
     expect(libraryPage).toContain('<p class="muted"><span class="paper-authors">Test Author</span> · NeurIPS · 2024 · <a href="https://arxiv.org/abs/2401.12345" target="_blank" rel="noreferrer">arXiv:2401.12345</a></p>');

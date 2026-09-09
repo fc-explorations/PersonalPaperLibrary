@@ -6,6 +6,7 @@ import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
 import { createZip } from "../src/services/zip.js";
 import { APP_VERSION } from "../src/version.js";
+import { PDFDocument } from "pdf-lib";
 
 class MemoryD1 implements D1Database {
   readonly db = new Database(":memory:");
@@ -87,7 +88,9 @@ function bindings(): CloudflareBindings & { d1: MemoryD1; r2: MemoryR2 } {
   };
 }
 
-const pdf = new Uint8Array(new TextEncoder().encode("%PDF-1.7\nworker test"));
+const testPdf = await PDFDocument.create();
+for (let index = 0; index < 6; index += 1) testPdf.addPage();
+const pdf = new Uint8Array(await testPdf.save());
 
 describe("Cloudflare Worker API", () => {
   it("uploads, creates, lists, reads, and deletes a paper through D1 and R2", async () => {
@@ -553,7 +556,11 @@ describe("Cloudflare Worker API", () => {
     const paperId = (await create.json() as { paper: { id: string } }).paper.id;
     const messages: Array<{ jobId: string }> = [];
     env.ANALYSIS_QUEUE = { send: async (message) => { messages.push(message); } };
-    env.AI = { toMarkdown: async () => ({ format: "text", data: `Opening page text. ${"The hosted extractor returned representative paper text. ".repeat(5)}\fLater pages contain the decisive result. ${"Additional evidence appears in the later pages. ".repeat(5)}` }) };
+    let convertedPageCount = 0;
+    env.AI = { toMarkdown: async ({ blob }) => {
+      convertedPageCount = (await PDFDocument.load(await blob.arrayBuffer())).getPageCount();
+      return { format: "text", data: `Opening page text. ${"The hosted extractor returned representative paper text. ".repeat(5)}` };
+    } };
     env.OPENAI_API_KEY = "test-key";
     let prompt = "";
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -565,7 +572,9 @@ describe("Cloudflare Worker API", () => {
       expect(queued.status).toBe(202);
       const acknowledged: string[] = [];
       await worker.queue({ messages: [{ body: messages[0], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
-      expect(prompt).toContain("Later pages contain the decisive result.");
+      expect(convertedPageCount).toBe(4);
+      expect(prompt).toContain("Opening page text.");
+      expect(prompt).not.toContain("Later pages contain the decisive result.");
       expect(acknowledged).toEqual(["ack"]);
       const progress = await worker.request(`/api/papers/${paperId}/summary/progress`, {}, env);
       const result = await progress.json() as { job: { status: string }; };

@@ -130,7 +130,7 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=54">
+  <link rel="stylesheet" href="/styles.css?v=55">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, startup: { typeset: false }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
@@ -214,6 +214,14 @@ function copyIcon(): string {
 
 function analysisIcon(): string {
   return `<span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>`;
+}
+
+export function summarySectionIcon(): string {
+  return `<svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="3.5" width="14" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`;
+}
+
+export function questionsSectionIcon(): string {
+  return `<svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.5 4.5h11A2.5 2.5 0 0 1 20 7v6.5a2.5 2.5 0 0 1-2.5 2.5H11l-3.5 3v-3H6.5A2.5 2.5 0 0 1 4 13.5V7a2.5 2.5 0 0 1 2.5-2.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9.5 9.25a2.5 2.5 0 1 1 4.2 1.82c-.92.84-1.7 1.14-1.7 2.43M12 16.5v.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`;
 }
 
 function refreshIcon(): string {
@@ -557,7 +565,7 @@ function renderSummarySection(summary?: SummaryRecord | null): string {
   const buttonIcon = summary?.status === "complete" ? refreshIcon() : analysisIcon();
   const button = `<button class="button button-secondary button-small" type="button" data-summary-mode="quick" data-generate-summary>${buttonIcon}<span>${buttonLabel}</span></button><button class="button button-secondary button-small" type="button" data-summary-mode="full" data-generate-summary>${analysisIcon()}<span>Full summary</span></button>`;
   const summaryComplete = summary?.status === "complete";
-  return `<details class="detail-section analysis-section" data-summary-section><summary><span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body">${state}${content}${summary ? analysisMeta(summary.provider, summary.model, summary.generatedAt, summary.durationMs) : ""}<div class="analysis-actions summary-actions"><div class="summary-action-buttons">${button}</div><span class="form-status" data-summary-status role="status"></span></div></div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse summary" title="Collapse summary">${collapseIcon()}</button></div></details>`;
+  return `<details class="detail-section analysis-section" data-summary-section><summary>${summarySectionIcon()}<span>Summary</span><span class="analysis-progress-dot${summaryComplete ? " is-complete" : ""}" aria-label="${summaryComplete ? "Summary available" : "Summary not generated"}" title="${summaryComplete ? "Summary available" : "Summary not generated"}"></span></summary><div class="analysis-body summary-body">${state}${content}${summary ? analysisMeta(summary.provider, summary.model, summary.generatedAt, summary.durationMs) : ""}<div class="analysis-actions summary-actions"><div class="summary-action-buttons">${button}</div><span class="form-status" data-summary-status role="status"></span></div></div><div class="collapse-section-row"><button class="icon-button collapse-section-button" type="button" data-collapse-section aria-label="Collapse summary" title="Collapse summary">${collapseIcon()}</button></div></details>`;
 }
 
 export function renderQuestionsSection(questions: StoredQuestion[]): string {
@@ -573,7 +581,7 @@ export function renderQuestionsSection(questions: StoredQuestion[]): string {
   const answered = questions.filter((question) => question.answer?.status === "complete").length;
   const questionProgress = `<span class="question-overview-progress" aria-label="${answered} of ${questions.length} questions answered" title="${answered} of ${questions.length} questions answered">${overviewDots}</span>`;
   const questionActions = `<div class="question-section-actions"><button class="icon-button" type="button" data-toggle-questions aria-label="Expand all questions" title="Expand all questions">${expandIcon()}</button><button class="button button-secondary button-small" type="button" data-generate-all-questions>${analysisIcon()}<span>Generate all answers</span></button></div>`;
-  return `<section class="detail-section analysis-questions" data-questions-section><details class="analysis-questions-disclosure"><summary><span>Questions</span>${questionProgress}</summary>${questionActions}<p class="form-status" data-questions-status role="status"></p>${groupSections}${addQuestion}</details></section>`;
+  return `<section class="detail-section analysis-questions" data-questions-section><details class="analysis-questions-disclosure"><summary>${questionsSectionIcon()}<span>Questions</span>${questionProgress}</summary>${questionActions}<p class="form-status" data-questions-status role="status"></p>${groupSections}${addQuestion}</details></section>`;
 }
 
 export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | null, questions: StoredQuestion[] = []): string {

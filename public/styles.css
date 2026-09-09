@@ -388,6 +388,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .analysis-section > summary::before, .question-group > summary::before, .add-question-form > summary::before, .bibtex-section > summary::before, .metadata-panel > summary::before, .analysis-questions-disclosure > summary::before { position: relative; top: -.1em; width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
 .analysis-section[open] > summary::before, .question-group[open] > summary::before, .add-question-form[open] > summary::before, .bibtex-section[open] > summary::before, .metadata-panel[open] > summary::before, .analysis-questions-disclosure[open] > summary::before { transform: rotate(90deg); }
 .analysis-section > summary::before { color: var(--text); }
+.section-heading-icon { width: 22px; height: 22px; flex: 0 0 22px; color: var(--text); }
 .analysis-questions { position: relative; }
 .analysis-questions-disclosure > summary { color: var(--text); font-size: var(--type-section); font-weight: 700; }
 .analysis-questions-disclosure > summary::before { color: var(--text); }

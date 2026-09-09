@@ -7,6 +7,7 @@ import { excludeAppendixMaterial, hasRequiredSummaryHeadings, splitTextIntoPageC
 import type { R2BucketLike } from "./r2-storage.js";
 import type { AiSettings, QuestionAnswer, SummaryRecord } from "../repositories/analysis.js";
 import { hostedQuestionDefinitions } from "./question-catalog.js";
+import { PDFDocument } from "pdf-lib";
 
 interface MarkdownConversionResult {
   format: "markdown" | "text" | "error";
@@ -32,6 +33,7 @@ type ExtractedPaper = { text: string; sha256?: string };
 type SelectedLlm = { client: LlmClient; provider: "openai"; model: string };
 const SUMMARY_CHUNK_CONCURRENCY = 4;
 const MIN_EXTRACTED_TEXT_CHARACTERS = 200;
+const QUICK_SUMMARY_PAGE_COUNT = 4;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -61,19 +63,38 @@ async function mapWithConcurrency<Input, Output>(items: Input[], limit: number, 
   return results;
 }
 
-async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }): Promise<ExtractedPaper> {
+type PdfExtractionScope = "full" | "opening-pages";
+
+async function openingPagesPdf(bytes: ArrayBuffer, pageCount: number): Promise<Uint8Array> {
+  const source = await PDFDocument.load(bytes);
+  const pageTotal = Math.min(pageCount, source.getPageCount());
+  if (!pageTotal) throw new Error("PDF_TEXT_EMPTY");
+  const excerpt = await PDFDocument.create();
+  const pages = await excerpt.copyPages(source, Array.from({ length: pageTotal }, (_, index) => index));
+  pages.forEach((page) => excerpt.addPage(page));
+  return excerpt.save({ useObjectStreams: true, addDefaultPage: false });
+}
+
+async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }, scope: PdfExtractionScope = "full"): Promise<ExtractedPaper> {
   if (!env.AI) throw new Error("PDF_EXTRACTOR_UNAVAILABLE");
   if (!paper.r2Key) throw new Error("PDF_NOT_FOUND");
-  // Version the cache because older deployments stored only the first four pages.
-  const cacheKey = paper.pdfSha256 ? `analysis-text-v2/${paper.id}/${paper.pdfSha256}.txt` : undefined;
+  const cacheKey = paper.pdfSha256
+    ? `${scope === "opening-pages" ? "analysis-text-opening-v1" : "analysis-text-v2"}/${paper.id}/${paper.pdfSha256}.txt`
+    : undefined;
   if (cacheKey) {
     const cached = await env.PAPER_PDFS.get(cacheKey);
     if (cached) return { text: new TextDecoder().decode(await cached.arrayBuffer()), sha256: paper.pdfSha256 };
   }
   const object = await env.PAPER_PDFS.get(paper.r2Key);
   if (!object) throw new Error("PDF_NOT_FOUND");
+  const pdfBytes = await object.arrayBuffer();
+  // The quick summary must be page-limited before conversion. Converting the full
+  // PDF first can exceed Workers AI's string-size limit before we can truncate it.
+  const inputBytes = scope === "opening-pages" ? await openingPagesPdf(pdfBytes, QUICK_SUMMARY_PAGE_COUNT) : pdfBytes;
+  const inputBuffer = new Uint8Array(inputBytes.byteLength);
+  inputBuffer.set(inputBytes instanceof ArrayBuffer ? new Uint8Array(inputBytes) : inputBytes);
   const result = await env.AI.toMarkdown(
-    { name: `${paper.id}.pdf`, blob: new Blob([await object.arrayBuffer()], { type: "application/pdf" }) },
+    { name: `${paper.id}.pdf`, blob: new Blob([inputBuffer.buffer as ArrayBuffer], { type: "application/pdf" }) },
     { conversionOptions: { output: { format: "text" }, pdf: { metadata: false } } },
   );
   if (result.format === "error" || !result.data?.trim()) throw new Error(result.error || "PDF_TEXT_EMPTY");
@@ -164,7 +185,7 @@ export async function executeAnalysisJob(env: WorkerAnalysisEnvironment, job: An
   const paper = await new D1PaperRepository(env.DB).findById(job.paperId);
   if (!paper) throw new Error("PAPER_NOT_FOUND");
   await jobs.updatePhase(job.id, "extracting");
-  const source = await extractPdf(env, paper);
+  const source = await extractPdf(env, paper, job.kind === "summary" && job.mode !== "full" ? "opening-pages" : "full");
   const settings = await analysis.getSettings();
   if (job.kind === "summary") await summarize(env, job, analysis, jobs, source, settings);
   else await answerQuestion(env, job, analysis, source, settings);
