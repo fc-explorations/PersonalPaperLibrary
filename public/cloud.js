@@ -231,6 +231,21 @@ async function requestWithLookupProgress(url, options = {}, onProgress) {
   return body;
 }
 
+function looksLikeBibtex(input) {
+  return /^\s*@\s*[a-z][a-z0-9_-]*\s*[({]/i.test(input);
+}
+
+async function resolveHostedFindInput(input, status) {
+  const clean = input.trim();
+  if (!looksLikeBibtex(clean)) return clean;
+  setStatus(status, "Parsing BibTeX…");
+  const result = await request("/api/metadata/bibtex", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bibtex: clean }) });
+  const metadata = result.metadata || {};
+  const lookupInput = String(metadata.doi || metadata.title || "").trim();
+  if (!lookupInput) throw new Error("BibTeX entry must include a title or DOI.");
+  return lookupInput;
+}
+
 async function requestResponse(response) {
   const contentType = response.headers.get("content-type") || "";
   const body = contentType.includes("application/json") ? await response.json().catch(() => ({})) : {};
@@ -1395,10 +1410,11 @@ async function initImport() {
     setLookupBusy(button, true);
     try {
       setStatus(status, "Looking up arXiv metadata and PDF…");
+      const input = await resolveHostedFindInput(form.elements.input.value, status);
       staged = await requestWithLookupProgress("/api/import?progress=1", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input: form.elements.input.value }),
+        body: JSON.stringify({ input }),
       }, (progress) => updateLookupProgress(button, progress, form));
       renderHostedPreview(staged);
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");

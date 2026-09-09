@@ -187,6 +187,21 @@ function value(form, name) {
   return form.elements.namedItem(name)?.value || "";
 }
 
+function looksLikeBibtex(input) {
+  return /^\s*@\s*[a-z][a-z0-9_-]*\s*[({]/i.test(input);
+}
+
+async function resolveFindInput(input, form) {
+  const clean = input.trim();
+  if (!looksLikeBibtex(clean)) return clean;
+  setStatus(form, "Parsing BibTeX…");
+  const result = await jsonRequest("/api/metadata/bibtex", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bibtex: clean }) });
+  const metadata = result.metadata || {};
+  const lookupInput = String(metadata.doi || metadata.title || "").trim();
+  if (!lookupInput) throw new Error("BibTeX entry must include a title or DOI.");
+  return lookupInput;
+}
+
 function resizeAuthorsField(input) {
   if (!(input instanceof HTMLTextAreaElement)) return;
   const lineCount = Math.max(1, input.value.split(/\r?\n/).length);
@@ -723,7 +738,8 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
   setLookupBusy(button, true);
   setStatus(form, "Looking up paper metadata…");
   try {
-    const body = await jsonRequestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: value(form, "input") }) }, (progress) => updateLookupProgress(button, progress, form));
+    const input = await resolveFindInput(value(form, "input"), form);
+    const body = await jsonRequestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }) }, (progress) => updateLookupProgress(button, progress, form));
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
       form.querySelector("[data-existing-paper]")?.remove();
