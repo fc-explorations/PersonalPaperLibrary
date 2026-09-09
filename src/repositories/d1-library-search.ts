@@ -95,11 +95,21 @@ export class D1LibrarySearchRepository {
 
   async syncDocuments(): Promise<void> {
     const now = new Date().toISOString();
+    const summaries = await this.analysis.listSummariesByPaper();
+    let statements: Array<{ query: string; values: unknown[] }> = [];
     for await (const paper of this.papers.iterateAll()) {
-      const text = canonicalText(paper, await this.analysis.getSummary(paper.id));
+      const text = canonicalText(paper, summaries.get(paper.id));
       const hash = await documentHash(text);
-      await this.db.prepare("INSERT INTO paper_search_index (paper_id, search_text, content_hash, embedding_json, embedding_provider, embedding_model, status, error_message, updated_at) VALUES (?, ?, ?, NULL, NULL, NULL, 'pending', NULL, ?) ON CONFLICT(paper_id) DO UPDATE SET search_text=excluded.search_text, content_hash=excluded.content_hash, embedding_json=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_json ELSE NULL END, embedding_provider=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_provider ELSE NULL END, embedding_model=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_model ELSE NULL END, status=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.status ELSE 'pending' END, error_message=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.error_message ELSE NULL END, updated_at=excluded.updated_at").bind(paper.id, text, hash, now).run();
+      statements.push({
+        query: "INSERT INTO paper_search_index (paper_id, search_text, content_hash, embedding_json, embedding_provider, embedding_model, status, error_message, updated_at) VALUES (?, ?, ?, NULL, NULL, NULL, 'pending', NULL, ?) ON CONFLICT(paper_id) DO UPDATE SET search_text=excluded.search_text, content_hash=excluded.content_hash, embedding_json=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_json ELSE NULL END, embedding_provider=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_provider ELSE NULL END, embedding_model=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_model ELSE NULL END, status=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.status ELSE 'pending' END, error_message=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.error_message ELSE NULL END, updated_at=excluded.updated_at",
+        values: [paper.id, text, hash, now],
+      });
+      if (statements.length >= 90) {
+        await batch(this.db, statements);
+        statements = [];
+      }
     }
+    if (statements.length) await batch(this.db, statements);
     await this.db.prepare("DELETE FROM paper_search_index WHERE paper_id NOT IN (SELECT id FROM papers)").run();
   }
 
@@ -130,7 +140,11 @@ export class D1LibrarySearchRepository {
     const total = await first<{ count: number }>(this.db, "SELECT COUNT(*) AS count FROM papers");
     const rows = await all<{ status: string; count: number }>(this.db, "SELECT status, COUNT(*) AS count FROM paper_search_index GROUP BY status");
     const counts = Object.fromEntries(rows.map((row) => [row.status, Number(row.count)]));
-    return { totalPapers: Number(total?.count || 0), indexedPapers: counts.complete || 0, pendingPapers: counts.pending || 0, failedPapers: counts.failed || 0, unavailablePapers: counts.unavailable || 0 };
+    const totalPapers = Number(total?.count || 0);
+    const indexedPapers = counts.complete || 0;
+    const failedPapers = counts.failed || 0;
+    const unavailablePapers = counts.unavailable || 0;
+    return { totalPapers, indexedPapers, pendingPapers: Math.max(0, totalPapers - indexedPapers - failedPapers - unavailablePapers), failedPapers, unavailablePapers };
   }
 
   async query(query: string, tags: string[], tagMode: D1TagFilterMode, limit: number, embedder: { provider: string; model: string; client?: EmbeddingClient }): Promise<D1LibrarySearchResult> {

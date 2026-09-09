@@ -907,7 +907,6 @@ app.get("/ask", async (c) => {
 app.get("/api/search/coverage", async (c) => {
   try {
     const { search } = await searchRepository(c.env);
-    await search.syncDocuments();
     return c.json({ coverage: await search.coverage() });
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The search index status could not be loaded.");
