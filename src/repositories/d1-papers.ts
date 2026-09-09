@@ -2,6 +2,7 @@ import type { MetadataSource, PaperDraftInput, PaperRecord, SortOrder } from "..
 import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { all, batch, first, placeholders, type D1Database, type D1Row } from "../cloudflare/d1.js";
 import { D1TagRepository } from "./d1-tags.js";
+import { NO_PDF_TAG, tagsForPdfStatus } from "../services/system-tags.js";
 
 export type D1TagFilterMode = "and" | "or";
 export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
@@ -103,7 +104,7 @@ function insertStatements(entry: InsertEntry): Array<{ query: string; values: un
   const id = entry.input.id || globalThis.crypto.randomUUID();
   const now = new Date().toISOString();
   const authors = parseAuthors(entry.input.authors);
-  const tags = parseTags(entry.input.tags);
+  const tags = tagsForPdfStatus(parseTags(entry.input.tags), Boolean(entry.file));
   const values = paperValues(id, entry.input, entry.file, now);
   values.pop();
   return [
@@ -128,6 +129,7 @@ export class D1PaperRepository {
   }
 
   async findById(id: string): Promise<PaperRecord | null> {
+    await this.tags.ensureSystemTags();
     const row = await first<PaperRow>(this.db, "SELECT * FROM papers WHERE id = ?", id);
     return row ? this.hydrate(row) : null;
   }
@@ -240,7 +242,7 @@ export class D1PaperRepository {
     const existing = await this.findById(id);
     if (!existing) throw new Error("PAPER_NOT_FOUND");
     const authors = parseAuthors(input.authors);
-    const tags = parseTags(input.tags);
+    const tags = tagsForPdfStatus(parseTags(input.tags), Boolean(file?.key || existing.r2Key));
     const now = new Date().toISOString();
     const year = parseYear(input.year);
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
@@ -252,7 +254,7 @@ export class D1PaperRepository {
       ...authorStatements(id, authors),
       { query: "DELETE FROM paper_tags WHERE paper_id = ?", values: [id] },
       ...this.tagStatements(id, tags, now),
-      { query: "DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)" },
+      { query: "DELETE FROM tags WHERE name != 'no pdf' COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id)" },
     ]);
     return (await this.findById(id))!;
   }
@@ -266,6 +268,7 @@ export class D1PaperRepository {
   async clearPdf(id: string): Promise<PaperRecord> {
     const result = await this.db.prepare("UPDATE papers SET r2_key = NULL, pdf_sha256 = NULL, updated_at = ? WHERE id = ?").bind(new Date().toISOString(), id).run();
     if (Number(result.meta?.changes || 0) === 0) throw new Error("PAPER_NOT_FOUND");
+    await this.tags.attach(id, [NO_PDF_TAG]);
     return (await this.findById(id))!;
   }
 
@@ -344,7 +347,7 @@ export class D1PaperRepository {
       clauses.push(`p.id IN (${placeholders(ids.length)})`);
       values.push(...ids);
     }
-    if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu WHERE ptu.paper_id = p.id)");
+    if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu JOIN tags ttu ON ttu.id = ptu.tag_id WHERE ptu.paper_id = p.id AND ttu.name != 'no pdf' COLLATE NOCASE)");
     const tags = (Array.isArray(options.tag) ? options.tag : options.tag ? [options.tag] : []).map((tag) => tag.trim()).filter(Boolean);
     const tagClauses = tags.map(() => "EXISTS (SELECT 1 FROM paper_tags ptf JOIN tags tf ON tf.id = ptf.tag_id WHERE ptf.paper_id = p.id AND tf.name = ? COLLATE NOCASE)");
     if (tagClauses.length) {

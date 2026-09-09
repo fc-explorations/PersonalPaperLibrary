@@ -60,14 +60,14 @@ describe("D1 repositories", () => {
     const papers = new D1PaperRepository(d1);
     const paper = await papers.create({ title: "A Searchable Paper", arxivId: "2401.12345", abstract: "about vision", authors: ["Ada Lovelace"], categories: ["cs.CV"], year: 2024, metadataSource: "arxiv", tags: ["Vision"] });
 
-    expect(paper.tags).toEqual(["vision"]);
+    expect(paper.tags).toEqual(["no pdf", "vision"]);
     expect((await papers.findDuplicate({ title: "duplicate", arxivId: "2401.12345" }))?.id).toBe(paper.id);
     expect((await papers.list({ q: "lovelace" }))[0].id).toBe(paper.id);
     expect((await papers.list({ tag: "vision" }))[0].id).toBe(paper.id);
 
     await papers.update(paper.id, { title: "Updated Paper", metadataSource: "manual", authors: ["Grace Hopper"], tags: ["Research"] });
     expect((await papers.findById(paper.id))?.authors).toEqual(["Grace Hopper"]);
-    expect((await papers.findById(paper.id))?.tags).toEqual(["research"]);
+    expect((await papers.findById(paper.id))?.tags).toEqual(["no pdf", "research"]);
     expect(await papers.countStored()).toBe(0);
 
     await papers.delete(paper.id);

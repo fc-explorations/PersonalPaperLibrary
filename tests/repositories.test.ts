@@ -22,7 +22,7 @@ describe("paper repository", () => {
     const db = database();
     const repo = new PaperRepository(db);
     const paper = repo.create({ title: "A Searchable Paper", arxivId: "2401.12345", abstract: "about vision", authors: ["Ada Lovelace"], categories: ["cs.CV"], year: 2024, metadataSource: "arxiv", tags: ["Vision"] });
-    expect(paper.tags).toEqual(["vision"]);
+    expect(paper.tags).toEqual(["no pdf", "vision"]);
     expect(repo.findDuplicate({ title: "duplicate", arxivId: "2401.12345" })?.id).toBe(paper.id);
     expect(repo.list({ q: "lovelace" })[0].id).toBe(paper.id);
     expect(repo.list({ tag: "vision" })[0].id).toBe(paper.id);
@@ -30,13 +30,13 @@ describe("paper repository", () => {
     const untaggedPaper = repo.create({ title: "An Untagged Paper", metadataSource: "manual" });
     expect(repo.list({ untagged: true }).map((item) => item.id)).toEqual([untaggedPaper.id]);
     repo.tags.replaceForPaper(paper.id, ["vision", "Research"]);
-    expect(repo.findById(paper.id)?.tags).toEqual(["research", "vision"]);
+    expect(repo.findById(paper.id)?.tags).toEqual(["no pdf", "research", "vision"]);
     expect(repo.list({ tag: ["vision", "Research"] }).map((item) => item.id)).toEqual([paper.id]);
     expect(repo.list({ tag: ["vision", "Research"], tagMode: "or" }).map((item) => item.id)).toEqual(expect.arrayContaining([paper.id, secondPaper.id]));
     expect(repo.list({ tag: ["Research"] }).map((item) => item.id)).toEqual(expect.arrayContaining([secondPaper.id, paper.id]));
     expect(repo.list({ tag: ["Research"] })).toHaveLength(2);
     repo.tags.remove(paper.id, "vision");
-    expect(repo.tags.list()).toEqual(["research"]);
+    expect(repo.tags.list()).toEqual(["no pdf", "research"]);
     db.close();
   });
 });

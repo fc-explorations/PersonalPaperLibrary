@@ -5,6 +5,7 @@ import worker, { type CloudflareBindings } from "../src/worker.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
 import { createZip } from "../src/services/zip.js";
+import { APP_VERSION } from "../src/version.js";
 
 class MemoryD1 implements D1Database {
   readonly db = new Database(":memory:");
@@ -255,7 +256,7 @@ describe("Cloudflare Worker API", () => {
     expect(settingsHtml).toContain('id="backup-list"');
     expect(settingsHtml).toContain("<h2>Credits</h2>");
     expect(settingsHtml).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
-    expect(settingsHtml).toContain("<strong>Version:</strong> v2.1.0");
+    expect(settingsHtml).toContain(`<strong>Version:</strong> v${APP_VERSION}`);
     expect(settingsHtml).toContain("<summary>HowTo</summary>");
     expect(settingsHtml).toContain("Never invent metadata");
     const library = await worker.request("/", {}, env);

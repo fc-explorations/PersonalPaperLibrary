@@ -81,7 +81,7 @@ async function enrichHostedPaperMetadata(current) {
       arxivId: metadata.arxivId || paper.arxivId,
       arxivUrl: metadata.arxivUrl || paper.arxivUrl,
       sourceUrl: metadata.sourceUrl || metadata.arxivUrl || paper.sourceUrl,
-      tags: paper.tags || [],
+      tags: metadata.tags || paper.tags || [],
       metadataSource: metadata.metadataSource || "mixed",
       stagingToken: lookup.pdf?.stagingToken,
     }),
@@ -395,7 +395,7 @@ function paperCard(paper) {
   const sourceLabel = paper.arxivId ? `arXiv:${paper.arxivId}` : paper.doi ? `DOI:${paper.doi}` : sourceUrl ? "Source" : "";
   const meta = [`<span class="paper-authors">${escapeHtml(authorLine || "No authors recorded")}</span>`, venue ? escapeHtml(venue) : "", paper.year ? String(paper.year) : "", sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(sourceLabel)}</a>` : ""].filter(Boolean).join(" · ");
   const selected = libraryState().selected.includes(paper.id);
-  return `<article class="paper-card">${paper.r2Key ? "" : `<span class="pdf-badge pdf-missing-badge" title="PDF missing" aria-label="PDF missing"><span class="material-symbols-outlined" aria-hidden="true">picture_as_pdf</span></span>`}<label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${meta}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
+  return `<article class="paper-card"><label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.id)}" aria-label="Select ${escapeHtml(paper.title)}"${selected ? " checked" : ""}></label><div class="paper-card-main"><h2><a href="/papers/${encodeURIComponent(paper.id)}">${escapeHtml(paper.title)}</a></h2><p class="paper-meta muted">${meta}</p></div>${tags ? `<div class="paper-tags">${tags}</div>` : ""}</article>`;
 }
 
 function renderLibraryTags(tags, state) {
@@ -570,7 +570,7 @@ function applyHostedMetadata(form, data) {
   setValue("isbn", paper.isbn);
   setValue("arxivId", paper.arxivId);
   setValue("sourceUrl", paper.sourceUrl || paper.arxivUrl);
-  if (form.dataset.mode !== "edit") setValue("tags", (paper.tags || []).join(", "));
+  if (paper.tags) setValue("tags", paper.tags.join(", "));
   const existingStagingToken = form.elements.namedItem("stagingToken")?.value || "";
   const activeStagingToken = data.pdf?.stagingToken || existingStagingToken;
   setValue("stagingToken", activeStagingToken);
@@ -690,7 +690,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   setLookupBusy(button, true);
   try {
     setStatus(status, "Looking up citation metadata…");
-    const body = await requestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input, title: get("title"), paperId: form.dataset.mode === "edit" ? form.dataset.paperId : undefined, stagingToken: get("stagingToken") || undefined }) }, (progress) => updateLookupProgress(button, progress, status));
+    const body = await requestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input, title: get("title"), paperId: form.dataset.mode === "edit" ? form.dataset.paperId : undefined, stagingToken: get("stagingToken") || undefined, tags: get("tags").split(",").map((value) => value.trim()).filter(Boolean) }) }, (progress) => updateLookupProgress(button, progress, status));
     if (body.duplicate) throw new Error("That paper is already in the library.");
     if (form.dataset.mode === "edit") {
       applyHostedMetadata(form, body);

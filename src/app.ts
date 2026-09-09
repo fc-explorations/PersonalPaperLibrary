@@ -36,6 +36,7 @@ import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { citationMatchesMetadata, parseCitationInput, type ParsedCitationInput } from "./services/citation-input.js";
 import { parseBibtex } from "./services/bibtex.js";
 import { suggestTags } from "./services/tag-suggestions.js";
+import { NO_PDF_TAG, tagsForPdfStatus } from "./services/system-tags.js";
 import { isbnFromInput, normalizeIsbn, parseAuthors, parseTags, parseYear, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, validatePdf, DEFAULT_MAX_PDF_BYTES } from "./services/validation.js";
 import { escapeHtml, renderAddPage, renderAskLibraryPage, renderEditPage, renderLibrary, renderMarkdown, renderPaperPage, renderSettingsPage } from "./views.js";
 import { renderLoginPage } from "./views/login.js";
@@ -755,6 +756,7 @@ export function createApp(dependencies: AppDependencies = {}) {
         } catch (error) {
           warnings.push(errorMessage(error) === "PDF_TOO_LARGE" ? "The PDF is larger than the configured upload limit." : "The PDF could not be downloaded. You can upload it manually.");
         }
+        metadata.tags = tagsForPdfStatus(metadata.tags, pdf.status === "staged");
         await report?.({ phase: "pdf", current: 1, total: 1, message: pdf.status === "staged" ? "PDF ready." : "PDF check complete." });
         return c.json({ paper: metadata, pdf, warnings });
       }
@@ -766,6 +768,7 @@ export function createApp(dependencies: AppDependencies = {}) {
         await report?.({ phase: "sources", current: 0, total: 1, source: "open-library", message: "Checking Open Library…" });
         const metadata = await lookupOpenLibrary(isbn, fetcher);
         await report?.({ phase: "sources", current: 1, total: 1, source: "open-library", message: "Open Library metadata found." });
+        metadata.tags = [NO_PDF_TAG];
         return c.json({ paper: metadata, pdf: { status: "not_found" }, warnings: [] });
       }
 
@@ -841,6 +844,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (downloaded.warning) warnings.push(downloaded.warning);
       const stagedPath = downloaded.pdf.status === "staged" ? storage.getStagedPath(downloaded.pdf.stagingToken) : undefined;
       metadata = await fillMissingMetadataAbstract(metadata, lookupTitle, parsedCitation, stagedPath);
+      metadata.tags = tagsForPdfStatus(metadata.tags, downloaded.pdf.status === "staged");
       return c.json({ paper: metadata, pdf: downloaded.pdf, warnings });
     } catch (error) {
       const message = errorMessage(error);
@@ -854,7 +858,7 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   const lookupMetadata = async (c: Context, report?: LookupProgressReporter) => {
     try {
-      const body = await c.req.json<{ title?: string; doi?: string; isbn?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean }>();
+      const body = await c.req.json<{ title?: string; doi?: string; isbn?: string; arxivId?: string; paperId?: string; stagingToken?: string; preservePdf?: boolean; tags?: unknown }>();
       let metadata: PaperMetadata;
       let provider: string;
       let parsedCitation: ParsedCitationInput | undefined;
@@ -950,6 +954,8 @@ export function createApp(dependencies: AppDependencies = {}) {
           ? storage.getPath(existingPaper.id)
           : undefined;
       metadata = await fillMissingMetadataAbstract(metadata, metadata.title || lookupTitle, parsedCitation, pdfPath);
+      const currentTags = existingPaper?.tags || parseTags(body.tags);
+      metadata.tags = tagsForPdfStatus(currentTags, downloaded.pdf.status === "staged" || downloaded.pdf.status === "preserved" || Boolean(pdfPath && existingPaper?.r2Key));
       return c.json({ paper: metadata, provider, pdf: downloaded.pdf, warnings: downloaded.warning ? [downloaded.warning] : [] });
     } catch (error) {
       const message = errorMessage(error);

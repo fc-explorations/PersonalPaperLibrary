@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { MetadataSource, PaperDraftInput, PaperRecord, SortOrder } from "../types.js";
 import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { TagRepository } from "./tags.js";
+import { tagsForPdfStatus } from "../services/system-tags.js";
 
 type PaperRow = Record<string, unknown>;
 export type TagFilterMode = "and" | "or";
@@ -111,7 +112,7 @@ export class PaperRepository {
     const id = input.id || randomUUID();
     const now = new Date().toISOString();
     const authors = parseAuthors(input.authors);
-    const tags = parseTags(input.tags);
+    const tags = tagsForPdfStatus(parseTags(input.tags), Boolean(file));
     const year = parseYear(input.year);
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
     const arxivBaseId = arxivId?.replace(/v\d+$/i, "");
@@ -145,7 +146,7 @@ export class PaperRepository {
     const existing = this.findById(id);
     if (!existing) throw new Error("PAPER_NOT_FOUND");
     const authors = parseAuthors(input.authors);
-    const tags = parseTags(input.tags);
+    const tags = tagsForPdfStatus(parseTags(input.tags), Boolean(file?.key || existing.r2Key));
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
     const arxivBaseId = arxivId?.replace(/v\d+$/i, "");
     const year = parseYear(input.year);
@@ -234,7 +235,7 @@ export class PaperRepository {
       clauses.push(`p.id IN (${ids.map((_, index) => `@selectedId${index}`).join(",")})`);
       ids.forEach((id, index) => { params[`selectedId${index}`] = id; });
     }
-    if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu WHERE ptu.paper_id = p.id)");
+    if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu JOIN tags ttu ON ttu.id = ptu.tag_id WHERE ptu.paper_id = p.id AND ttu.name != 'no pdf' COLLATE NOCASE)");
     const tagClauses = tags.map((tag, index) => {
       const parameter = `tag${index}`;
       params[parameter] = tag;

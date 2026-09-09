@@ -914,7 +914,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
   setLookupBusy(button, true);
   setStatus(form, "Looking up citation metadata…");
   try {
-    const result = await jsonRequestWithLookupProgress("/api/metadata/lookup?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")) }) }, (progress) => updateLookupProgress(button, progress, form));
+    const result = await jsonRequestWithLookupProgress("/api/metadata/lookup?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: value(form, "title"), doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), paperId: form?.dataset.paperId, stagingToken: value(form, "stagingToken"), preservePdf: Boolean(value(form, "stagingToken")), tags: commaValues(value(form, "tags")) }) }, (progress) => updateLookupProgress(button, progress, form));
     setValue(form, "title", result.paper.title);
     setValue(form, "authors", (result.paper.authors || []).join("\n"));
     setValue(form, "year", result.paper.year);
@@ -928,6 +928,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     setValue(form, "isbn", result.paper.isbn);
     setValue(form, "arxivId", result.paper.arxivId);
     setValue(form, "sourceUrl", result.paper.sourceUrl || result.paper.arxivUrl);
+    setValue(form, "tags", (result.paper.tags || []).join(", "));
     if (result.pdf?.stagingToken) {
       setValue(form, "stagingToken", result.pdf.stagingToken);
       const preview = form.closest("[data-preview]");
@@ -1462,7 +1463,7 @@ async function enrichLocalPaperMetadata(id) {
   const lookup = await jsonRequest("/api/metadata/lookup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: current.title, doi: current.doi, isbn: current.isbn, arxivId: current.arxivId, paperId: id, preservePdf: Boolean(current.r2Key) }),
+    body: JSON.stringify({ title: current.title, doi: current.doi, isbn: current.isbn, arxivId: current.arxivId, paperId: id, preservePdf: Boolean(current.r2Key), tags: current.tags || [] }),
   });
   const metadata = lookup.paper || {};
   await jsonRequest(`/api/papers/${encodeURIComponent(id)}`, {
@@ -1483,7 +1484,7 @@ async function enrichLocalPaperMetadata(id) {
       arxivId: metadata.arxivId || current.arxivId,
       arxivUrl: metadata.arxivUrl || current.arxivUrl,
       sourceUrl: metadata.sourceUrl || metadata.arxivUrl || current.sourceUrl,
-      tags: current.tags || [],
+      tags: metadata.tags || current.tags || [],
       metadataSource: metadata.metadataSource || "mixed",
       stagingToken: lookup.pdf?.stagingToken,
     }),

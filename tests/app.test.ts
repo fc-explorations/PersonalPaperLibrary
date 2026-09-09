@@ -9,6 +9,7 @@ import { FileStorage } from "../src/services/storage.js";
 import { applyPendingSnapshot } from "../src/services/snapshot.js";
 import { createZip } from "../src/services/zip.js";
 import * as unzipper from "unzipper";
+import { APP_VERSION } from "../src/version.js";
 
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
@@ -483,6 +484,7 @@ describe("HTTP application", () => {
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.pdf.status).toBe("not_found");
+    expect(result.paper.tags).toEqual(["no pdf"]);
     expect(result.paper.pdfUrl).toBe("https://publisher.example/web-resource-test.pdf");
     expect(result.paper.sourceUrl).toBe("https://publisher.example/web-resource-test");
     expect(result.warnings[0]).toContain("not available");
@@ -495,8 +497,13 @@ describe("HTTP application", () => {
     const response = await context.app.request("/api/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Web resource paper", doi: "10.1000/web-resource", sourceUrl: "https://publisher.example/web-resource", metadataSource: "mixed" }) });
     expect(response.status).toBe(201);
     const { paper } = await response.json();
+    expect(paper.tags).toContain("no pdf");
     const page = await (await context.app.request(`/papers/${paper.id}`)).text();
     expect(page).toContain('<dt>Document</dt><dd><span class="muted">Not stored</span></dd>');
+    expect(page).toContain(">no pdf</a>");
+    const library = await (await context.app.request("/?tag=no%20pdf")).text();
+    expect(library).toContain(">no pdf</a>");
+    expect(library).not.toContain("pdf-missing-badge");
     expect(page).not.toContain('aria-label="Open web resource"');
     const editPage = await (await context.app.request(`/papers/${paper.id}/edit`)).text();
     expect(editPage).not.toContain('data-web-resource-for="paper-form-');
@@ -688,7 +695,7 @@ describe("HTTP application", () => {
     const archive = await unzipper.Open.buffer(Buffer.from(backupBytes));
     expect(archive.files.map((file) => file.path)).toEqual(expect.arrayContaining(["format.json", "library.sqlite", `pdfs/${saved.paper.id}.pdf`]));
     const format = JSON.parse((await archive.files.find((file) => file.path === "format.json")!.buffer()).toString("utf8"));
-    expect(format).toMatchObject({ format: "personal-paper-library-snapshot", formatVersion: 1, appVersion: "2.1.0" });
+    expect(format).toMatchObject({ format: "personal-paper-library-snapshot", formatVersion: 1, appVersion: APP_VERSION });
     expect(archive.files.some((file) => file.path === `pdfs/${saved.paper.id}.pdf`)).toBe(true);
 
     const target = testApp();

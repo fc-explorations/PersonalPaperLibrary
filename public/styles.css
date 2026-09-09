@@ -237,9 +237,6 @@ select { width: auto; min-width: 150px; }
 .paper-card { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 0; border-bottom: 1px solid #dedbd3; }
 .paper-card:last-of-type { border-bottom: 0; }
 .paper-card-main { flex: 1 1 auto; min-width: 0; }
-.pdf-badge { position: absolute; top: 15px; right: 17px; color: var(--accent); line-height: 0; }
-.pdf-missing-badge { color: #9d493a; }
-.pdf-saved-icon { font-size: 1.2rem; }
 .paper-card h2 { margin: 0 0 4px; font-size: 1.05rem; font-weight: 600; line-height: 1.15; }
 .paper-card h2 a { color: var(--text); text-decoration: none; }
 .paper-card h2 a:hover { color: var(--accent); }
@@ -253,7 +250,7 @@ select { width: auto; min-width: 150px; }
 .empty-state { padding: 58px 25px; border: 1px dashed #cbc7bd; border-radius: 8px; text-align: center; }
 .add-grid, .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding-bottom: 28px; }
 .add-options { grid-template-columns: minmax(0, 1fr); margin: 58px 0 0; }
-.add-file-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.add-file-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .add-file-options > .panel > p { min-height: 3em; }
 .panel { border: 1px solid var(--border); border-radius: 8px; background: var(--panel-bg); padding: 24px; }
 .paper-detail { margin-bottom: 60px; padding: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-bg); }
@@ -315,6 +312,7 @@ select { width: auto; min-width: 150px; }
 .inline-form { display: flex; gap: 9px; align-items: center; }
 .inline-form input[type=file] { min-width: 0; }
 .find-pdf-upload { margin-top: 18px; }
+.upload-help { margin: 0 0 12px; max-width: 78ch; }
 .file-picker { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .file-picker label { flex: 0 0 auto; gap: 7px; cursor: pointer; }
 .ollama-model-picker { align-items: stretch; }
@@ -373,7 +371,6 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .operation-progress > span, .bulk-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .operation-progress.is-indeterminate > span, .bulk-progress.is-indeterminate > span { width: 32%; animation: progress-slide 1.2s ease-in-out infinite; }
 @keyframes progress-slide { 0% { transform: translateX(-110%); } 50% { transform: translateX(210%); } 100% { transform: translateX(330%); } }
-.pdf-missing { align-self: center; margin-right: 6px; }
 .detail-content { display: block; padding-right: 24px; }
 .detail-section { margin: 0; padding: 0 0 30px; border-bottom: 1px solid var(--border); }
 .detail-subheading { margin: 0 0 14px; color: var(--muted); font-size: .82rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }

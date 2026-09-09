@@ -19,6 +19,8 @@ export interface PaperMetadata {
   /** A downloadable PDF URL used transiently during metadata lookup. */
   pdfUrl?: string;
   arxivUrl?: string;
+  /** Tags suggested or derived during a lookup; not present on provider responses. */
+  tags?: string[];
   metadataSource: MetadataSource;
 }
 
