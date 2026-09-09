@@ -708,8 +708,7 @@ document.querySelectorAll("[data-apply-tag-suggestions]").forEach((button) => bu
   const names = [...current, ...selected].filter(Boolean).filter((name, index, values) => values.findIndex((candidate) => candidate.toLocaleLowerCase() === name.toLocaleLowerCase()) === index);
   setValue(form, "tags", names.join(", "));
   panel.hidden = true;
-  if (form.dataset.paperId) void savePaperForm(form, { statusMessage: `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added and saved.` });
-  else setStatus(form, `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added. Review before saving.`);
+  void savePaperForm(form, { statusMessage: `${selected.length} suggested tag${selected.length === 1 ? "" : "s"} added and saved.` });
 }));
 
 document.querySelectorAll("[data-folder-tag-toggle]").forEach((toggle) => toggle.addEventListener("change", () => {
@@ -732,8 +731,9 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
       if (preview) preview.hidden = true;
       form.insertAdjacentHTML("beforeend", `<a class="inline-link" data-existing-paper href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
     } else {
-      setStatus(form, "Review the details below.");
       renderPreview(body);
+      const saved = await savePaperForm(document.querySelector("[data-preview] [data-paper-form]"), { statusMessage: "Metadata found and saved." });
+      setStatus(form, saved ? "Metadata found and saved." : "Metadata found. Fix the error below and retry.", !saved);
     }
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
@@ -749,8 +749,9 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
   setStatus(form, "Uploading PDF…");
   try {
     const body = await jsonRequest("/api/uploads", { method: "POST", body: new FormData(form) });
-    setStatus(form, "PDF ready. Add its metadata below.");
     renderPreview({ paper: { title: form.querySelector("input[type=file]").files[0].name.replace(/\.pdf$/i, "") }, pdf: body.pdf }, body.pdf.stagingToken);
+    const saved = await savePaperForm(document.querySelector("[data-preview] [data-paper-form]"), { statusMessage: "PDF saved. Add its metadata below." });
+    setStatus(form, saved ? "PDF saved. Add its metadata below." : "PDF uploaded. Fix the error below and retry.", !saved);
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   }
@@ -867,6 +868,7 @@ document.querySelectorAll("[data-paper-form]").forEach((form) => form.addEventLi
 }));
 
 const autosaveStates = new WeakMap();
+const autosaveForms = new WeakSet();
 async function savePaperForm(form, { redirect = false, statusMessage = "Saved." } = {}) {
   setStatus(form, "Saving…");
   const body = {
@@ -879,6 +881,11 @@ async function savePaperForm(form, { redirect = false, statusMessage = "Saved." 
   const id = form.dataset.paperId;
   try {
     const result = await jsonRequest(id ? `/api/papers/${encodeURIComponent(id)}` : "/api/papers", { method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!id && result.paper?.id) {
+      form.dataset.mode = "edit";
+      form.dataset.paperId = result.paper.id;
+      enablePaperAutosave(form);
+    }
     if (redirect) window.location.href = `/papers/${encodeURIComponent(result.paper.id)}`;
     else setStatus(form, statusMessage);
     return result;
@@ -904,10 +911,14 @@ function schedulePaperAutosave(form, delay = 650) {
   autosaveStates.set(form, state);
 }
 
-document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach((form) => {
+function enablePaperAutosave(form) {
+  if (!form || autosaveForms.has(form)) return;
+  autosaveForms.add(form);
   form.addEventListener("input", () => schedulePaperAutosave(form));
   form.addEventListener("change", () => schedulePaperAutosave(form, 0));
-});
+}
+
+document.querySelectorAll("[data-paper-form][data-mode='edit']").forEach(enablePaperAutosave);
 
 document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.addEventListener("click", async () => {
   const form = button.form || button.closest("[data-paper-form]");
@@ -943,8 +954,7 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     updateWebResource(form, result.paper, result.pdf);
     const pdfMessage = result.pdf?.status === "staged" ? " PDF ready to store." : "";
     const warningMessage = result.warnings?.length ? ` ${result.warnings.join(" ")}` : "";
-    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: `Metadata found via ${result.provider}; saved.${pdfMessage}${warningMessage}` });
-    else setStatus(form, `Metadata found via ${result.provider}.${pdfMessage} Review it, then save.${warningMessage}`);
+    await savePaperForm(form, { statusMessage: `Metadata found via ${result.provider}; saved.${pdfMessage}${warningMessage}` });
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   } finally {
@@ -980,8 +990,7 @@ document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.add
     if (metadata.arxivId) setValue(form, "arxivId", metadata.arxivId);
     if (metadata.sourceUrl || metadata.arxivUrl) setValue(form, "sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
     updateWebResource(form, metadata);
-    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: "BibTeX imported and saved." });
-    else status.textContent = "BibTeX imported. Review the fields, then save.";
+    await savePaperForm(form, { statusMessage: "BibTeX imported and saved." });
   } catch (error) {
     status.textContent = clientErrorMessage(error);
     status.classList.add("status-error");
@@ -1007,8 +1016,7 @@ document.querySelectorAll("[data-extract-abstract]").forEach((button) => button.
   try {
     const body = await jsonRequest("/api/abstract/extract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(stagingToken ? { stagingToken } : { paperId }) });
     setValue(form, "abstract", body.abstract);
-    if (form.dataset.paperId) await savePaperForm(form, { statusMessage: "Abstract extracted and saved." });
-    else setStatus(form, "Abstract extracted from the PDF. Review it before saving.");
+    await savePaperForm(form, { statusMessage: "Abstract extracted and saved." });
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);
   } finally {
