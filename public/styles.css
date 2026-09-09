@@ -420,7 +420,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .analysis-actions .button, .question-section-actions > .button { width: var(--analysis-action-width); min-width: var(--analysis-action-width); min-height: var(--control-height); }
 .analysis-main > .status-error, .analysis-main > .status-warning { max-width: 78ch; margin: 0; }
 .analysis-main > .analysis-meta { margin-top: 12px; }
-.analysis-quick-summary { width: 100%; max-width: 36ch; margin-top: auto; margin-bottom: auto; padding-top: 18px; border-top: 1px solid var(--border); color: var(--text); text-align: left; }
+.analysis-quick-summary { width: 100%; max-width: 100%; margin-top: auto; margin-bottom: auto; padding-top: 18px; border-top: 1px solid var(--border); color: var(--text); text-align: left; }
 .analysis-quick-summary-label { margin: 0 0 8px; color: var(--muted); font-size: .74rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .analysis-quick-summary-content { font-size: .9rem; line-height: 1.5; }
 .analysis-quick-summary-content > * { margin: 0; }

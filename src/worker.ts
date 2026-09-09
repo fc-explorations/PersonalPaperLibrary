@@ -156,7 +156,7 @@ function hostedShell(title: string, page: string, body: string): string {
   return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=60")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=61")
     .replace(/cloud\.js\?v=10/g, "cloud.js?v=36")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
