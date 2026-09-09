@@ -326,7 +326,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .bibtex-import-field .button { white-space: nowrap; }
 .bibtex-import .form-status { margin: 0; }
 .edit-actions-top .form-actions { position: relative; }
-.edit-actions-top .form-actions .form-status { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: min(70vw, 520px); text-align: right; }
+.edit-actions-top .form-actions .form-status { position: static; width: min(520px, 100%); max-width: 100%; height: auto; margin-left: auto; overflow-wrap: anywhere; line-height: 1.35; text-align: right; }
 .status-error, .result-error { color: #9d493a; }
 .result-success, .result-muted, .result-error { font-size: .9rem; margin-top: 5px; }
 .result-success { color: var(--accent); }
@@ -360,6 +360,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .analysis-content mjx-container { max-width: 100%; }
 .analysis-content mjx-container[display="true"] { display: block; overflow-x: auto; overflow-y: hidden; }
 .analysis-content { font-size: 1rem; line-height: 1.65; }
+.analysis-queued { padding-left: 42px; }
 .analysis-content h1, .analysis-content h2, .analysis-content h3, .analysis-content h4 { margin: 1.45rem 0 .55rem; font-size: 1.2rem; line-height: 1.25; }
 .analysis-content h1:first-child, .analysis-content h2:first-child, .analysis-content h3:first-child, .analysis-content h4:first-child { margin-top: 0; }
 .analysis-content p { margin: .8rem 0; }
@@ -437,7 +438,7 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .citation-style { border-top: 1px solid var(--border); padding-top: 12px; }
 .citation-style-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .citation-style-heading strong { color: var(--muted); font-size: .86rem; letter-spacing: .08em; text-transform: uppercase; }
-.citation-text { max-width: 78ch; margin: 8px 0 0; font-size: .95rem; line-height: 1.5; }
+.citation-text { width: 100%; margin: 8px 0 0; font-size: .95rem; line-height: 1.5; }
 .metadata-panel { margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
 .metadata { display: grid; grid-template-columns: 150px 1fr; gap: 9px 15px; margin: 0 0 0 24px; }
 .metadata dt { color: var(--muted); font-size: var(--type-meta); }

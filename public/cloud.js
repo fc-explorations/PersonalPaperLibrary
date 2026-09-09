@@ -177,7 +177,7 @@ function typesetHostedMath(elements) {
   });
 }
 
-typesetHostedMath([...document.querySelectorAll(".analysis-content")]);
+typesetHostedMath([...document.querySelectorAll(".analysis-content, .abstract")]);
 
 function renderHostedAnalysisMeta(summary) {
   if (!summary?.provider || !summary?.model || !summary?.generatedAt) return "";
@@ -694,7 +694,10 @@ document.querySelectorAll("[data-lookup-metadata]").forEach((button) => button.a
     if (body.duplicate) throw new Error("That paper is already in the library.");
     if (form.dataset.mode === "edit") {
       applyHostedMetadata(form, body);
-      await saveHostedPaperForm(form, { statusMessage: body.warnings?.length ? `ISBN retained and saved. ${body.warnings.join(" ")}` : "Metadata found and saved." });
+      const statusMessage = body.warnings?.length
+        ? `${get("isbn").trim() ? "ISBN retained and saved. " : ""}${body.warnings.join(" ")}`
+        : "Metadata found and saved.";
+      await saveHostedPaperForm(form, { statusMessage });
     } else {
       renderHostedPreview(body);
       setStatus(status, "Metadata found. Review it, then save.");
@@ -1238,7 +1241,7 @@ async function initPaper() {
     }
     const abstractSection = document.querySelector("#paper-abstract-section");
     const abstract = document.querySelector("#paper-abstract");
-    if (abstract && paper.abstract) { abstract.textContent = paper.abstract; abstractSection.hidden = false; }
+    if (abstract && paper.abstract) { abstract.textContent = paper.abstract; abstractSection.hidden = false; void typesetHostedMath([abstract]); }
     const tagsSection = document.querySelector("#paper-tags-section");
     const tags = document.querySelector("#paper-tags");
     if (tags && paper.tags?.length) { tags.innerHTML = paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(" "); if (tagsSection) tagsSection.hidden = false; }
@@ -1259,7 +1262,7 @@ async function initPaper() {
   });
   document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, async (heading, content, record) => { summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
+    try { await runSummary(id, async (heading, content, record) => { const queued = content === "Queued…"; summary.innerHTML = `<div class="analysis-content${queued ? " analysis-queued" : ""}">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
     catch (error) { setStatus(analysisStatus, error.message, true); }
     finally { event.currentTarget.disabled = false; }
   }));
