@@ -377,15 +377,18 @@ export class D1PaperRepository {
   private async hydrateMany(rows: PaperRow[]): Promise<PaperRecord[]> {
     if (!rows.length) return [];
     const ids = rows.map((row) => String(row.id));
-    const idPlaceholders = placeholders(ids.length);
-    const [authors, tags] = await Promise.all([
-      all<{ paper_id: string; display_name: string }>(this.db, `SELECT pa.paper_id, a.display_name FROM authors a JOIN paper_authors pa ON pa.author_id = a.id WHERE pa.paper_id IN (${idPlaceholders}) ORDER BY pa.paper_id, pa.author_order`, ...ids),
-      all<{ paper_id: string; name: string }>(this.db, `SELECT pt.paper_id, t.name FROM tags t JOIN paper_tags pt ON pt.tag_id = t.id WHERE pt.paper_id IN (${idPlaceholders}) ORDER BY pt.paper_id, t.name COLLATE NOCASE`, ...ids),
-    ]);
     const authorsByPaper = new Map<string, string[]>();
     const tagsByPaper = new Map<string, string[]>();
-    for (const author of authors) authorsByPaper.set(author.paper_id, [...(authorsByPaper.get(author.paper_id) || []), author.display_name]);
-    for (const tag of tags) tagsByPaper.set(tag.paper_id, [...(tagsByPaper.get(tag.paper_id) || []), tag.name]);
+    for (let start = 0; start < ids.length; start += 80) {
+      const chunk = ids.slice(start, start + 80);
+      const idPlaceholders = placeholders(chunk.length);
+      const [authors, tags] = await Promise.all([
+        all<{ paper_id: string; display_name: string }>(this.db, `SELECT pa.paper_id, a.display_name FROM authors a JOIN paper_authors pa ON pa.author_id = a.id WHERE pa.paper_id IN (${idPlaceholders}) ORDER BY pa.paper_id, pa.author_order`, ...chunk),
+        all<{ paper_id: string; name: string }>(this.db, `SELECT pt.paper_id, t.name FROM tags t JOIN paper_tags pt ON pt.tag_id = t.id WHERE pt.paper_id IN (${idPlaceholders}) ORDER BY pt.paper_id, t.name COLLATE NOCASE`, ...chunk),
+      ]);
+      for (const author of authors) authorsByPaper.set(author.paper_id, [...(authorsByPaper.get(author.paper_id) || []), author.display_name]);
+      for (const tag of tags) tagsByPaper.set(tag.paper_id, [...(tagsByPaper.get(tag.paper_id) || []), tag.name]);
+    }
     return rows.map((row) => rowToPaper(row, tagsByPaper.get(String(row.id)) || [], authorsByPaper.get(String(row.id)) || []));
   }
 }

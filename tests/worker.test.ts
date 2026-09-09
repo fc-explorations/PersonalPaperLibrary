@@ -23,9 +23,9 @@ class MemoryD1 implements D1Database {
     let values: unknown[] = [];
     return {
       bind(...boundValues: unknown[]) { values = boundValues; return this; },
-      async first<T extends D1Row = D1Row>() { return (database.prepare(query).get(...values) as T | undefined) || null; },
-      async all<T extends D1Row = D1Row>() { return { results: database.prepare(query).all(...values) as T[], success: true }; },
-      async run() { const result = database.prepare(query).run(...values); return { success: true, meta: { changes: result.changes } }; },
+      async first<T extends D1Row = D1Row>() { if (values.length > 100) throw new Error("D1_ERROR: too many SQL variables"); return (database.prepare(query).get(...values) as T | undefined) || null; },
+      async all<T extends D1Row = D1Row>() { if (values.length > 100) throw new Error("D1_ERROR: too many SQL variables"); return { results: database.prepare(query).all(...values) as T[], success: true }; },
+      async run() { if (values.length > 100) throw new Error("D1_ERROR: too many SQL variables"); const result = database.prepare(query).run(...values); return { success: true, meta: { changes: result.changes } }; },
     };
   }
 
@@ -356,6 +356,18 @@ describe("Cloudflare Worker API", () => {
       vi.unstubAllGlobals();
       env.d1.db.close();
     }
+  });
+
+  it("chunks hosted index hydration within D1 variable limits", async () => {
+    const env = bindings();
+    const now = new Date().toISOString();
+    const insert = env.d1.db.prepare("INSERT INTO papers (id, title, categories, metadata_source, created_at, updated_at) VALUES (?, ?, '[]', 'manual', ?, ?)");
+    for (let index = 0; index < 101; index += 1) insert.run(`large-index-${index}`, `Large index paper ${index}`, now, now);
+
+    const indexed = await worker.request("/api/search/index", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20 }) }, env);
+    expect(indexed.status).toBe(200);
+    expect(await indexed.json()).toMatchObject({ coverage: { totalPapers: 101, pendingPapers: 81, unavailablePapers: 20 } });
+    env.d1.db.close();
   });
 
   it("imports hosted DOI and title metadata with provider fallback and PDF staging", async () => {
