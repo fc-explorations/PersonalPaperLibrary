@@ -104,7 +104,7 @@ export class D1LibrarySearchRepository {
         query: "INSERT INTO paper_search_index (paper_id, search_text, content_hash, embedding_json, embedding_provider, embedding_model, status, error_message, updated_at) VALUES (?, ?, ?, NULL, NULL, NULL, 'pending', NULL, ?) ON CONFLICT(paper_id) DO UPDATE SET search_text=excluded.search_text, content_hash=excluded.content_hash, embedding_json=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_json ELSE NULL END, embedding_provider=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_provider ELSE NULL END, embedding_model=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.embedding_model ELSE NULL END, status=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.status ELSE 'pending' END, error_message=CASE WHEN paper_search_index.content_hash = excluded.content_hash THEN paper_search_index.error_message ELSE NULL END, updated_at=excluded.updated_at",
         values: [paper.id, text, hash, now],
       });
-      if (statements.length >= 90) {
+      if (statements.length >= 20) {
         await batch(this.db, statements);
         statements = [];
       }

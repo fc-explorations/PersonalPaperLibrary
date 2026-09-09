@@ -921,6 +921,7 @@ app.post("/api/search/index", async (c) => {
     await search.indexPending(embedder, Number(body.limit) || 20);
     return c.json({ coverage: await search.coverage(), provider: embedder.provider, model: embedder.model });
   } catch (error) {
+    console.error("hosted search indexing failed", errorMessage(error));
     return jsonError(c, 500, errorMessage(error), "The search index could not be updated.");
   }
 });
