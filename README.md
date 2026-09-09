@@ -50,7 +50,27 @@ npm run build            # Compile the server and copy static assets
 npm run verify           # Type-check and run automated tests
 npm run db:migrate       # Apply SQLite migrations
 npm run metadata:backfill # Reparse PDFs and refresh available arXiv/Crossref metadata
+npm run version:check    # Verify package, lockfile, and runtime versions agree
+npm run version:bump -- patch # Explicitly bump to the next 1.2.3 version
 ```
+
+## Automated versioning
+
+Application releases use stable semantic versions in `MAJOR.MINOR.PATCH` form. The
+checked-in version is kept synchronized between `package.json`, `package-lock.json`,
+and `src/version.ts`; release tags use the `v1.2.3` form.
+
+The release workflow applies this Conventional Commit policy after a version tag:
+
+- `feat:` creates a minor release.
+- `fix:`, `perf:`, or `refactor:` creates a patch release.
+- `!` after the commit type/scope or a `BREAKING CHANGE:` footer creates a major release.
+- Other commit types do not create a release.
+
+The repository currently has no release tag, so bootstrap the existing version once
+with `git tag v2.0.1 && git push origin v2.0.1`. Later pushes to `main` are handled
+by `.github/workflows/release.yml`, which updates the three version files, commits,
+and tags the calculated release.
 
 ## Local data
 

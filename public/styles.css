@@ -34,11 +34,12 @@ a { color: var(--accent); }
 .backup-entry-info .muted { overflow-wrap: anywhere; font-size: .88rem; }
 .backup-entry-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .backup-empty { margin: 0; padding: 18px 0; }
-.backup-restore { display: grid; gap: 16px; max-width: none; margin-top: 38px; padding-top: 32px; border-top: 1px solid var(--border); }
+.backup-restore { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .42fr); column-gap: clamp(24px, 4vw, 64px); row-gap: 16px; max-width: none; margin-top: 38px; padding-top: 32px; border-top: 1px solid var(--border); }
+.backup-restore > h3, .backup-restore > p { grid-column: 1 / -1; }
 .backup-restore > p { margin: -7px 0 2px; }
 .backup-restore > label { display: grid; gap: 7px; color: #5b574f; font-size: .95rem; font-weight: 700; }
-.backup-restore-actions { width: 100%; display: flex; justify-content: flex-end !important; margin-top: 2px; }
-.backup-restore-actions .button { min-width: 240px; min-height: 56px; padding: .85rem 1.35rem; }
+.backup-restore-actions { grid-column: 2; grid-row: 3 / span 2; align-self: end; width: 100%; display: flex; justify-content: stretch !important; margin-top: 2px; }
+.backup-restore-actions .button { width: 100%; min-width: 240px; min-height: 56px; padding: .85rem 1.35rem; }
 .hosted-backup-panel + .panel { margin-top: 48px; }
 .paper-select { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 2px 8px 0 0; }
 .paper-select input { width: auto; }
@@ -485,7 +486,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 25px 0; }
 @media (max-width: 720px) { .form-utility-button { width: min(140px, 100%); min-width: 0; } }
 @media (max-width: 720px) { .library-primary-actions { width: 100%; } .library-primary-actions .ask-library-button { flex: 1; } .ask-heading { align-items: stretch; } .ask-library-page, .ask-indexing-panel { padding: 22px 18px 18px; } .ask-query-input-row { align-items: stretch; flex-direction: column; } .ask-query-controls-row { grid-template-columns: 1fr; } .ask-submit { width: 100%; } .ask-query-toolbar { align-items: stretch; flex-direction: column; } .ask-tag-filter { display: flex; align-items: stretch; flex-direction: column; } .ask-tag-selection { width: 100%; } .ask-group-toggle { justify-content: flex-start; } .ask-indexing-row { align-items: flex-start; flex-direction: column; } .ask-indexing-actions { width: 100%; justify-content: flex-end; } .ask-index-button { width: auto; } }
 @media (max-width: 720px) { .site-header .brand { font-size: clamp(2.05rem, 10vw, 4rem); } }
-@media (max-width: 720px) { .hosted-backup-panel { padding: 24px 18px; } .backup-heading, .backup-library-heading { align-items: stretch; flex-direction: column; } .backup-entry { align-items: stretch; flex-direction: column; gap: 12px; } .backup-entry-actions { justify-content: flex-start; } .backup-entry-actions .button { flex: 1 1 auto; } .backup-restore-actions .button { width: 100%; } }
+@media (max-width: 720px) { .hosted-backup-panel { padding: 24px 18px; } .backup-heading, .backup-library-heading { align-items: stretch; flex-direction: column; } .backup-entry { align-items: stretch; flex-direction: column; gap: 12px; } .backup-entry-actions { justify-content: flex-start; } .backup-entry-actions .button { flex: 1 1 auto; } .backup-restore { grid-template-columns: 1fr; } .backup-restore > h3, .backup-restore > p, .backup-restore > label, .backup-restore-actions { grid-column: 1; grid-row: auto; } .backup-restore-actions .button { width: 100%; } }
 .edit-page .edit-action-button { width: 140px; min-width: 140px; min-height: var(--control-height); padding: .68rem 1rem; font-size: inherit; }
 @media (max-width: 720px) { .edit-page > .edit-heading { flex-direction: row; align-items: center; gap: 12px; padding: 24px 0 16px; } .edit-page > .edit-heading h1 { min-width: 0; margin: 0; font-size: clamp(1.55rem, 7vw, 2.2rem); } .edit-page .edit-actions-top { flex: 0 0 auto; } .edit-page .edit-actions-top .form-actions-row { flex-direction: row; align-items: center; } .edit-page .edit-actions-top .edit-action-button { width: min(140px, 100%); min-width: 0; } }
 @media (max-width: 720px) { .edit-page .edit-actions-top { margin-right: 0; } }
