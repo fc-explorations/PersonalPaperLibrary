@@ -2,6 +2,7 @@ import type { PaperRecord, PaperMetadata, SortOrder } from "./types.js";
 import type { TagFilterMode } from "./repositories/papers.js";
 import type { SummaryRecord, StoredQuestion } from "./repositories/analysis.js";
 import { NO_PDF_TAG } from "./services/system-tags.js";
+import { parseBibtex } from "./services/bibtex.js";
 import { APP_VERSION_LABEL } from "./version.js";
 
 export function escapeHtml(value: unknown): string {
@@ -251,10 +252,21 @@ function bibtexEntry(paper: PaperRecord): string {
   return [`@${type}{${bibtexKey(paper)},`, ...fields.map(([name, value], index) => `  ${name} = {${bibtexEscape(value)}}${index === fields.length - 1 ? "" : ","}`), "}"].join("\n");
 }
 
+function storedBibtex(paper: PaperRecord): string | undefined {
+  const source = typeof paper.bibtex === "string" ? paper.bibtex.trim() : "";
+  if (!source) return undefined;
+  parseBibtex(source);
+  return source;
+}
+
 /** Render one exportable BibTeX entry, rejecting records without the required title. */
 export function renderBibtexEntry(paper: PaperRecord): string {
   if (!paper || typeof paper.title !== "string" || !paper.title.trim()) throw new Error("BIBTEX_TITLE_MISSING");
-  return bibtexEntry(paper);
+  try {
+    return storedBibtex(paper) || bibtexEntry(paper);
+  } catch {
+    return bibtexEntry(paper);
+  }
 }
 
 /** Render all valid entries while isolating malformed records from the rest of an export. */
@@ -262,7 +274,7 @@ export function renderBibtexExport(papers: PaperRecord[]): string {
   const entries: string[] = [];
   for (const paper of papers) {
     try {
-      const entry = renderBibtexEntry(paper);
+      const entry = storedBibtex(paper) || renderBibtexEntry(paper);
       if (entry.trim()) entries.push(entry);
     } catch {
       // A single malformed record should not prevent the remaining papers from exporting.
@@ -485,8 +497,8 @@ function abstractField(value: unknown): string {
   return `<label>Abstract<div class="field-with-action abstract-field"><textarea name="abstract" rows="6">${escapeHtml(value)}</textarea><button class="button button-secondary button-small form-utility-button edit-action-button" type="button" data-extract-abstract>${analysisIcon()}<span>From PDF</span></button></div></label>`;
 }
 
-export function bibtexImportField(formId: string): string {
-  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here"></textarea><button class="button button-secondary form-utility-button edit-action-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
+export function bibtexImportField(formId: string, value = ""): string {
+  return `<div class="bibtex-import"><label>BibTeX<div class="field-with-action bibtex-import-field"><textarea name="bibtex" data-bibtex-import form="${escapeHtml(formId)}" rows="7" placeholder="Paste one BibTeX entry here">${escapeHtml(value)}</textarea><button class="button button-secondary form-utility-button edit-action-button" type="button" form="${escapeHtml(formId)}" data-import-bibtex>${searchIcon()}<span>From TeX</span></button></div></label><span class="form-status" data-bibtex-status role="status"></span></div>`;
 }
 
 function formActions(formId: string): string {
@@ -584,7 +596,7 @@ export function renderPaperPage(paper: PaperRecord, summary?: SummaryRecord | nu
 
 export function renderEditPage(paper: PaperRecord): string {
   const formId = `paper-form-${paper.id}`;
-  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button edit-action-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
+  return layout(`Edit ${paper.title}`, `<div class="edit-page"><section class="page-heading edit-heading"><h1>Edit metadata</h1><div class="edit-actions-top">${formActions(formId)}</div></section><section class="panel edit-panel">${renderPaperForm(paper, "edit", true)}${bibtexImportField(formId, paper.bibtex)}<hr><h2>Replace PDF</h2><form data-replace-upload data-paper-id="${paper.id}"><div class="inline-form"><input name="file" type="file" accept="application/pdf,.pdf" required><button class="button button-secondary form-utility-button edit-action-button" type="submit">${uploadIcon()}<span>Replace</span></button></div><p class="form-status" role="status"></p></form></section></div>`);
 }
 
 function themeOption(group: "accent" | "background", value: string, label: string, color: string): string {

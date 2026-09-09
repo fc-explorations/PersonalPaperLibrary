@@ -32,4 +32,22 @@ describe("BibTeX metadata parsing", () => {
     expect(parseBibtex("@misc{x, eprint = {2601.18778}, archivePrefix = {arXiv}, title = {Title}")).toMatchObject({ arxivId: "2601.18778", title: "Title" });
     expect(() => parseBibtex("not bibtex")).toThrow("BIBTEX_INVALID");
   });
+
+  it("keeps the original entry when it contains fields not mapped to paper metadata", () => {
+    const source = `@unpublished{sturt2001wide,
+      author = {Sturt, Patrick and Lombardo, Vincenzo and Costa, Fabrizio and Frasconi, Paolo},
+      title = {A Wide-Coverage Model of First-Pass Structural Preferences in Human Parsing},
+      year = {2001},
+      month = mar,
+      howpublished = {Paper presented at the 14th Annual CUNY Conference on Human Sentence Processing},
+      address = {University of Pennsylvania, Philadelphia, PA, USA},
+      note = {15--17 March 2001}
+    }`;
+
+    expect(parseBibtex(source)).toMatchObject({
+      bibtex: source.trim(),
+      title: "A Wide-Coverage Model of First-Pass Structural Preferences in Human Parsing",
+      publishedDate: "2001-03",
+    });
+  });
 });

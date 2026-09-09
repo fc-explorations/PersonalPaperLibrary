@@ -9,7 +9,7 @@ import { createZip } from "../src/services/zip.js";
 
 function makeDatabase(root: string): Database.Database {
   const db = new Database(join(root, "library.sqlite"));
-  db.exec(`CREATE TABLE papers (id TEXT PRIMARY KEY, r2_key TEXT, title TEXT NOT NULL, isbn TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  db.exec(`CREATE TABLE papers (id TEXT PRIMARY KEY, r2_key TEXT, title TEXT NOT NULL, isbn TEXT, bibtex TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL);
     CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL);
     CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);

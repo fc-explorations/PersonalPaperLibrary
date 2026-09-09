@@ -193,13 +193,13 @@ function looksLikeBibtex(input) {
 
 async function resolveFindInput(input, form) {
   const clean = input.trim();
-  if (!looksLikeBibtex(clean)) return clean;
+  if (!looksLikeBibtex(clean)) return { input: clean };
   setStatus(form, "Parsing BibTeX…");
   const result = await jsonRequest("/api/metadata/bibtex", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bibtex: clean }) });
   const metadata = result.metadata || {};
   const lookupInput = String(metadata.doi || metadata.title || "").trim();
   if (!lookupInput) throw new Error("BibTeX entry must include a title or DOI.");
-  return lookupInput;
+  return { input: lookupInput, bibtex: clean };
 }
 
 function resizeAuthorsField(input) {
@@ -383,6 +383,7 @@ function renderPreview(data, stagingToken = "") {
   setValue(form, "acceptedVenue", paper.acceptedVenue);
   setValue(form, "doi", paper.doi);
   setValue(form, "isbn", paper.isbn);
+  setValue(form, "bibtex", paper.bibtex);
   setValue(form, "arxivId", paper.arxivId);
   setValue(form, "sourceUrl", paper.sourceUrl || paper.arxivUrl);
   setValue(form, "tags", (paper.tags || []).join(", "));
@@ -738,8 +739,8 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
   setLookupBusy(button, true);
   setStatus(form, "Looking up paper metadata…");
   try {
-    const input = await resolveFindInput(value(form, "input"), form);
-    const body = await jsonRequestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }) }, (progress) => updateLookupProgress(button, progress, form));
+    const resolved = await resolveFindInput(value(form, "input"), form);
+    const body = await jsonRequestWithLookupProgress("/api/import?progress=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: resolved.input }) }, (progress) => updateLookupProgress(button, progress, form));
     if (body.duplicate) {
       setStatus(form, "That paper is already in the library.");
       form.querySelector("[data-existing-paper]")?.remove();
@@ -748,7 +749,9 @@ document.querySelector("[data-import-form]")?.addEventListener("submit", async (
       form.insertAdjacentHTML("beforeend", `<a class="inline-link" data-existing-paper href="/papers/${encodeURIComponent(body.existing.id)}">Open existing paper</a>`);
     } else {
       renderPreview(body);
-      const saved = await savePaperForm(document.querySelector("[data-preview] [data-paper-form]"), { redirect: "edit", statusMessage: "Metadata found and saved." });
+      const previewForm = document.querySelector("[data-preview] [data-paper-form]");
+      if (resolved.bibtex) setValue(previewForm, "bibtex", resolved.bibtex);
+      const saved = await savePaperForm(previewForm, { redirect: "edit", statusMessage: "Metadata found and saved." });
       setStatus(form, saved ? "Metadata found and saved." : "Metadata found. Fix the error below and retry.", !saved);
     }
   } catch (error) {
@@ -891,7 +894,7 @@ async function savePaperForm(form, { redirect = false, statusMessage = "Saved." 
     title: value(form, "title"), authors: value(form, "authors").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
     year: value(form, "year") || undefined, publishedDate: value(form, "publishedDate"), abstract: value(form, "abstract"),
     primaryCategory: value(form, "primaryCategory"), categories: commaValues(value(form, "categories")), journalRef: value(form, "journalRef"), acceptedVenue: value(form, "acceptedVenue"),
-    doi: value(form, "doi"), isbn: value(form, "isbn"), arxivId: value(form, "arxivId"), sourceUrl: value(form, "sourceUrl"), tags: commaValues(value(form, "tags")),
+    doi: value(form, "doi"), isbn: value(form, "isbn"), bibtex: value(form, "bibtex"), arxivId: value(form, "arxivId"), sourceUrl: value(form, "sourceUrl"), tags: commaValues(value(form, "tags")),
     stagingToken: value(form, "stagingToken"), metadataSource: value(form, "arxivId") ? "mixed" : "manual",
   };
   const id = form.dataset.paperId;
@@ -1015,6 +1018,7 @@ document.querySelectorAll("[data-import-bibtex]").forEach((button) => button.add
     if (metadata.isbn) setValue(form, "isbn", metadata.isbn);
     if (metadata.arxivId) setValue(form, "arxivId", metadata.arxivId);
     if (metadata.sourceUrl || metadata.arxivUrl) setValue(form, "sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
+    if (metadata.bibtex) setValue(form, "bibtex", metadata.bibtex);
     updateWebResource(form, metadata);
     await savePaperForm(form, { statusMessage: "BibTeX imported and saved." });
   } catch (error) {

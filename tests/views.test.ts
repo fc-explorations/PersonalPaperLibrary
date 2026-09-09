@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAddPage, renderBibtexExport, renderLibrary, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
+import { renderAddPage, renderBibtexExport, renderEditPage, renderLibrary, renderMarkdown, renderPaperForm, renderSettingsPage } from "../src/views.js";
 import { APP_VERSION_LABEL } from "../src/version.js";
 
 describe("theme settings rendering", () => {
@@ -79,6 +79,14 @@ describe("paper form rendering", () => {
     expect(fieldNames(editForm)).toEqual(fieldNames(addForm));
     expect(editForm).toContain('data-mode="edit"');
     expect(addForm).toContain('data-mode="add"');
+  });
+
+  it("shows the stored original BibTeX in the edit form", () => {
+    const source = "@unpublished{example, title = {A Paper}, howpublished = {A useful detail}}";
+    const html = renderEditPage({ id: "paper-1", title: "A Paper", authors: [], categories: [], metadataSource: "manual", createdAt: "2026-01-01", updatedAt: "2026-01-01", tags: [], bibtex: source });
+
+    expect(html).toContain('name="bibtex"');
+    expect(html).toContain("howpublished = {A useful detail}");
   });
 });
 

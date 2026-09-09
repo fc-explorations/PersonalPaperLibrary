@@ -90,6 +90,7 @@ export function parseBibtex(input: string): BibtexMetadata {
   const venue = fields.venue || fields.publisher;
   const categories = splitList(fields.categories || fields.keywords || "");
   return {
+    bibtex: source,
     citationKey: header[3],
     title: fields.title,
     authors: fields.author ? splitAuthors(fields.author) : [],

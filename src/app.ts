@@ -324,6 +324,7 @@ function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
     acceptedVenue: typeof body.acceptedVenue === "string" ? body.acceptedVenue : undefined,
     doi: parseOptionalDoi(body.doi),
     isbn: normalizeIsbn(body.isbn),
+    bibtex: typeof body.bibtex === "string" ? body.bibtex.trim() || undefined : undefined,
     sourceUrl: body.sourceUrl ? parseOptionalUrl(body.sourceUrl) : normalized?.abstractUrl,
     arxivUrl: body.arxivUrl ? parseOptionalUrl(body.arxivUrl) : normalized?.abstractUrl,
     metadataSource: body.metadataSource === "mixed" || body.metadataSource === "manual" || body.metadataSource === "arxiv" ? body.metadataSource : normalized ? "arxiv" : "manual",

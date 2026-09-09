@@ -21,6 +21,8 @@ export interface PaperMetadata {
   arxivUrl?: string;
   /** Tags suggested or derived during a lookup; not present on provider responses. */
   tags?: string[];
+  /** The original BibTeX supplied by the user, when available. */
+  bibtex?: string;
   metadataSource: MetadataSource;
 }
 
@@ -50,6 +52,7 @@ export interface PaperDraftInput {
   isbn?: string;
   sourceUrl?: string;
   arxivUrl?: string;
+  bibtex?: string;
   metadataSource?: MetadataSource;
   tags?: string[];
   stagingToken?: string;

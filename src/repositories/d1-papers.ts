@@ -62,6 +62,7 @@ function rowToPaper(row: PaperRow, tags: string[], authors: string[]): PaperReco
     acceptedVenue: row.accepted_venue ? String(row.accepted_venue) : undefined,
     doi: row.doi ? String(row.doi) : undefined,
     isbn: row.isbn ? String(row.isbn) : undefined,
+    bibtex: row.bibtex ? String(row.bibtex) : undefined,
     sourceUrl: row.source_url ? String(row.source_url) : undefined,
     arxivUrl: row.arxiv_url ? String(row.arxiv_url) : undefined,
     r2Key: row.r2_key ? String(row.r2_key) : undefined,
@@ -82,7 +83,7 @@ function paperValues(id: string, input: PaperDraftInput, file: { key: string; sh
     id, arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null,
     input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null,
     input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null,
-    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null,
+    input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, input.bibtex?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null,
     file?.key || null, file?.sha256 || null, input.metadataSource || (arxivId ? "arxiv" : "manual"), now, now,
     authors,
   ];
@@ -108,7 +109,7 @@ function insertStatements(entry: InsertEntry): Array<{ query: string; values: un
   const values = paperValues(id, entry.input, entry.file, now);
   values.pop();
   return [
-    { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, isbn, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(21)})`, values },
+    { query: `INSERT INTO papers (id, arxiv_id, arxiv_base_id, title, abstract, published_date, updated_date, year, primary_category, categories, journal_ref, accepted_venue, doi, isbn, bibtex, source_url, arxiv_url, r2_key, pdf_sha256, metadata_source, created_at, updated_at) VALUES (${placeholders(22)})`, values },
     ...authorStatements(id, authors),
     ...tags.flatMap((tag) => {
       const normalized = tag.trim().toLocaleLowerCase();
@@ -248,7 +249,7 @@ export class D1PaperRepository {
     const arxivId = input.arxivId?.trim().toLowerCase() || undefined;
     const arxivBaseId = arxivId?.replace(/v\d+$/i, "");
     await batch(this.db, [
-      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, isbn = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null, file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
+      { query: "UPDATE papers SET arxiv_id = ?, arxiv_base_id = ?, title = ?, abstract = ?, published_date = ?, updated_date = ?, year = ?, primary_category = ?, categories = ?, journal_ref = ?, accepted_venue = ?, doi = ?, isbn = ?, bibtex = ?, source_url = ?, arxiv_url = ?, r2_key = COALESCE(?, r2_key), pdf_sha256 = COALESCE(?, pdf_sha256), metadata_source = ?, updated_at = ? WHERE id = ?", values: [arxivId || null, arxivBaseId || null, input.title.trim(), input.abstract?.trim() || null, input.publishedDate?.trim() || null, input.updatedDate?.trim() || null, year ?? null, input.primaryCategory?.trim() || null, JSON.stringify(input.categories || []), input.journalRef?.trim() || null, input.acceptedVenue?.trim() || null, input.doi?.trim() || null, input.isbn?.trim() || null, input.bibtex?.trim() || null, normalizeUrl(input.sourceUrl) || null, normalizeUrl(input.arxivUrl) || null, file?.key || null, file?.sha256 || null, input.metadataSource || existing.metadataSource, now, id] },
       { query: "DELETE FROM paper_authors WHERE paper_id = ?", values: [id] },
       { query: "DELETE FROM authors WHERE id NOT IN (SELECT author_id FROM paper_authors)" },
       ...authorStatements(id, authors),

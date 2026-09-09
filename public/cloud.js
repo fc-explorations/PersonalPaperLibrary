@@ -237,13 +237,13 @@ function looksLikeBibtex(input) {
 
 async function resolveHostedFindInput(input, status) {
   const clean = input.trim();
-  if (!looksLikeBibtex(clean)) return clean;
+  if (!looksLikeBibtex(clean)) return { input: clean };
   setStatus(status, "Parsing BibTeX…");
   const result = await request("/api/metadata/bibtex", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bibtex: clean }) });
   const metadata = result.metadata || {};
   const lookupInput = String(metadata.doi || metadata.title || "").trim();
   if (!lookupInput) throw new Error("BibTeX entry must include a title or DOI.");
-  return lookupInput;
+  return { input: lookupInput, bibtex: clean };
 }
 
 async function requestResponse(response) {
@@ -602,6 +602,7 @@ function applyHostedMetadata(form, data) {
   setValue("acceptedVenue", paper.acceptedVenue);
   setValue("doi", paper.doi);
   setValue("isbn", paper.isbn);
+  setValue("bibtex", paper.bibtex);
   setValue("arxivId", paper.arxivId);
   setValue("sourceUrl", paper.sourceUrl || paper.arxivUrl);
   if (paper.tags) setValue("tags", paper.tags.join(", "));
@@ -636,6 +637,7 @@ function applyHostedBibtex(form, metadata) {
   setIfPresent("isbn", metadata.isbn);
   setIfPresent("arxivId", metadata.arxivId);
   setIfPresent("sourceUrl", metadata.sourceUrl || metadata.arxivUrl);
+  setIfPresent("bibtex", metadata.bibtex);
   const sourceUrl = form.querySelector("[data-source-url-go]");
   const source = metadata.sourceUrl || metadata.arxivUrl || (metadata.doi ? `https://doi.org/${encodeURIComponent(metadata.doi)}` : "");
   if (sourceUrl) { sourceUrl.hidden = !/^https?:\/\//i.test(source); if (!sourceUrl.hidden) sourceUrl.href = source; }
@@ -667,7 +669,7 @@ function hostedPaperBody(form) {
     year: get("year") || undefined, publishedDate: get("publishedDate"), abstract: get("abstract"),
     primaryCategory: get("primaryCategory"), categories: get("categories").split(",").map((value) => value.trim()).filter(Boolean),
     journalRef: get("journalRef"), acceptedVenue: get("acceptedVenue"), doi: get("doi"), isbn: get("isbn"), arxivId: get("arxivId"),
-    sourceUrl: get("sourceUrl"), tags: get("tags").split(",").map((value) => value.trim()).filter(Boolean),
+    sourceUrl: get("sourceUrl"), bibtex: get("bibtex"), tags: get("tags").split(",").map((value) => value.trim()).filter(Boolean),
     stagingToken: get("stagingToken"), metadataSource: get("arxivId") ? "mixed" : "manual",
   };
 }
@@ -1420,15 +1422,17 @@ async function initImport() {
     setLookupBusy(button, true);
     try {
       setStatus(status, "Looking up arXiv metadata and PDF…");
-      const input = await resolveHostedFindInput(form.elements.input.value, status);
+      const resolved = await resolveHostedFindInput(form.elements.input.value, status);
       staged = await requestWithLookupProgress("/api/import?progress=1", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input: resolved.input }),
       }, (progress) => updateLookupProgress(button, progress, form));
       renderHostedPreview(staged);
+      const previewForm = document.querySelector("#paper-form-new");
+      if (resolved.bibtex) setValue(previewForm, "bibtex", resolved.bibtex);
       setStatus(pdfStatus, staged.pdf?.status === "staged" ? "PDF staged" : "Metadata only");
-      const saved = await saveHostedPaperForm(document.querySelector("#paper-form-new"), { redirect: "edit", statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
+      const saved = await saveHostedPaperForm(previewForm, { redirect: "edit", statusMessage: staged.warnings?.length ? staged.warnings.join(" ") : "Metadata found and saved." });
       const pdfMessage = staged.pdf?.status === "staged" ? "Metadata found and PDF saved." : "Metadata found and saved.";
       setStatus(status, saved ? (staged.warnings?.length ? `${pdfMessage} ${staged.warnings.join(" ")}` : pdfMessage) : "Metadata found. Fix the error below and retry.", !saved);
     } catch (error) {

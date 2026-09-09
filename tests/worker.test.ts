@@ -15,6 +15,7 @@ class MemoryD1 implements D1Database {
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0001_initial.sql", import.meta.url), "utf8"));
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0002_analysis_jobs.sql", import.meta.url), "utf8"));
     this.db.exec(readFileSync(new URL("../migrations/cloudflare/0004_isbn.sql", import.meta.url), "utf8"));
+    this.db.exec(readFileSync(new URL("../migrations/cloudflare/0006_bibtex.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {

@@ -9,3 +9,4 @@ The hosted search index initially uses ordinary SQLite tables; the local FTS5
 virtual table is intentionally not part of the cloud baseline. `0002_analysis_jobs.sql`
 adds durable summary/question job state used by the hosted Queue consumer.
 `0004_isbn.sql` adds the normalized ISBN field and lookup index.
+`0006_bibtex.sql` stores the original BibTeX supplied for a paper when available.
