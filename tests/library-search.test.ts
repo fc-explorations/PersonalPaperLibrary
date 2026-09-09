@@ -61,9 +61,13 @@ describe("library result grouping", () => {
   it("filters unknown paper IDs from model output", async () => {
     const paper = { id: "paper-1", title: "Paper one", authors: [], abstract: "", tags: [], categories: [] } as any;
     const hits = [{ paper, score: 1, semanticScore: 1, keywordScore: 1, matchType: "semantic" as const, evidence: "Evidence" }];
-    const client = { complete: async () => JSON.stringify({ groups: [{ name: "Theme", description: "A theme", paperIds: ["paper-1", "not-a-paper"], evidence: "Supported" }] }) };
+    let prompt = "";
+    const client = { complete: async ({ messages }: { messages: Array<{ role: string; content: string }> }) => { prompt = messages[1]?.content || ""; return JSON.stringify({ groups: [{ name: "Theme", description: "A theme", references: [1, 99], evidence: `Supported ${"with complete detail. ".repeat(50)}` }] }); } };
     const groups = await groupLibraryResults(hits, "find papers about this theme", client, "test", () => null);
-    expect(groups).toEqual([{ name: "Theme", description: "A theme", paperIds: ["paper-1"], evidence: "Supported" }]);
+    expect(groups[0]?.paperIds).toEqual(["paper-1"]);
+    expect(groups[0]?.evidence).toContain("with complete detail.");
+    expect(groups[0]?.evidence.length).toBeGreaterThan(700);
+    expect(prompt).not.toContain("paper-1");
   });
 });
 
