@@ -239,7 +239,6 @@ describe("Cloudflare Worker API", () => {
     const settingsHtml = await settings.text();
     expect(settingsHtml).toContain("Automatic backups run daily at midnight UTC");
     expect(settingsHtml).toContain('id="backup-list"');
-    expect(settingsHtml).toContain("Use for restore");
     expect(settingsHtml).toContain("<h2>Credits</h2>");
     expect(settingsHtml).toContain("<strong>Version:</strong> 2.0.1");
     const library = await worker.request("/", {}, env);

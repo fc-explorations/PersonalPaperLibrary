@@ -1120,14 +1120,24 @@ function formatAnalysisDuration(durationMs) {
 }
 
 function typesetMath(root) {
-  const mathJax = window.MathJax;
-  if (!mathJax) return;
-  const typeset = () => {
-    if (typeof mathJax.typesetPromise === "function") void mathJax.typesetPromise([root]).catch(() => {});
-  };
-  if (mathJax.startup?.promise) void mathJax.startup.promise.then(typeset).catch(() => {});
-  else typeset();
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const typeset = () => {
+      const mathJax = window.MathJax;
+      if (typeof mathJax?.typesetPromise !== "function") {
+        if (attempts++ < 200) window.setTimeout(typeset, 50);
+        else resolve();
+        return;
+      }
+      const run = () => { void mathJax.typesetPromise([root]).then(resolve, resolve); };
+      if (mathJax.startup?.promise) void mathJax.startup.promise.then(run, resolve);
+      else run();
+    };
+    typeset();
+  });
 }
+
+document.querySelectorAll(".abstract, .analysis-content, .question-answer").forEach((root) => { void typesetMath(root); });
 
 function showQuestionAnswer(item, answer, answerHtml) {
   if (!item || !answer) return;
