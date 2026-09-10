@@ -16,6 +16,7 @@ describe("OpenAI LLM client", () => {
 
     await expect(client.complete(input)).resolves.toBe("answer");
     expect(requestBody).not.toHaveProperty("temperature");
+    expect(requestBody?.reasoning_effort).toBe("minimal");
   });
 
   it("passes an output cap to OpenAI", async () => {
@@ -44,5 +45,14 @@ describe("OpenAI LLM client", () => {
 
     await client.complete({ ...input, model: "gpt-4.1-mini" });
     expect(requestBody?.temperature).toBe(0.2);
+  });
+
+  it("reports a useful error when OpenAI stops at the output limit", async () => {
+    const client = new OpenAiLlmClient({
+      openaiApiKey: async () => "test-key",
+      fetcher: async () => new Response(JSON.stringify({ choices: [{ message: { content: "", refusal: null }, finish_reason: "length" }] }), { status: 200 }),
+    });
+
+    await expect(client.complete({ ...input, maxOutputTokens: 10 })).rejects.toThrow("OPENAI_OUTPUT_LIMIT_REACHED");
   });
 });

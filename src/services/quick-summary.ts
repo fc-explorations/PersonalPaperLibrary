@@ -25,7 +25,7 @@ export async function generateQuickSummary(client: LlmClient, model: string, val
   const response = await client.complete({
     model,
     temperature: 0.2,
-    maxOutputTokens: 700,
+    maxOutputTokens: 1_200,
     messages: [
       { role: "system", content: "You write concise, factual summaries of scientific analysis. Use only the supplied text and do not invent details." },
       { role: "user", content: `Write ${paragraphInstruction} that gives the quickest useful understanding of the supplied text. Preserve important claims, conclusions, limitations, and uncertainty. Return only prose, with no heading, bullets, preamble, or commentary.\n\nText to condense:\n${source}` },

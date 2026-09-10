@@ -1,5 +1,6 @@
 export type LlmProvider = "openai" | "ollama";
 export type LlmMessage = { role: "system" | "user"; content: string };
+type OpenAiReasoningEffort = "minimal" | "low" | "medium" | "high";
 export const MATH_FORMATTING_INSTRUCTION = "When writing mathematics, always use LaTeX delimiters: inline \\( ... \\) or display \\[ ... \\]. Use commands such as \\Sigma_T, v^\\top, \\rho, and \\lambda; never write raw forms such as v^T, ΣT, or ΣB.";
 
 export interface LlmClient {
@@ -32,7 +33,9 @@ export class OpenAiLlmClient implements LlmClient {
     const requestBody: Record<string, unknown> = { model: input.model, messages: input.messages };
     // GPT-5 nano only accepts its default sampling configuration and rejects
     // an explicit temperature value, unlike older chat-completions models.
-    if (!/^gpt-5(?:$|[-.])/i.test(input.model)) requestBody.temperature = input.temperature;
+    const isReasoningModel = /^gpt-5(?:$|[-.])/i.test(input.model);
+    if (!isReasoningModel) requestBody.temperature = input.temperature;
+    else requestBody.reasoning_effort = "minimal" satisfies OpenAiReasoningEffort;
     if (input.maxOutputTokens) requestBody.max_completion_tokens = input.maxOutputTokens;
     const response = await this.fetcher("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -40,9 +43,14 @@ export class OpenAiLlmClient implements LlmClient {
       body: JSON.stringify(requestBody),
     });
     if (!response.ok) throw await responseError(response);
-    const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = body.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OPENAI_EMPTY_RESPONSE");
+    const body = await response.json() as { choices?: Array<{ message?: { content?: string; refusal?: string | null }; finish_reason?: string }> };
+    const choice = body.choices?.[0];
+    const content = choice?.message?.content?.trim();
+    if (!content) {
+      if (choice?.message?.refusal) throw new Error(`OPENAI_REFUSAL: ${choice.message.refusal}`);
+      if (choice?.finish_reason === "length") throw new Error("OPENAI_OUTPUT_LIMIT_REACHED");
+      throw new Error(`OPENAI_EMPTY_RESPONSE${choice?.finish_reason ? `:${choice.finish_reason}` : ""}`);
+    }
     return content;
   }
 }
