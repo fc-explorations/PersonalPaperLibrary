@@ -5,6 +5,7 @@ import worker, { type CloudflareBindings } from "../src/worker.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
 import { createZip } from "../src/services/zip.js";
+import { createCloudBackupManifest } from "../src/services/cloud-backup.js";
 import { APP_VERSION } from "../src/version.js";
 import { PDFDocument } from "pdf-lib";
 
@@ -178,6 +179,27 @@ describe("Cloudflare Worker API", () => {
     expect(Date.parse(manifests.find((manifest) => manifest.kind === "monthly")!.expiresAt) - Date.now()).toBeGreaterThan(364 * 24 * 60 * 60 * 1000);
     const listing = await worker.request("/api/backups", {}, env);
     expect((await listing.json() as { backups: Array<{ kind: string }> }).backups.map((backup) => backup.kind).sort()).toEqual(["daily", "monthly"]);
+    env.d1.db.close();
+  });
+
+  it("refreshes a stale daily backup when the backup list is opened", async () => {
+    const env = bindings();
+    const oldBackupId = "11111111-1111-4111-8111-111111111111";
+    const oldManifest = createCloudBackupManifest({
+      backupId: oldBackupId,
+      createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      papers: [],
+      kind: "daily",
+    });
+    await env.r2.put(`backups/${oldBackupId}/manifest.json`, JSON.stringify(oldManifest));
+
+    const response = await worker.request("/api/backups", {}, env);
+    expect(response.status).toBe(200);
+    const backups = (await response.json() as { backups: Array<{ backupId: string; kind: string }> }).backups;
+    expect(backups.filter((backup) => backup.kind === "daily")).toHaveLength(1);
+    expect(backups.find((backup) => backup.kind === "daily")?.backupId).not.toBe(oldBackupId);
+    expect([...env.r2.objects.keys()]).not.toContain(`backups/${oldBackupId}/manifest.json`);
     env.d1.db.close();
   });
 

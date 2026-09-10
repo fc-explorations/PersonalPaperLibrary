@@ -59,6 +59,7 @@ type ScheduledController = { cron: string; scheduledTime: number };
 
 const DAILY_BACKUP_CRON = "0 0 * * *";
 const MONTHLY_BACKUP_CRON = "0 0 1 * *";
+const DAILY_BACKUP_REFRESH_AGE_MS = 26 * 60 * 60 * 1000;
 
 function progressStream(c: Context, operation: (report: LookupProgressReporter) => Promise<Response>): Response {
   const response = streamText(c, async (stream) => {
@@ -154,7 +155,7 @@ function hostedShell(title: string, page: string, body: string): string {
     ? withBackupPanel.replace('<button id="backup-create" class="button" type="button">Create hosted backup</button>', '<button id="backup-create" class="button" type="button">Create hosted backup</button><button id="backup-initialize" class="button button-secondary" type="button">Initialize daily + monthly</button>')
     : withBackupPanel;
   const withCredits = page === "settings"
-    ? withInitialization.replace("</main>", `<section class="panel"><div class="settings-group credits-group"><div class="credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa <a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a></p><p><strong>Version:</strong> ${APP_VERSION_LABEL}</p></div></div></section></main>`)
+    ? withInitialization.replace("</main>", `<section class="panel settings-card-panel credits-group"><div class="credits-box"><h2>Credits</h2><p><strong>Ideation:</strong> Fabrizio Costa <a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a></p><p><strong>Version:</strong> ${APP_VERSION_LABEL}</p></div></section></main>`)
     : withInitialization;
   return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
@@ -739,7 +740,8 @@ async function cleanupHostedBackups(env: CloudflareBindings, keepByKind: Partial
     if (!raw) continue;
     try {
       const manifest = parseCloudBackupManifest(JSON.parse(raw), 0);
-      const superseded = manifest.kind !== undefined && keepByKind[manifest.kind] !== undefined && keepByKind[manifest.kind] !== manifest.backupId;
+      const kind = manifest.kind || "manual";
+      const superseded = keepByKind[kind] !== undefined && keepByKind[kind] !== manifest.backupId;
       if (Date.parse(manifest.expiresAt) <= now || superseded) {
         await storage.deleteBackup(backupId);
         removed += 1;
@@ -755,26 +757,54 @@ function hostedBackupDetails(manifest: CloudBackupManifest) {
   return { backupId: manifest.backupId, kind: manifest.kind || "manual", createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, papers: manifest.papers.length, pdfs: manifest.papers.filter((entry) => entry.pdf).length, manifestUrl: `/api/backups/${manifest.backupId}` };
 }
 
-app.get("/api/backups", async (c) => {
-  const storage = new R2Storage(c.env.PAPER_PDFS);
-  const backups: Array<{ backupId: string; kind: CloudBackupKind; createdAt: string; expiresAt: string; papers: number; pdfs: number; manifestUrl: string }> = [];
+async function listHostedBackups(env: CloudflareBindings) {
+  const storage = new R2Storage(env.PAPER_PDFS);
+  const backups: Array<ReturnType<typeof hostedBackupDetails>> = [];
   for (const backupId of await storage.listBackupIds()) {
     const raw = await storage.getBackupManifest(backupId);
     if (!raw) continue;
     try {
-      const manifest = parseCloudBackupManifest(JSON.parse(raw));
-      backups.push(hostedBackupDetails(manifest));
+      backups.push(hostedBackupDetails(parseCloudBackupManifest(JSON.parse(raw))));
     } catch {
       // Expired or malformed manifests are not offered as restorable backups.
     }
   }
-  backups.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  return backups.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function newestHostedBackups(backups: Array<ReturnType<typeof hostedBackupDetails>>) {
+  const seen = new Set<string>();
+  return backups.filter((backup) => {
+    if (seen.has(backup.kind)) return false;
+    seen.add(backup.kind);
+    return true;
+  });
+}
+
+app.get("/api/backups", async (c) => {
+  let backups = await listHostedBackups(c.env);
+  const newest = newestHostedBackups(backups);
+  const keepByKind = Object.fromEntries(newest.map((backup) => [backup.kind, backup.backupId])) as Partial<Record<CloudBackupKind, string>>;
+  if (Object.keys(keepByKind).length) await cleanupHostedBackups(c.env, keepByKind);
+  backups = newest;
+  const latestDaily = backups.find((backup) => backup.kind === "daily");
+  const latestDailyAt = latestDaily ? Date.parse(latestDaily.createdAt) : Number.NaN;
+  if (!Number.isFinite(latestDailyAt) || Date.now() - latestDailyAt > DAILY_BACKUP_REFRESH_AGE_MS) {
+    try {
+      const created = await createHostedBackup(c.env, { kind: "daily" });
+      await cleanupHostedBackups(c.env, { daily: created.manifest.backupId });
+      backups = newestHostedBackups(await listHostedBackups(c.env));
+    } catch {
+      // Keep serving the last usable backup if an automatic refresh fails.
+    }
+  }
   return c.json({ backups });
 });
 
 app.post("/api/backups", async (c) => {
   try {
     const { manifest } = await createHostedBackup(c.env);
+    await cleanupHostedBackups(c.env, { manual: manifest.backupId });
     return c.json(hostedBackupDetails(manifest), 201);
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The hosted backup could not be created.");

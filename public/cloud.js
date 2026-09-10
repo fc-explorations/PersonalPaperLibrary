@@ -1225,6 +1225,7 @@ async function initSettings() {
     finally { backupRestore.disabled = false; }
   });
   await loadBackups();
+  window.setInterval(loadBackups, 60_000);
 }
 
 async function loadStatistics() {
