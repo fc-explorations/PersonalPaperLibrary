@@ -295,12 +295,10 @@ select { width: auto; min-width: 150px; }
 .statistics-card-percent { color: var(--muted); font-size: .8rem; }
 .statistics-card-label { margin-top: 6px; font-weight: 700; }
 .statistics-card-description { color: var(--muted); font-size: .78rem; line-height: 1.35; }
-.statistics-attention { max-width: 620px; }
-.statistics-attention h3 { margin: 0 0 10px; font-size: 1rem; }
-.statistics-attention-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
-.statistics-attention-row strong { color: var(--text); }
-.statistics-attention-link { color: var(--text); text-decoration: none; }
-.statistics-attention-link:hover, .statistics-attention-link:focus-visible { color: var(--accent); text-decoration: underline; }
+.statistics-card-link { color: inherit; text-decoration: none; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+.statistics-card-link:hover { border-color: var(--accent-border); background: var(--accent-soft); transform: translateY(-1px); }
+.statistics-card-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.statistics-hint { margin: 0 0 -8px; font-size: .85rem; }
 .active-library-filter { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 0; padding: 10px 14px; border: 1px solid var(--accent-border); border-radius: 7px; background: var(--accent-soft); color: var(--muted); font-size: .9rem; }
 .active-library-filter a { color: var(--accent); font-weight: 700; }
 .credits-group { padding-bottom: 0; }

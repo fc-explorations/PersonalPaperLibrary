@@ -38,9 +38,9 @@ export type LibraryStatistics = {
   aiFailures: number;
 };
 
-export type AttentionFilter = "missing-pdf" | "missing-abstract" | "missing-summary" | "missing-answer" | "missing-metadata" | "duplicate-candidate" | "never-analyzed" | "recent" | "stale-summary" | "stale-answer" | "ai-failure";
+export type AttentionFilter = "missing-pdf" | "missing-abstract" | "missing-summary" | "missing-answer" | "missing-metadata" | "duplicate-candidate" | "never-analyzed" | "recent" | "with-pdf" | "with-abstract" | "with-summary" | "with-answer" | "fully-enriched" | "metadata-complete" | "stale-summary" | "stale-answer" | "ai-failure";
 
-const attentionFilterValues: AttentionFilter[] = ["missing-pdf", "missing-abstract", "missing-summary", "missing-answer", "missing-metadata", "duplicate-candidate", "never-analyzed", "recent", "stale-summary", "stale-answer", "ai-failure"];
+const attentionFilterValues: AttentionFilter[] = ["missing-pdf", "missing-abstract", "missing-summary", "missing-answer", "missing-metadata", "duplicate-candidate", "never-analyzed", "recent", "with-pdf", "with-abstract", "with-summary", "with-answer", "fully-enriched", "metadata-complete", "stale-summary", "stale-answer", "ai-failure"];
 
 export function parseAttentionFilter(value: unknown): AttentionFilter | undefined {
   return typeof value === "string" && attentionFilterValues.includes(value as AttentionFilter) ? value as AttentionFilter : undefined;

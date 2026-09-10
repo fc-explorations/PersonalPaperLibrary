@@ -42,10 +42,12 @@ describe("theme settings rendering", () => {
     expect(html).toContain('data-stat-value="metadataComplete"');
     expect(html).toContain('data-stat-value="duplicateCandidates"');
     expect(html).toContain('data-stat-value="indexedPapers"');
-    expect(html).toContain("Needs attention");
-    expect(html).toContain('class="statistics-attention-link" href="/?attention=missing-pdf"');
-    expect(html).toContain('class="statistics-attention-link" href="/?attention=ai-failure"');
-    expect(html).toContain('class="statistics-attention-link" href="/?untagged=1"');
+    expect(html).toContain("Select a paper metric to open the matching papers in the library.");
+    expect(html).not.toContain("Needs attention");
+    expect(html).not.toContain("statistics-attention");
+    expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=missing-pdf"');
+    expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=with-pdf"');
+    expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=fully-enriched"');
   });
 });
 
