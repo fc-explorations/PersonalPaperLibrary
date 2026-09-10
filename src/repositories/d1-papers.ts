@@ -3,10 +3,10 @@ import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { all, batch, first, placeholders, type D1Database, type D1Row } from "../cloudflare/d1.js";
 import { D1TagRepository } from "./d1-tags.js";
 import { NO_PDF_TAG, tagsForPdfStatus } from "../services/system-tags.js";
-import { libraryStatisticsFromRow, type LibraryStatistics } from "../services/statistics.js";
+import { libraryStatisticsFromRow, type AttentionFilter, type LibraryStatistics } from "../services/statistics.js";
 
 export type D1TagFilterMode = "and" | "or";
-export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
+export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; attention?: AttentionFilter; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
 
 type PaperRow = D1Row;
 
@@ -409,6 +409,13 @@ export class D1PaperRepository {
       values.push(...ids);
     }
     if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu JOIN tags ttu ON ttu.id = ptu.tag_id WHERE ptu.paper_id = p.id AND ttu.name != 'no pdf' COLLATE NOCASE)");
+    if (options.attention === "missing-pdf") clauses.push("TRIM(COALESCE(p.r2_key, '')) = '' AND TRIM(COALESCE(p.pdf_sha256, '')) = ''");
+    if (options.attention === "missing-abstract") clauses.push("TRIM(COALESCE(p.abstract, '')) = ''");
+    if (options.attention === "missing-summary") clauses.push("(TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '') AND NOT EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> '')");
+    if (options.attention === "missing-answer") clauses.push("(TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '') AND NOT EXISTS (SELECT 1 FROM paper_question_answers a JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> '' AND a.question_definition_hash = q.definition_hash)");
+    if (options.attention === "stale-summary") clauses.push("EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id AND s.status = 'stale')");
+    if (options.attention === "stale-answer") clauses.push("EXISTS (SELECT 1 FROM paper_question_answers a JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id WHERE a.paper_id = p.id AND (a.status = 'stale' OR a.question_definition_hash IS NOT q.definition_hash))");
+    if (options.attention === "ai-failure") clauses.push("(EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id AND s.status = 'error') OR EXISTS (SELECT 1 FROM paper_question_answers a WHERE a.paper_id = p.id AND a.status = 'error'))");
     const tags = (Array.isArray(options.tag) ? options.tag : options.tag ? [options.tag] : []).map((tag) => tag.trim()).filter(Boolean);
     const tagClauses = tags.map(() => "EXISTS (SELECT 1 FROM paper_tags ptf JOIN tags tf ON tf.id = ptf.tag_id WHERE ptf.paper_id = p.id AND tf.name = ? COLLATE NOCASE)");
     if (tagClauses.length) {

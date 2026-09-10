@@ -454,9 +454,20 @@ async function runQuestion(paperId, question, onUpdate) {
   onUpdate("Answer", result.answer.content);
 }
 
+const attentionFilterLabels = {
+  "missing-pdf": "PDFs missing",
+  "missing-abstract": "Abstracts missing",
+  "missing-summary": "Papers without a current summary",
+  "missing-answer": "Papers without an answered question",
+  "stale-summary": "Stale summaries",
+  "stale-answer": "Stale answers",
+  "ai-failure": "AI failures",
+};
+
 function libraryState() {
   const params = new URLSearchParams(window.location.search);
-  return { q: params.get("q") || "", sort: params.get("sort") || "newest", tags: params.getAll("tag"), selected: params.getAll("selected"), tagMode: params.get("tagMode") === "and" ? "and" : "or", untagged: params.get("untagged") === "1", page: Math.max(1, Number(params.get("page") || 1) || 1), pageSize: pageSizes.includes(Number(selectedTheme.pageSize)) ? Number(selectedTheme.pageSize) : 50 };
+  const attention = params.get("attention") || "";
+  return { q: params.get("q") || "", sort: params.get("sort") || "newest", tags: params.getAll("tag"), selected: params.getAll("selected"), tagMode: params.get("tagMode") === "and" ? "and" : "or", untagged: params.get("untagged") === "1", attention: attentionFilterLabels[attention] ? attention : "", page: Math.max(1, Number(params.get("page") || 1) || 1), pageSize: pageSizes.includes(Number(selectedTheme.pageSize)) ? Number(selectedTheme.pageSize) : 50 };
 }
 
 function libraryUrl(state, changes = {}) {
@@ -468,6 +479,7 @@ function libraryUrl(state, changes = {}) {
   (next.selected || []).forEach((id) => params.append("selected", id));
   if (next.tagMode && next.tagMode !== "or") params.set("tagMode", next.tagMode);
   if (next.untagged) params.set("untagged", "1");
+  if (next.attention) params.set("attention", next.attention);
   if (next.page > 1) params.set("page", String(next.page));
   const query = params.toString();
   return query ? `/?${query}` : "/";
@@ -509,7 +521,7 @@ function renderLibraryTags(tags, state) {
 let hostedLibraryView = { body: null, state: null, tags: [] };
 
 function hasLibraryFilter(state) {
-  return Boolean(state?.q || state?.tags?.length || state?.untagged);
+  return Boolean(state?.q || state?.tags?.length || state?.untagged || state?.attention);
 }
 
 function libraryExportUrl(state, selectedIds = []) {
@@ -518,6 +530,7 @@ function libraryExportUrl(state, selectedIds = []) {
   (state?.tags || []).forEach((tag) => params.append("tag", tag));
   if (state?.tagMode === "and") params.set("tagMode", "and");
   if (state?.untagged) params.set("untagged", "1");
+  if (state?.attention) params.set("attention", state.attention);
   selectedIds.forEach((id) => params.append("selected", id));
   return `/api/export/pdfs?${params}`;
 }
@@ -528,23 +541,24 @@ function libraryBibtexUrl(state, selectedIds = []) {
   (state?.tags || []).forEach((tag) => params.append("tag", tag));
   if (state?.tagMode === "and") params.set("tagMode", "and");
   if (state?.untagged) params.set("untagged", "1");
+  if (state?.attention) params.set("attention", state.attention);
   selectedIds.forEach((id) => params.append("selected", id));
   return `/api/export/bibtex?${params}`;
 }
 
 function bulkTagEditor(context, tags) {
   const options = tags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(displayTagName(tag))}</option>`).join("");
-  return `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(context.q || "")}" data-selection-tags="${escapeHtml(JSON.stringify(context.tags || []))}" data-selection-tag-mode="${escapeHtml(context.tagMode || "or")}" data-selection-untagged="${context.untagged ? "true" : "false"}" data-selection-ids="${escapeHtml(JSON.stringify(context.selectedIds || []))}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${options}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add"><span class="material-symbols-outlined" aria-hidden="true">add</span><span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags><span class="material-symbols-outlined" aria-hidden="true">close</span><span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>`;
+  return `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-query="${escapeHtml(context.q || "")}" data-selection-tags="${escapeHtml(JSON.stringify(context.tags || []))}" data-selection-tag-mode="${escapeHtml(context.tagMode || "or")}" data-selection-untagged="${context.untagged ? "true" : "false"}" data-selection-attention="${escapeHtml(context.attention || "")}" data-selection-ids="${escapeHtml(JSON.stringify(context.selectedIds || []))}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${options}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add"><span class="material-symbols-outlined" aria-hidden="true">add</span><span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags><span class="material-symbols-outlined" aria-hidden="true">close</span><span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>`;
 }
 
 function groupActions(body, state, tags, selectedIds = []) {
   const group = selectedIds.length ? false : hasLibraryFilter(state);
   if (!body?.total || (!group && !selectedIds.length)) return "";
-  const context = { q: group ? state.q : "", tags: group ? state.tags : [], tagMode: group ? state.tagMode : "or", untagged: group ? state.untagged : false, selectedIds };
+  const context = { q: group ? state.q : "", tags: group ? state.tags : [], tagMode: group ? state.tagMode : "or", untagged: group ? state.untagged : false, attention: group ? state.attention : "", selectedIds };
   const count = selectedIds.length || body.total;
   const stored = selectedIds.length ? body.papers.filter((paper) => paper.r2Key).length : body.stored;
-  const label = selectedIds.length ? `Delete selected (${count})` : state.tags.length || state.untagged ? "Delete group" : "Delete selected";
-  const toolbar = `<div class="bulk-actions" data-bulk-toolbar>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${escapeHtml(JSON.stringify(selectedIds))}"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit tags</span></button><a class="button button-secondary" href="${libraryBibtexUrl(context, selectedIds)}"><span class="material-symbols-outlined" aria-hidden="true">download</span><span>Export BibTeX</span></a>${stored ? `<a class="button button-secondary" href="${libraryExportUrl(context, selectedIds)}"><span class="material-symbols-outlined" aria-hidden="true">download</span><span>Download ${stored} PDF${stored === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(context.q)}" data-delete-tags="${escapeHtml(JSON.stringify(context.tags))}" data-delete-tag-mode="${escapeHtml(context.tagMode)}" data-delete-untagged="${context.untagged ? "true" : "false"}" data-delete-selected-ids="${escapeHtml(JSON.stringify(selectedIds))}" data-delete-count="${count}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>${label}</span></button></div>`;
+  const label = selectedIds.length ? `Delete selected (${count})` : state.tags.length || state.untagged || state.attention ? "Delete group" : "Delete selected";
+  const toolbar = `<div class="bulk-actions" data-bulk-toolbar>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${escapeHtml(JSON.stringify(selectedIds))}"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit tags</span></button><a class="button button-secondary" href="${libraryBibtexUrl(context, selectedIds)}"><span class="material-symbols-outlined" aria-hidden="true">download</span><span>Export BibTeX</span></a>${stored ? `<a class="button button-secondary" href="${libraryExportUrl(context, selectedIds)}"><span class="material-symbols-outlined" aria-hidden="true">download</span><span>Download ${stored} PDF${stored === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-query="${escapeHtml(context.q)}" data-delete-tags="${escapeHtml(JSON.stringify(context.tags))}" data-delete-tag-mode="${escapeHtml(context.tagMode)}" data-delete-untagged="${context.untagged ? "true" : "false"}" data-delete-attention="${escapeHtml(context.attention)}" data-delete-selected-ids="${escapeHtml(JSON.stringify(selectedIds))}" data-delete-count="${count}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>${label}</span></button></div>`;
   return `<div class="hosted-bulk-group" data-hosted-bulk>${toolbar}${bulkTagEditor(context, tags)}</div>`;
 }
 
@@ -571,13 +585,19 @@ async function loadPapers() {
     state.tags.forEach((tag) => params.append("tag", tag));
     state.selected.forEach((id) => params.append("selected", id));
     if (state.untagged) params.set("untagged", "1");
+    if (state.attention) params.set("attention", state.attention);
     const [body, tagBody] = await Promise.all([request(`/api/papers?${params}`), request("/api/tags")]);
     const pageCount = Math.max(1, Math.ceil(body.total / state.pageSize));
     if (body.total && state.page > pageCount) return window.location.replace(libraryUrl(state, { page: pageCount }));
     document.querySelector("#library-tags").innerHTML = renderLibraryTags(tagBody.tags || [], state);
+    const activeFilter = document.querySelector("#active-library-filter");
+    if (activeFilter) {
+      activeFilter.innerHTML = state.attention ? `<span>Needs attention: <strong>${attentionFilterLabels[state.attention]}</strong></span><a href="${libraryUrl(state, { attention: "", page: 1 })}">Clear filter</a>` : "";
+      activeFilter.hidden = !state.attention;
+    }
     hostedLibraryView = { body, state, tags: tagBody.tags || [] };
     list.className = `paper-list${body.papers.length ? "" : " empty-paper-list"}`;
-    list.innerHTML = body.papers.length ? body.papers.map(paperCard).join("") : `<div class="empty-state"><h2>${state.q || state.tags.length || state.untagged ? "No papers found" : "No papers yet"}</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`;
+    list.innerHTML = body.papers.length ? body.papers.map(paperCard).join("") : `<div class="empty-state"><h2>${state.q || state.tags.length || state.untagged || state.attention ? "No papers found" : "No papers yet"}</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`;
     setStatus(listStatus, `${body.total} paper${body.total === 1 ? "" : "s"}`);
     const pagination = document.querySelector("#library-pagination");
     pagination.innerHTML = renderPagination(state, body.total);
@@ -640,12 +660,12 @@ function initLibrary() {
     const count = target.dataset.deleteCount || String(ids.length);
     if (!confirm(`Delete ${count} paper${Number(count) === 1 ? "" : "s"} and their PDFs?`)) return;
     target.disabled = true;
-    const body = { q: target.dataset.deleteQuery || undefined, tags: JSON.parse(target.dataset.deleteTags || "[]"), tagMode: target.dataset.deleteTagMode || "or", untagged: target.dataset.deleteUntagged === "true", selectedIds: JSON.parse(target.dataset.deleteSelectedIds || "[]") };
+    const body = { q: target.dataset.deleteQuery || undefined, tags: JSON.parse(target.dataset.deleteTags || "[]"), tagMode: target.dataset.deleteTagMode || "or", untagged: target.dataset.deleteUntagged === "true", attention: target.dataset.deleteAttention || undefined, selectedIds: JSON.parse(target.dataset.deleteSelectedIds || "[]") };
     try { setStatus(document.querySelector("#list-status"), `Deleting ${count} paper${Number(count) === 1 ? "" : "s"}…`); await request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); await loadPapers(); }
     catch (error) { setStatus(document.querySelector("#list-status"), error.message, true); target.disabled = false; }
   });
   document.querySelector("#bulk-actions")?.addEventListener("change", (event) => { if (!event.target.matches("[data-bulk-tag-select]")) return; const form = event.target.closest("form"); const input = form?.querySelector("[data-new-tag]"); const isNew = event.target.value === "__new__"; if (input) { input.hidden = !isNew; input.required = isNew; if (isNew) input.focus(); } });
-  document.querySelector("#bulk-actions")?.addEventListener("submit", async (event) => { const form = event.target.closest("[data-bulk-tag-form]"); if (!form) return; event.preventDefault(); const action = event.submitter?.dataset.bulkTagAction; const selected = form.elements.namedItem("tag").value; const name = selected === "__new__" ? form.elements.namedItem("newTag").value : selected; if (action === "remove" && selected === "__new__") { setStatus(form, "Choose an existing tag to remove.", true); return; } if (!name?.trim()) { setStatus(form, "Choose or enter a tag.", true); return; } setStatus(form, "Updating tags…"); try { await request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery || undefined, tags: JSON.parse(form.dataset.selectionTags || "[]"), tagMode: form.dataset.selectionTagMode || "or", untagged: form.dataset.selectionUntagged === "true", selectedIds: JSON.parse(form.dataset.selectionIds || "[]"), name, action }) }); await loadPapers(); } catch (error) { setStatus(form, error.message, true); } });
+  document.querySelector("#bulk-actions")?.addEventListener("submit", async (event) => { const form = event.target.closest("[data-bulk-tag-form]"); if (!form) return; event.preventDefault(); const action = event.submitter?.dataset.bulkTagAction; const selected = form.elements.namedItem("tag").value; const name = selected === "__new__" ? form.elements.namedItem("newTag").value : selected; if (action === "remove" && selected === "__new__") { setStatus(form, "Choose an existing tag to remove.", true); return; } if (!name?.trim()) { setStatus(form, "Choose or enter a tag.", true); return; } setStatus(form, "Updating tags…"); try { await request("/api/papers/bulk-tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery || undefined, tags: JSON.parse(form.dataset.selectionTags || "[]"), tagMode: form.dataset.selectionTagMode || "or", untagged: form.dataset.selectionUntagged === "true", attention: form.dataset.selectionAttention || undefined, selectedIds: JSON.parse(form.dataset.selectionIds || "[]"), name, action }) }); await loadPapers(); } catch (error) { setStatus(form, error.message, true); } });
   form.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(form); window.location.href = libraryUrl(libraryState(), { q: String(data.get("q") || "").trim(), sort: String(data.get("sort") || "newest"), page: 1 }); });
   form.querySelector("select[name=sort]")?.addEventListener("change", () => form.requestSubmit());
   const clear = document.querySelector("[data-clear-search]");

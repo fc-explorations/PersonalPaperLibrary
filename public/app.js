@@ -1429,16 +1429,17 @@ document.querySelector("[data-delete-group]")?.addEventListener("click", async (
   const button = event.currentTarget;
   const all = button.dataset.deleteAll === "true";
   const untagged = button.dataset.deleteUntagged === "true";
+  const attention = button.dataset.deleteAttention || "";
   const query = button.dataset.deleteQuery;
   const tags = JSON.parse(button.dataset.deleteTags || "[]");
   const tagMode = button.dataset.deleteTagMode || "and";
   const selectedIds = JSON.parse(button.dataset.deleteSelectedIds || "[]");
   const count = button.dataset.deleteCount || "0";
-  const selection = selectedIds.length ? "the selected papers" : all ? "all papers" : untagged ? "papers without tags" : tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
-  if ((!query && !tags.length && !selectedIds.length && !all && !untagged) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
+  const selection = selectedIds.length ? "the selected papers" : all ? "all papers" : untagged ? "papers without tags" : attention ? `papers needing attention (${attention.replace(/-/g, " ")})` : tags.length ? `the selected tag group${tags.length > 1 ? "s" : ""}` : `the current search results`;
+  if ((!query && !tags.length && !selectedIds.length && !all && !untagged && !attention) || !window.confirm(`Delete all ${count} papers in ${selection} and their stored PDFs?`)) return;
   button.disabled = true;
   try {
-    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags, tagMode, selectedIds, all, untagged }) });
+    await jsonRequest("/api/papers/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, tags, tagMode, selectedIds, all, untagged, attention: button.dataset.deleteAttention || undefined }) });
     window.location.href = "/";
   } catch (error) {
     button.disabled = false;
@@ -1501,7 +1502,7 @@ document.querySelector("[data-bulk-tag-form]")?.addEventListener("submit", async
   }
   setStatus(form, "Updating tags…");
   try {
-    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, tagMode, selectedIds, all, untagged, name, action }) });
+    await jsonRequest("/api/papers/bulk-tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: form.dataset.selectionQuery, tags, tagMode, selectedIds, all, untagged, attention: form.dataset.selectionAttention || undefined, name, action }) });
     window.location.reload();
   } catch (error) {
     setStatus(form, clientErrorMessage(error), true);

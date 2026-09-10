@@ -31,6 +31,7 @@ import { analysisMeta, bibtexImportField, renderBibtexExport, renderCitationSect
 import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 import { compactQuickSummary } from "./services/quick-summary.js";
 import { APP_VERSION_LABEL } from "./version.js";
+import { parseAttentionFilter } from "./services/statistics.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -516,6 +517,7 @@ function listOptions(url: URL) {
     tagMode: url.searchParams.get("tagMode") === "and" ? "and" as D1TagFilterMode : "or" as D1TagFilterMode,
     ids: ids.length ? ids : undefined,
     untagged: url.searchParams.get("untagged") === "1",
+    attention: parseAttentionFilter(url.searchParams.get("attention")),
     sort: parseSortOrder(url.searchParams.get("sort")),
     limit: Number.isFinite(limitValue) ? Math.min(100, Math.max(1, Math.floor(limitValue))) : 50,
     offset: Number.isFinite(offsetValue) ? Math.max(0, Math.floor(offsetValue)) : 0,
@@ -567,6 +569,7 @@ app.use("/api/*", async (c, next) => {
 app.get("/", (c) => c.html(hostedShell("Library", "library", `<main class="shell cloud-library">
   <div class="library-controls"><div class="library-primary-actions"><a class="button add-paper-button add-paper-square" href="/add" aria-label="Add paper" title="Add paper"><span class="material-symbols-outlined" aria-hidden="true">add</span></a><a class="button button-secondary ask-library-button" href="/ask"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span><span>Ask the library</span></a></div><form id="library-search-form" class="toolbar" method="get" action="/"><label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input id="search" name="q" placeholder="Search titles, authors, abstracts, tags…" autocomplete="off"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label><select id="sort" name="sort" aria-label="Sort papers"><option value="newest">Newest added</option><option value="oldest">Oldest added</option><option value="year-desc">Publication year ↓</option><option value="year-asc">Publication year ↑</option><option value="title">Title A–Z</option></select><button class="button button-secondary" type="submit"><span class="material-symbols-outlined" aria-hidden="true">search</span><span>Search</span></button></form></div>
   <section id="library-tags" class="tag-bar" aria-label="Library filters"><span class="tag-mode-label">Match:</span><a class="tag tag-mode-button" data-tag-mode="and" href="?tagMode=and">AND</a><a class="tag tag-mode-button tag-selected" data-tag-mode="or" href="?tagMode=or">OR</a><span class="tag-mode-label">Tags:</span><a class="tag tag-selected" data-tag-filter="all" href="?all=1">ALL</a><a class="tag" data-tag-filter="untagged" href="?untagged=1">NONE</a><span class="muted" data-tags-loading>Loading tags…</span></section>
+  <div id="active-library-filter" class="active-library-filter" hidden></div>
   <div class="results-heading"><span id="list-status" class="muted" role="status"></span><div class="results-actions"><div id="bulk-actions" class="bulk-actions" hidden><button id="delete-selected" class="button button-danger" type="button">Delete selected</button></div></div></div>
   <section id="paper-list" class="paper-list empty-paper-list"></section>
   <div id="library-pagination" class="pagination-footer" hidden></div>
@@ -1260,13 +1263,14 @@ app.post("/api/papers/bulk-delete", async (c) => {
   const repo = new D1PaperRepository(c.env.DB);
   const storage = new R2Storage(c.env.PAPER_PDFS);
   try {
-    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; selectedIds?: string[]; untagged?: boolean; all?: boolean }>();
+    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; selectedIds?: string[]; untagged?: boolean; attention?: string; all?: boolean }>();
     const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
     const filters = (body.tags || []).filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0).map((tag) => tag.trim());
-    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
+    const attention = parseAttentionFilter(body.attention);
+    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all && !attention) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to delete.");
     const papers = ids.length
       ? (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper))
-      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged });
+      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged, attention });
     const moved: Array<NonNullable<Awaited<ReturnType<R2Storage["moveToTrash"]>>>> = [];
     try {
       for (const paper of papers) if (paper.r2Key) {
@@ -1287,17 +1291,18 @@ app.post("/api/papers/bulk-delete", async (c) => {
 
 app.post("/api/papers/bulk-tags", async (c) => {
   try {
-    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; untagged?: boolean; all?: boolean; selectedIds?: string[]; name?: string; action?: string }>();
+    const body = await c.req.json<{ q?: string; tags?: string[]; tagMode?: string; untagged?: boolean; attention?: string; all?: boolean; selectedIds?: string[]; name?: string; action?: string }>();
     const ids = [...new Set((body.selectedIds || []).filter((id): id is string => typeof id === "string" && /^[a-z0-9_-]+$/i.test(id)))];
     const filters = (body.tags || []).filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0).map((tag) => tag.trim());
     const name = body.name?.trim() || "";
-    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
+    const attention = parseAttentionFilter(body.attention);
+    if (!ids.length && !body.q?.trim() && !filters.length && !body.untagged && !body.all && !attention) return jsonError(c, 400, "FILTER_REQUIRED", "Choose a filtered paper set to update.");
     if (!name) return jsonError(c, 400, "TAG_NAME_REQUIRED", "Enter a tag name.");
     if (body.action !== "add" && body.action !== "remove") return jsonError(c, 400, "TAG_ACTION_REQUIRED", "Choose whether to add or remove the tag.");
     const repo = new D1PaperRepository(c.env.DB);
     const papers = ids.length
       ? (await Promise.all(ids.map((id) => repo.findById(id)))).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper))
-      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged });
+      : await repo.list(body.all ? {} : { q: body.q?.trim() || undefined, tag: filters, tagMode: body.tagMode === "and" ? "and" : "or", untagged: body.untagged, attention });
     if (body.action === "add") await repo.tags.addToPapers(papers.map((paper) => paper.id), name);
     else await repo.tags.removeFromPapers(papers.map((paper) => paper.id), name);
     return c.json({ ok: true, updated: papers.length, action: body.action, tag: name.toLocaleLowerCase() });
@@ -1314,7 +1319,7 @@ app.get("/api/export/pdfs", async (c) => {
     const filters = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
     const papers = selected.length
       ? await repo.list({ ids: selected, sort: parseSortOrder(url.searchParams.get("sort")) })
-      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", sort: parseSortOrder(url.searchParams.get("sort")) });
+      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", attention: parseAttentionFilter(url.searchParams.get("attention")), sort: parseSortOrder(url.searchParams.get("sort")) });
     const storage = new R2Storage(c.env.PAPER_PDFS);
     const usedNames = new Set<string>();
     const files: WorkerZipFile[] = [];
@@ -1339,7 +1344,7 @@ app.get("/api/export/bibtex", async (c) => {
     const filters = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
     const papers = selected.length
       ? await repo.list({ ids: selected, sort: parseSortOrder(url.searchParams.get("sort")) })
-      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", sort: parseSortOrder(url.searchParams.get("sort")) });
+      : await repo.list({ q: url.searchParams.get("q")?.trim() || undefined, tag: filters, tagMode: url.searchParams.get("tagMode") === "and" ? "and" : "or", untagged: url.searchParams.get("untagged") === "1", attention: parseAttentionFilter(url.searchParams.get("attention")), sort: parseSortOrder(url.searchParams.get("sort")) });
     return new Response(renderBibtexExport(papers), { headers: { "content-type": "application/x-bibtex; charset=utf-8", "content-disposition": "attachment; filename=paper-library.bib", "cache-control": "no-store" } });
   } catch (error) {
     return jsonError(c, 500, errorMessage(error), "The BibTeX could not be exported.");

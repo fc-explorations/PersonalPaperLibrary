@@ -82,6 +82,13 @@ describe("paper repository", () => {
       needsAnswers: 3,
       aiFailures: 2,
     });
+    expect(papers.list({ attention: "missing-pdf" }).map((paper) => paper.id)).toEqual([noPdf.id]);
+    expect(papers.list({ attention: "missing-abstract" }).map((paper) => paper.id)).toEqual([noPdf.id]);
+    expect(papers.list({ attention: "missing-summary" }).map((paper) => paper.id)).toEqual(expect.arrayContaining([pdfOnly.id, stale.id, failed.id]));
+    expect(papers.list({ attention: "missing-answer" }).map((paper) => paper.id)).toEqual(expect.arrayContaining([pdfOnly.id, stale.id, failed.id]));
+    expect(papers.list({ attention: "stale-summary" }).map((paper) => paper.id)).toEqual([stale.id]);
+    expect(papers.list({ attention: "stale-answer" }).map((paper) => paper.id)).toEqual([stale.id]);
+    expect(papers.list({ attention: "ai-failure" }).map((paper) => paper.id)).toEqual([failed.id]);
     db.close();
     void noPdf;
     void pdfOnly;

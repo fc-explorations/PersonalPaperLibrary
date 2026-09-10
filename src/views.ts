@@ -4,6 +4,7 @@ import type { SummaryRecord, StoredQuestion } from "./repositories/analysis.js";
 import { NO_PDF_TAG } from "./services/system-tags.js";
 import { parseBibtex } from "./services/bibtex.js";
 import { compactQuickSummary } from "./services/quick-summary.js";
+import type { AttentionFilter } from "./services/statistics.js";
 import { APP_VERSION_LABEL } from "./version.js";
 
 export function escapeHtml(value: unknown): string {
@@ -362,7 +363,19 @@ function displayTagName(tag: string): string {
   return tag.toLowerCase() === NO_PDF_TAG ? "NO PDF" : tag;
 }
 
-function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all: boolean | "none" = false, untagged = false, page = 1, pageSize = 50, tagMode: TagFilterMode = "or", noTags = false): string {
+function attentionFilterLabel(attention: AttentionFilter): string {
+  return ({
+    "missing-pdf": "PDFs missing",
+    "missing-abstract": "Abstracts missing",
+    "missing-summary": "Papers without a current summary",
+    "missing-answer": "Papers without an answered question",
+    "stale-summary": "Stale summaries",
+    "stale-answer": "Stale answers",
+    "ai-failure": "AI failures",
+  } satisfies Record<AttentionFilter, string>)[attention];
+}
+
+function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, all: boolean | "none" = false, untagged = false, page = 1, pageSize = 50, tagMode: TagFilterMode = "or", noTags = false, attention?: AttentionFilter): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   tags.forEach((tag) => params.append("tag", tag));
@@ -370,6 +383,7 @@ function libraryQuery(q: string | undefined, tags: string[], sort: SortOrder, al
   if (all === true) params.set("all", "1");
   else if (all === "none" || noTags) params.set("all", "0");
   if (untagged) params.set("untagged", "1");
+  if (attention) params.set("attention", attention);
   params.set("tagMode", tagMode);
   if (pageSize !== 50) params.set("pageSize", String(pageSize));
   if (page > 1) params.set("page", String(page));
@@ -394,11 +408,11 @@ function paginationPages(page: number, pageCount: number): Array<number | "ellip
   return result;
 }
 
-function groupTagLinks(tags: string[], selected: string[], q: string | undefined, sort: SortOrder, tagMode: TagFilterMode, pageSize = 50): string {
+function groupTagLinks(tags: string[], selected: string[], q: string | undefined, sort: SortOrder, tagMode: TagFilterMode, pageSize = 50, attention?: AttentionFilter): string {
   return tags.map((tag) => {
     const isSelected = selected.some((value) => value.toLowerCase() === tag.toLowerCase());
     const next = isSelected ? selected.filter((value) => value.toLowerCase() !== tag.toLowerCase()) : [...selected, tag];
-    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${isSelected}">${escapeHtml(displayTagName(tag))}</a>`;
+    return `<a class="tag ${isSelected ? "tag-selected" : ""}" href="/?${libraryQuery(q, next, sort, false, false, 1, pageSize, tagMode, false, attention)}" aria-pressed="${isSelected}">${escapeHtml(displayTagName(tag))}</a>`;
   }).join(" ");
 }
 
@@ -445,7 +459,7 @@ export function renderAskLibraryPage(tags: string[]): string {
   return layout("Ask the library", body);
 }
 
-export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; tagMode?: TagFilterMode; selected?: string[]; sort?: SortOrder; all?: boolean; noTags?: boolean; untagged?: boolean; page?: number; pageSize?: number; total?: number; storedPdfCount?: number }): string {
+export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?: string; tag?: string[]; tagMode?: TagFilterMode; selected?: string[]; sort?: SortOrder; all?: boolean; noTags?: boolean; untagged?: boolean; attention?: AttentionFilter; page?: number; pageSize?: number; total?: number; storedPdfCount?: number }): string {
   const sort = query.sort || "newest";
   const page = query.page || 1;
   const pageSize = query.pageSize || 50;
@@ -455,40 +469,42 @@ export function renderLibrary(papers: PaperRecord[], tags: string[], query: { q?
   const selectedIds = query.selected || [];
   const allSelected = Boolean(query.all);
   const untaggedSelected = Boolean(query.untagged);
+  const attentionSelected = query.attention;
   const allTagsSelected = allSelected;
   const noPdfSelected = selectedFilters.some((tag) => tag.toLowerCase() === NO_PDF_TAG);
   const customTags = tags.filter((tag) => tag.toLowerCase() !== NO_PDF_TAG);
   const noPdfFilters = noPdfSelected ? selectedFilters.filter((tag) => tag.toLowerCase() !== NO_PDF_TAG) : [...selectedFilters, NO_PDF_TAG];
-  const noPdfLink = `<a class="tag ${noPdfSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, noPdfFilters, sort, false, false, 1, pageSize, tagMode)}" aria-pressed="${noPdfSelected}">NO PDF</a>`;
-  const downloadQuery = selectedIds.length ? librarySelectionQuery(selectedIds) : libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
+  const noPdfLink = `<a class="tag ${noPdfSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, noPdfFilters, sort, false, false, 1, pageSize, tagMode, false, attentionSelected)}" aria-pressed="${noPdfSelected}">NO PDF</a>`;
+  const downloadQuery = selectedIds.length ? librarySelectionQuery(selectedIds) : libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags, attentionSelected);
   const storedPdfCount = query.storedPdfCount ?? papers.filter((paper) => paper.r2Key).length;
   const selectionCount = selectedIds.length || total;
-  const hasSelection = Boolean(total && (selectedIds.length || query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected));
+  const hasSelection = Boolean(total && (selectedIds.length || query.q?.trim() || selectedFilters.length || allSelected || untaggedSelected || attentionSelected));
   const selectedTags = [...new Set(papers.flatMap((paper) => paper.tags).map((tag) => tag.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const selectedTagOptions = selectedTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(displayTagName(tag))}</option>`).join("");
-  const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 ? "Delete selected" : "Delete group";
+  const selectionLabel = selectedIds.length ? "Delete selected" : allSelected ? "Delete all" : untaggedSelected ? "Delete untagged" : query.q?.trim() || selectedFilters.length > 1 || attentionSelected ? "Delete selected" : "Delete group";
   const selectionTags = escapeHtml(JSON.stringify(selectedFilters));
   const selectionIds = escapeHtml(JSON.stringify(selectedIds));
-  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${selectionIds}">${searchIcon()}<span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button><a class="button button-secondary" href="/api/export/bibtex?${downloadQuery}">${downloadIcon()}<span>Export BibTeX</span></a>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${selectionCount}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
-  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}" data-selection-tag-mode="${tagMode}" data-selection-ids="${selectionIds}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
+  const bulkButtons = hasSelection ? `<div class="bulk-actions" data-bulk-actions>${selectedIds.length ? `<button class="button button-secondary" type="button" data-batch-metadata data-batch-metadata-ids="${selectionIds}">${searchIcon()}<span>Find metadata</span></button>` : ""}<button class="button button-secondary" type="button" data-toggle-bulk-tags aria-expanded="false">${editIcon()}<span>Edit tags</span></button><a class="button button-secondary" href="/api/export/bibtex?${downloadQuery}">${downloadIcon()}<span>Export BibTeX</span></a>${storedPdfCount ? `<a class="button button-secondary" href="/api/export/pdfs?${downloadQuery}">${downloadIcon()}<span>Download ${storedPdfCount} PDF${storedPdfCount === 1 ? "" : "s"}</span></a>` : ""}<button class="button button-danger" type="button" data-delete-group data-delete-all="${allSelected}" data-delete-untagged="${untaggedSelected}" data-delete-attention="${attentionSelected || ""}" data-delete-query="${escapeHtml(query.q || "")}" data-delete-tags="${selectionTags}" data-delete-tag-mode="${tagMode}" data-delete-selected-ids="${selectionIds}" data-delete-count="${selectionCount}">${deleteIcon()}<span>${selectionLabel}</span></button></div>` : "";
+  const bulkTagEditor = hasSelection ? `<div class="bulk-tag-editor" data-bulk-tag-editor hidden><form data-bulk-tag-form data-selection-all="${allSelected}" data-selection-untagged="${untaggedSelected}" data-selection-attention="${attentionSelected || ""}" data-selection-query="${escapeHtml(query.q || "")}" data-selection-tags="${selectionTags}" data-selection-tag-mode="${tagMode}" data-selection-ids="${selectionIds}"><label>Tag to apply<div class="bulk-tag-fields"><select name="tag" data-bulk-tag-select required><option value="">Choose a tag…</option>${selectedTagOptions}<option value="__new__">New tag…</option></select><input name="newTag" data-new-tag placeholder="New tag name" hidden></div></label><div class="bulk-tag-actions"><button class="button button-secondary" type="submit" data-bulk-tag-action="add">${addIcon()}<span>Add tag</span></button><button class="button button-danger" type="submit" data-bulk-tag-action="remove">${deleteIcon()}<span>Remove tag</span></button><button class="button button-secondary" type="button" data-cancel-bulk-tags>${closeIcon()}<span>Cancel</span></button></div><p class="form-status" role="status"></p></form></div>` : "";
   const pageCount = Math.ceil(total / pageSize);
   const pageLinks = paginationPages(page, pageCount).map((pageNumber) => pageNumber === "ellipsis"
     ? `<span class="pagination-ellipsis" aria-hidden="true">…</span>`
     : pageNumber === page
       ? `<span class="button button-secondary button-small page-number" aria-current="page">${pageNumber}</span>`
-      : `<a class="button button-secondary button-small page-number" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageNumber, pageSize, tagMode, query.noTags)}">${pageNumber}</a>`).join("");
-  const firstPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags);
-  const previousPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page - 1, pageSize, tagMode, query.noTags);
-  const nextPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page + 1, pageSize, tagMode, query.noTags);
-  const lastPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageCount, pageSize, tagMode, query.noTags);
+      : `<a class="button button-secondary button-small page-number" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageNumber, pageSize, tagMode, query.noTags, attentionSelected)}">${pageNumber}</a>`).join("");
+  const firstPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags, attentionSelected);
+  const previousPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page - 1, pageSize, tagMode, query.noTags, attentionSelected);
+  const nextPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, page + 1, pageSize, tagMode, query.noTags, attentionSelected);
+  const lastPage = libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, pageCount, pageSize, tagMode, query.noTags, attentionSelected);
   const pagination = pageCount > 1 ? `<div class="pagination-footer"><span class="muted pagination-summary">Page ${page} of ${pageCount}</span><nav class="pagination" aria-label="Paper pages">${page > 1 ? `<a class="button button-secondary button-small" href="/?${firstPage}">First</a><a class="button button-secondary button-small" href="/?${previousPage}">Previous</a>` : `<span class="button button-secondary button-small pagination-disabled" aria-disabled="true">First</span><span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Previous</span>`}<span class="pagination-pages">${pageLinks}</span>${page < pageCount ? `<a class="button button-secondary button-small" href="/?${nextPage}">Next</a><a class="button button-secondary button-small" href="/?${lastPage}">Last</a>` : `<span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Next</span><span class="button button-secondary button-small pagination-disabled" aria-disabled="true">Last</span>`}</nav></div>` : "";
   const body = `<div class="library-controls"><div class="library-primary-actions"><a class="button add-paper-button add-paper-square" href="/add" aria-label="Add paper" title="Add paper">${addIcon()}</a><a class="button button-secondary ask-library-button" href="/ask">${analysisIcon()}<span>Ask the library</span></a></div><form class="toolbar" method="get" action="/">
     <label class="search-label"><span class="sr-only">Search papers</span><span class="search-input-wrap"><input name="q" value="${escapeHtml(query.q)}" placeholder="Search titles, authors, abstracts, tags…"><button class="clear-input" type="button" data-clear-search aria-label="Clear search" title="Clear search" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></label>
-    ${allSelected ? `<input type="hidden" name="all" value="1">` : query.noTags ? `<input type="hidden" name="all" value="0">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}<input type="hidden" name="tagMode" value="${tagMode}"><input type="hidden" name="pageSize" value="${pageSize}">
+    ${allSelected ? `<input type="hidden" name="all" value="1">` : query.noTags ? `<input type="hidden" name="all" value="0">` : ""}${untaggedSelected ? `<input type="hidden" name="untagged" value="1">` : ""}${attentionSelected ? `<input type="hidden" name="attention" value="${attentionSelected}">` : ""}${selectedFilters.map((tag) => `<input type="hidden" name="tag" value="${escapeHtml(tag)}">`).join("")}<input type="hidden" name="tagMode" value="${tagMode}"><input type="hidden" name="pageSize" value="${pageSize}">
     <select name="sort" aria-label="Sort papers"><option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option><option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest added</option><option value="year-desc" ${sort === "year-desc" ? "selected" : ""}>Publication year ↓</option><option value="year-asc" ${sort === "year-asc" ? "selected" : ""}>Publication year ↑</option><option value="title" ${sort === "title" ? "selected" : ""}>Title A–Z</option></select>
     <button class="button button-secondary" type="submit">${searchIcon()}<span>Search</span></button>
   </form></div>
-  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allSelected ? "none" : true, false, 1, pageSize, tagMode)}" aria-pressed="${allTagsSelected}">ALL</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode)}" aria-pressed="${untaggedSelected}">NONE</a> ${noPdfLink} ${groupTagLinks(customTags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize)}</section>
+  ${attentionSelected ? `<div class="active-library-filter"><span>Needs attention: <strong>${attentionFilterLabel(attentionSelected)}</strong></span><a href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, tagMode, query.noTags)}">Clear filter</a></div>` : ""}
+  <section class="tag-bar" data-library-page-size="${pageSize}"><span class="tag-mode-label">Match:</span> <a class="tag tag-mode-button ${tagMode === "and" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "and", query.noTags, attentionSelected)}" aria-pressed="${tagMode === "and"}">AND</a> <a class="tag tag-mode-button ${tagMode === "or" ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, selectedFilters, sort, allSelected, untaggedSelected, 1, pageSize, "or", query.noTags, attentionSelected)}" aria-pressed="${tagMode === "or"}">OR</a> <span class="tag-mode-label">Tags:</span> <a class="tag ${allTagsSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, allSelected ? "none" : true, false, 1, pageSize, tagMode, false, attentionSelected)}" aria-pressed="${allTagsSelected}">ALL</a> <a class="tag ${untaggedSelected ? "tag-selected" : ""}" href="/?${libraryQuery(query.q, [], sort, false, !untaggedSelected, 1, pageSize, tagMode, false, attentionSelected)}" aria-pressed="${untaggedSelected}">NONE</a> ${noPdfLink} ${groupTagLinks(customTags, allTagsSelected || untaggedSelected ? [] : selectedFilters, query.q, sort, tagMode, pageSize, attentionSelected)}</section>
   <div class="results-heading"><span class="muted">${total} paper${total === 1 ? "" : "s"}</span><div class="results-actions" data-local-bulk-actions>${bulkButtons}${bulkTagEditor}</div></div>
   <section class="paper-list${bulkButtons ? " has-bulk-actions" : ""}${papers.length ? "" : " empty-paper-list"}">${papers.length ? papers.map((paper) => paperCard(paper, selectedIds)).join("\n") : `<div class="empty-state"><h2>No papers found</h2><p class="muted">Add a paper or upload a PDF to start your collection.</p><a class="button" href="/add">Add your first paper</a></div>`}</section>${pagination}`;
   return layout("Library", body);
@@ -647,12 +663,12 @@ function statisticsValue(key: string, label: string, description: string, percen
   return `<div class="statistics-card"><strong class="statistics-card-value" data-stat-value="${key}">—</strong>${percentage ? `<span class="statistics-card-percent" data-stat-percent="${key}"></span>` : ""}<span class="statistics-card-label">${label}</span><span class="statistics-card-description">${description}</span></div>`;
 }
 
-function statisticsAttentionRow(key: string, label: string): string {
-  return `<div class="statistics-attention-row"><span>${label}</span><strong data-stat-value="${key}">—</strong></div>`;
+function statisticsAttentionRow(key: string, label: string, attention: AttentionFilter): string {
+  return `<div class="statistics-attention-row"><a class="statistics-attention-link" href="/?attention=${attention}">${label}</a><strong data-stat-value="${key}">—</strong></div>`;
 }
 
 export function renderStatisticsSection(): string {
-  return `<details class="settings-group statistics-group" data-statistics-section><summary>Statistics</summary><div class="statistics-body"><p class="muted" data-statistics-status>Loading library statistics…</p><div class="statistics-content" data-statistics-content hidden><div class="statistics-grid">${statisticsValue("totalPapers", "Total papers", "All saved papers")}${statisticsValue("withPdf", "With PDF", "PDF available", true)}${statisticsValue("withoutPdf", "Without PDF", "PDF still missing", true)}${statisticsValue("withAbstract", "With abstract", "Abstract available", true)}${statisticsValue("withSummary", "With current summary", "Complete, non-stale AI summary", true)}${statisticsValue("withAnswers", "With answered questions", "At least one current AI answer", true)}${statisticsValue("answeredQuestions", "Answered questions", "Current answers across the library")}${statisticsValue("fullyEnriched", "Fully enriched", "PDF, abstract, summary, and answer", true)}</div><section class="statistics-attention"><h3>Needs attention</h3>${statisticsAttentionRow("needsPdf", "PDFs missing")}${statisticsAttentionRow("needsAbstract", "Abstracts missing")}${statisticsAttentionRow("needsSummary", "PDFs without a current summary")}${statisticsAttentionRow("needsAnswers", "Papers without an answered question")}${statisticsAttentionRow("staleSummaries", "Stale summaries")}${statisticsAttentionRow("staleAnswers", "Stale answers")}${statisticsAttentionRow("aiFailures", "AI failures")}</section></div></div></details>`;
+  return `<details class="settings-group statistics-group" data-statistics-section><summary>Statistics</summary><div class="statistics-body"><p class="muted" data-statistics-status>Loading library statistics…</p><div class="statistics-content" data-statistics-content hidden><div class="statistics-grid">${statisticsValue("totalPapers", "Total papers", "All saved papers")}${statisticsValue("withPdf", "With PDF", "PDF available", true)}${statisticsValue("withoutPdf", "Without PDF", "PDF still missing", true)}${statisticsValue("withAbstract", "With abstract", "Abstract available", true)}${statisticsValue("withSummary", "With current summary", "Complete, non-stale AI summary", true)}${statisticsValue("withAnswers", "With answered questions", "At least one current AI answer", true)}${statisticsValue("answeredQuestions", "Answered questions", "Current answers across the library")}${statisticsValue("fullyEnriched", "Fully enriched", "PDF, abstract, summary, and answer", true)}</div><section class="statistics-attention"><h3>Needs attention</h3>${statisticsAttentionRow("needsPdf", "PDFs missing", "missing-pdf")}${statisticsAttentionRow("needsAbstract", "Abstracts missing", "missing-abstract")}${statisticsAttentionRow("needsSummary", "PDFs without a current summary", "missing-summary")}${statisticsAttentionRow("needsAnswers", "Papers without an answered question", "missing-answer")}${statisticsAttentionRow("staleSummaries", "Stale summaries", "stale-summary")}${statisticsAttentionRow("staleAnswers", "Stale answers", "stale-answer")}${statisticsAttentionRow("aiFailures", "AI failures", "ai-failure")}</section></div></div></details>`;
 }
 
 export function renderSettingsPage(): string {

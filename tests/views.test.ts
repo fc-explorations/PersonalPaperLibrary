@@ -40,6 +40,8 @@ describe("theme settings rendering", () => {
     expect(html).toContain('data-stat-value="withAnswers"');
     expect(html).toContain('data-stat-value="fullyEnriched"');
     expect(html).toContain("Needs attention");
+    expect(html).toContain('class="statistics-attention-link" href="/?attention=missing-pdf"');
+    expect(html).toContain('class="statistics-attention-link" href="/?attention=ai-failure"');
   });
 });
 
@@ -164,5 +166,25 @@ describe("BibTeX export rendering", () => {
 
     expect(renderLibrary([paper], [], { total: 1 })).not.toContain("Export BibTeX");
     expect(renderLibrary([paper], [], { q: "paper", total: 1 })).toContain("/api/export/bibtex?");
+  });
+
+  it("keeps a needs-attention filter in the standard list view", () => {
+    const paper = {
+      id: "paper-1",
+      title: "A Paper",
+      authors: [],
+      categories: [],
+      metadataSource: "manual" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      tags: [],
+    };
+
+    const html = renderLibrary([paper], [], { attention: "missing-summary", total: 1 });
+
+    expect(html).toContain("Needs attention: <strong>Papers without a current summary</strong>");
+    expect(html).toContain('<input type="hidden" name="attention" value="missing-summary">');
+    expect(html).toContain('data-delete-attention="missing-summary"');
+    expect(html).toContain("attention=missing-summary");
   });
 });

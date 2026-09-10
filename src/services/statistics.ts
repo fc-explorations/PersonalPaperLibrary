@@ -21,6 +21,14 @@ export type LibraryStatistics = {
   aiFailures: number;
 };
 
+export type AttentionFilter = "missing-pdf" | "missing-abstract" | "missing-summary" | "missing-answer" | "stale-summary" | "stale-answer" | "ai-failure";
+
+const attentionFilterValues: AttentionFilter[] = ["missing-pdf", "missing-abstract", "missing-summary", "missing-answer", "stale-summary", "stale-answer", "ai-failure"];
+
+export function parseAttentionFilter(value: unknown): AttentionFilter | undefined {
+  return typeof value === "string" && attentionFilterValues.includes(value as AttentionFilter) ? value as AttentionFilter : undefined;
+}
+
 export function libraryStatisticsFromRow(row: Record<string, unknown>): LibraryStatistics {
   const numberValue = (key: string): number => {
     const value = Number(row[key] ?? 0);
@@ -57,4 +65,3 @@ export function libraryStatisticsFromRow(row: Record<string, unknown>): LibraryS
     aiFailures: failedSummaries + failedAnswers,
   };
 }
-
