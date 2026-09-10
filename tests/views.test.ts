@@ -57,11 +57,11 @@ describe("theme settings rendering", () => {
     expect(html).toContain('<details class="settings-group settings-collapsible visual-preferences-group">');
     expect(html).toContain("<summary>Visual preferences</summary>");
     expect(html).toContain('<details class="settings-group settings-collapsible llm-group">');
-    expect(html).toContain("<summary>LLM / AI</summary>");
+    expect(html).toContain("<summary>AI</summary>");
     expect(html).toContain('<details class="settings-group settings-collapsible backup-group">');
-    expect(html).toContain("<summary>Backup and restore</summary>");
-    expect(html.indexOf("Visual preferences")).toBeLessThan(html.indexOf("LLM / AI"));
-    expect(html.indexOf("LLM / AI")).toBeLessThan(html.indexOf("Backup and restore"));
+    expect(html).toContain("<summary>Backup</summary>");
+    expect(html.indexOf("Visual preferences")).toBeLessThan(html.indexOf("<summary>AI</summary>"));
+    expect(html.indexOf("<summary>AI</summary>")).toBeLessThan(html.indexOf("<summary>Backup</summary>"));
   });
 });
 

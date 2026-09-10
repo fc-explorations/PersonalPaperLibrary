@@ -267,6 +267,7 @@ select { width: auto; min-width: 150px; }
 .settings-card-panel { padding: 0 clamp(40px, 5vw, 72px); }
 .settings-card-panel.hosted-backup-panel { padding: 0 clamp(28px, 4vw, 46px); }
 .settings-card-panel > .settings-group { border-bottom: 0; }
+.settings-card-panel > .settings-group[open] { padding-top: 24px; }
 .settings-card-panel > .settings-group:not([open]) { padding-top: 30px; padding-bottom: 30px; }
 .settings-stack + .panel { margin-top: 24px; }
 .settings-group { border-bottom: 1px solid var(--border); padding: 24px 0; }
