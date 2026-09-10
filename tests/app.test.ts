@@ -717,7 +717,7 @@ describe("HTTP application", () => {
     const saved = await saveResponse.json();
     const settings = await source.app.request("/settings");
     const settingsHtml = await settings.text();
-    expect(settingsHtml).toContain('<section class="panel settings-page">');
+    expect(settingsHtml).toContain('<div class="settings-stack">');
     expect(settingsHtml).toContain("Download snapshot");
     expect(settingsHtml).toContain("data-restore-backup");
     expect(settingsHtml).toContain("data-restore-backup-trigger");
