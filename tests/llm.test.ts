@@ -55,4 +55,24 @@ describe("OpenAI LLM client", () => {
 
     await expect(client.complete({ ...input, maxOutputTokens: 10 })).rejects.toThrow("OPENAI_OUTPUT_LIMIT_REACHED");
   });
+
+  it("retries a length-limited GPT-5 response with a larger budget", async () => {
+    let calls = 0;
+    let retryBody: Record<string, unknown> | undefined;
+    const client = new OpenAiLlmClient({
+      openaiApiKey: async () => "test-key",
+      fetcher: async (_url, init) => {
+        calls += 1;
+        retryBody = JSON.parse(String(init?.body));
+        const body = calls === 1
+          ? { choices: [{ message: { content: "", refusal: null }, finish_reason: "length" }] }
+          : { choices: [{ message: { content: "recovered answer" }, finish_reason: "stop" }] };
+        return new Response(JSON.stringify(body), { status: 200 });
+      },
+    });
+
+    await expect(client.complete({ ...input, maxOutputTokens: 10 })).resolves.toBe("recovered answer");
+    expect(calls).toBe(2);
+    expect(retryBody?.max_completion_tokens).toBe(40);
+  });
 });

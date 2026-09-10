@@ -564,8 +564,11 @@ describe("Cloudflare Worker API", () => {
     } };
     env.OPENAI_API_KEY = "test-key";
     const prompts: string[] = [];
+    const models: string[] = [];
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
-      prompts.push(String((JSON.parse(String(init?.body || "{}")) as { messages?: Array<{ content?: string }> }).messages?.[1]?.content || ""));
+      const body = JSON.parse(String(init?.body || "{}")) as { model?: string; messages?: Array<{ content?: string }> };
+      models.push(String(body.model || ""));
+      prompts.push(String(body.messages?.[1]?.content || ""));
       return new Response(JSON.stringify({ choices: [{ message: { content: "# Problem\nA\n# Core Idea\nB\n# Method\nC\n# Experimental Setup\nD\n# Main Findings\nE\n# Limitations\nF\n# Why It Matters\nG" } }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     try {
@@ -585,6 +588,7 @@ describe("Cloudflare Worker API", () => {
       expect(prompts.some((prompt) => prompt.includes("Opening page text."))).toBe(true);
       expect(prompts.some((prompt) => prompt.includes("Text to condense"))).toBe(true);
       expect(prompts.every((prompt) => !prompt.includes("Later pages contain the decisive result."))).toBe(true);
+      expect(models).toContain("gpt-4.1-mini");
       expect(acknowledged).toEqual(["ack"]);
       const progress = await worker.request(`/api/papers/${paperId}/summary/progress`, {}, env);
       const result = await progress.json() as { job: { status: string }; };

@@ -40,19 +40,20 @@ const SUMMARY_DIGEST_MAX_OUTPUT_TOKENS = 2_500;
 const SUMMARY_REDUCTION_MAX_OUTPUT_TOKENS = 1_800;
 const SUMMARY_FINAL_MAX_OUTPUT_TOKENS = 6_000;
 const SUMMARY_MAX_REDUCTION_ROUNDS = 4;
+const HOSTED_SUMMARY_MODEL = "gpt-4.1-mini";
 const extractionInFlight = new Map<string, Promise<ExtractedPaper>>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
 }
 
-function selectedLlm(env: WorkerAnalysisEnvironment, settings: AiSettings): SelectedLlm {
+function selectedLlm(env: WorkerAnalysisEnvironment, settings: AiSettings, modelOverride?: string): SelectedLlm {
   if (settings.provider !== "openai") throw new Error("OLLAMA_HOSTED_UNSUPPORTED");
   if (!env.OPENAI_API_KEY?.trim()) throw new Error("OPENAI_KEY_NOT_CONFIGURED");
   return {
     client: new OpenAiLlmClient({ openaiApiKey: async () => env.OPENAI_API_KEY, fetcher: (input, init) => fetch(input, init) }),
     provider: "openai",
-    model: settings.openaiModel,
+    model: modelOverride || settings.openaiModel,
   };
 }
 
@@ -133,7 +134,7 @@ function messages(content: string) {
 }
 
 async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analysis: D1AnalysisRepository, jobs: D1AnalysisJobRepository, source: ExtractedPaper, settings: AiSettings, waitUntil?: WaitUntil): Promise<void> {
-  const selected = selectedLlm(env, settings);
+  const selected = selectedLlm(env, settings, HOSTED_SUMMARY_MODEL);
   const startedAt = Date.now();
   try {
     const full = job.mode === "full";

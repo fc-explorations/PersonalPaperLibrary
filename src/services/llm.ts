@@ -37,21 +37,30 @@ export class OpenAiLlmClient implements LlmClient {
     if (!isReasoningModel) requestBody.temperature = input.temperature;
     else requestBody.reasoning_effort = "minimal" satisfies OpenAiReasoningEffort;
     if (input.maxOutputTokens) requestBody.max_completion_tokens = input.maxOutputTokens;
-    const response = await this.fetcher("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(requestBody),
-    });
-    if (!response.ok) throw await responseError(response);
-    const body = await response.json() as { choices?: Array<{ message?: { content?: string; refusal?: string | null }; finish_reason?: string }> };
-    const choice = body.choices?.[0];
-    const content = choice?.message?.content?.trim();
-    if (!content) {
-      if (choice?.message?.refusal) throw new Error(`OPENAI_REFUSAL: ${choice.message.refusal}`);
-      if (choice?.finish_reason === "length") throw new Error("OPENAI_OUTPUT_LIMIT_REACHED");
-      throw new Error(`OPENAI_EMPTY_RESPONSE${choice?.finish_reason ? `:${choice.finish_reason}` : ""}`);
+    type ChatCompletionBody = { choices?: Array<{ message?: { content?: string; refusal?: string | null }; finish_reason?: string }> };
+    const completeRequest = async (body: Record<string, unknown>): Promise<ChatCompletionBody> => {
+      const response = await this.fetcher("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw await responseError(response);
+      return response.json() as Promise<ChatCompletionBody>;
+    };
+    const readContent = (body: ChatCompletionBody): { content?: string; refusal?: string; finishReason?: string } => {
+      const choice = body.choices?.[0];
+      return { content: choice?.message?.content?.trim() || undefined, refusal: choice?.message?.refusal || undefined, finishReason: choice?.finish_reason };
+    };
+    let result = readContent(await completeRequest(requestBody));
+    if (!result.content && result.finishReason === "length" && input.maxOutputTokens) {
+      result = readContent(await completeRequest({ ...requestBody, max_completion_tokens: Math.min(input.maxOutputTokens * 4, 20_000) }));
     }
-    return content;
+    if (!result.content) {
+      if (result.refusal) throw new Error(`OPENAI_REFUSAL: ${result.refusal}`);
+      if (result.finishReason === "length") throw new Error("OPENAI_OUTPUT_LIMIT_REACHED");
+      throw new Error(`OPENAI_EMPTY_RESPONSE${result.finishReason ? `:${result.finishReason}` : ""}`);
+    }
+    return result.content;
   }
 }
 
