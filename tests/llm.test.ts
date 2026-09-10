@@ -18,6 +18,20 @@ describe("OpenAI LLM client", () => {
     expect(requestBody).not.toHaveProperty("temperature");
   });
 
+  it("passes an output cap to OpenAI", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAiLlmClient({
+      openaiApiKey: async () => "test-key",
+      fetcher: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ choices: [{ message: { content: "answer" } }] }), { status: 200 });
+      },
+    });
+
+    await client.complete({ ...input, maxOutputTokens: 700 });
+    expect(requestBody?.max_completion_tokens).toBe(700);
+  });
+
   it("keeps temperature for models that support it", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const client = new OpenAiLlmClient({

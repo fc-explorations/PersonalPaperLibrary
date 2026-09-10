@@ -3,7 +3,7 @@ export type LlmMessage = { role: "system" | "user"; content: string };
 export const MATH_FORMATTING_INSTRUCTION = "When writing mathematics, always use LaTeX delimiters: inline \\( ... \\) or display \\[ ... \\]. Use commands such as \\Sigma_T, v^\\top, \\rho, and \\lambda; never write raw forms such as v^T, ΣT, or ΣB.";
 
 export interface LlmClient {
-  complete(input: { model: string; messages: LlmMessage[]; temperature: number }): Promise<string>;
+  complete(input: { model: string; messages: LlmMessage[]; temperature: number; maxOutputTokens?: number }): Promise<string>;
 }
 
 export interface LlmClientOptions {
@@ -26,13 +26,14 @@ export class OpenAiLlmClient implements LlmClient {
     this.getApiKey = options.openaiApiKey || (async () => process.env.OPENAI_API_KEY?.trim());
   }
 
-  async complete(input: { model: string; messages: LlmMessage[]; temperature: number }): Promise<string> {
+  async complete(input: { model: string; messages: LlmMessage[]; temperature: number; maxOutputTokens?: number }): Promise<string> {
     const apiKey = await this.getApiKey();
     if (!apiKey) throw new Error("OPENAI_KEY_NOT_CONFIGURED");
     const requestBody: Record<string, unknown> = { model: input.model, messages: input.messages };
     // GPT-5 nano only accepts its default sampling configuration and rejects
     // an explicit temperature value, unlike older chat-completions models.
     if (!/^gpt-5(?:$|[-.])/i.test(input.model)) requestBody.temperature = input.temperature;
+    if (input.maxOutputTokens) requestBody.max_completion_tokens = input.maxOutputTokens;
     const response = await this.fetcher("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },

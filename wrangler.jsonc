@@ -42,8 +42,8 @@
 		"consumers": [
 			{
 				"queue": "personal-paper-library-analysis",
-				"max_batch_size": 4,
-				"max_batch_timeout": 5
+				"max_batch_size": 1,
+				"max_batch_timeout": 1
 			}
 		]
 	},
@@ -83,10 +83,10 @@
 				"consumers": [
 					{
 						"queue": "personal-paper-library-analysis-preview",
-						"max_batch_size": 4,
-						"max_batch_timeout": 5
-					}
-				]
+						"max_batch_size": 1,
+						"max_batch_timeout": 1
+						}
+					]
 			}
 		}
 	}

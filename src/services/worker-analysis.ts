@@ -36,6 +36,10 @@ const SUMMARY_CHUNK_CONCURRENCY = 4;
 const MIN_EXTRACTED_TEXT_CHARACTERS = 200;
 const QUICK_SUMMARY_PAGE_COUNT = 4;
 const PDF_PAGE_BATCH_SIZE = 10;
+const SUMMARY_DIGEST_MAX_OUTPUT_TOKENS = 1_500;
+const SUMMARY_REDUCTION_MAX_OUTPUT_TOKENS = 1_000;
+const SUMMARY_FINAL_MAX_OUTPUT_TOKENS = 4_000;
+const SUMMARY_MAX_REDUCTION_ROUNDS = 4;
 const extractionInFlight = new Map<string, Promise<ExtractedPaper>>();
 
 function errorMessage(error: unknown): string {
@@ -144,7 +148,7 @@ async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analy
       await jobs.updatePhase(job.id, `digesting:${chunks.length}`);
       let completedChunks = 0;
       const digests = await mapWithConcurrency(chunks, SUMMARY_CHUNK_CONCURRENCY, async (chunk, index) => {
-        const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Summarize the main things in four-page chunk ${index + 1} of ${chunks.length}. Keep the important claims, methods, results, limitations, uncertainties, and section context. Do not omit information because it is inconvenient, and do not invent details.\n\n${chunk}`) });
+        const digest = await selected.client.complete({ model: selected.model, temperature: 0.2, maxOutputTokens: SUMMARY_DIGEST_MAX_OUTPUT_TOKENS, messages: messages(`Summarize the main things in source segment ${index + 1} of ${chunks.length}. Keep the important claims, methods, results, limitations, uncertainties, and section context. Be concise enough to fit within the response limit. Do not omit information because it is inconvenient, and do not invent details.\n\n${chunk}`) });
         completedChunks += 1;
         await jobs.updatePhase(job.id, `digesting:${completedChunks}:${chunks.length}`);
         return digest;
@@ -153,7 +157,7 @@ async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analy
       let current = digests;
       let reductionRounds = 0;
       while (current.join("\n\n").length > 20_000) {
-        if (reductionRounds++ >= 12) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
+        if (reductionRounds++ >= SUMMARY_MAX_REDUCTION_ROUNDS) throw new Error("SUMMARY_CONTEXT_TOO_LARGE");
         const batches: string[][] = [];
         let batch: string[] = [];
         for (const digest of current) {
@@ -161,9 +165,9 @@ async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analy
           batch.push(digest);
         }
         if (batch.length) batches.push(batch);
-        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Compress these paper digests into one complete, factual digest of no more than 12,000 characters. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
+        current = await Promise.all(batches.map((items) => selected.client.complete({ model: selected.model, temperature: 0.2, maxOutputTokens: SUMMARY_REDUCTION_MAX_OUTPUT_TOKENS, messages: messages(`Compress these paper digests into one complete, factual digest of no more than 6,000 characters. Retain all distinct findings, methods, limitations, and uncertainties; do not add information.\n\n${items.join("\n\n")}`) })));
       }
-      content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
+      content = await selected.client.complete({ model: selected.model, temperature: 0.2, maxOutputTokens: SUMMARY_FINAL_MAX_OUTPUT_TOKENS, messages: messages(`Write the final paper summary using exactly these seven Markdown headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Write each section as one or two concise prose paragraphs. Use bullets only when a genuinely short list is essential; do not turn every sentence or finding into a bullet. Cover the complete paper and explicitly state when information is insufficient. Do not add other top-level headings.\n\n${current.join("\n\n")}`) });
     }
     if (!hasRequiredSummaryHeadings(content)) {
       await jobs.updatePhase(job.id, "formatting");
