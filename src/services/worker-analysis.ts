@@ -36,6 +36,7 @@ const SUMMARY_CHUNK_CONCURRENCY = 4;
 const MIN_EXTRACTED_TEXT_CHARACTERS = 200;
 const QUICK_SUMMARY_PAGE_COUNT = 4;
 const PDF_PAGE_BATCH_SIZE = 10;
+const extractionInFlight = new Map<string, Promise<ExtractedPaper>>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -66,8 +67,9 @@ async function mapWithConcurrency<Input, Output>(items: Input[], limit: number, 
 }
 
 type PdfExtractionScope = "full" | "opening-pages";
+type WaitUntil = (promise: Promise<unknown>) => void;
 
-async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }, scope: PdfExtractionScope = "full"): Promise<ExtractedPaper> {
+async function extractPdfOnce(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }, scope: PdfExtractionScope = "full", jobs?: D1AnalysisJobRepository, jobId?: string): Promise<ExtractedPaper> {
   if (!env.AI) throw new Error("PDF_EXTRACTOR_UNAVAILABLE");
   if (!paper.r2Key) throw new Error("PDF_NOT_FOUND");
   const cacheKey = paper.pdfSha256
@@ -89,6 +91,7 @@ async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r
   const extracted: string[] = [];
   for (let startPage = 0; startPage < pageTotal; startPage += PDF_PAGE_BATCH_SIZE) {
     const endPage = Math.min(startPage + PDF_PAGE_BATCH_SIZE, pageTotal);
+    if (jobs && jobId) await jobs.updatePhase(jobId, `extracting:${startPage + 1}-${endPage}:${pageTotal}`);
     const batch = await PDFDocument.create();
     const pages = await batch.copyPages(source, Array.from({ length: endPage - startPage }, (_, index) => startPage + index));
     pages.forEach((page) => batch.addPage(page));
@@ -108,6 +111,16 @@ async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r
   return { text, sha256: paper.pdfSha256 };
 }
 
+async function extractPdf(env: WorkerAnalysisEnvironment, paper: { id: string; r2Key?: string; pdfSha256?: string }, scope: PdfExtractionScope = "full", jobs?: D1AnalysisJobRepository, jobId?: string): Promise<ExtractedPaper> {
+  const key = paper.pdfSha256 ? `${scope}:${paper.id}:${paper.pdfSha256}` : `${scope}:${paper.r2Key || paper.id}`;
+  const existing = extractionInFlight.get(key);
+  if (existing) return existing;
+  const extraction = extractPdfOnce(env, paper, scope, jobs, jobId);
+  extractionInFlight.set(key, extraction);
+  try { return await extraction; }
+  finally { if (extractionInFlight.get(key) === extraction) extractionInFlight.delete(key); }
+}
+
 function messages(content: string) {
   return [
     { role: "system" as const, content: `You summarize scientific papers accurately. Use only the supplied paper text, preserve uncertainty, and do not invent details. ${MATH_FORMATTING_INSTRUCTION}` },
@@ -115,7 +128,7 @@ function messages(content: string) {
   ];
 }
 
-async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analysis: D1AnalysisRepository, jobs: D1AnalysisJobRepository, source: ExtractedPaper, settings: AiSettings): Promise<void> {
+async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analysis: D1AnalysisRepository, jobs: D1AnalysisJobRepository, source: ExtractedPaper, settings: AiSettings, waitUntil?: WaitUntil): Promise<void> {
   const selected = selectedLlm(env, settings);
   const startedAt = Date.now();
   try {
@@ -157,47 +170,69 @@ async function summarize(env: WorkerAnalysisEnvironment, job: AnalysisJob, analy
       content = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: messages(`Reformat the draft below into valid Markdown without losing information. Use exactly these headings, in this order: ${SUMMARY_HEADINGS.join(", ")}. Each heading must be a Markdown heading. Preserve all factual content and do not add other top-level headings. Draft:\n\n${content}`) });
     }
     if (!hasRequiredSummaryHeadings(content)) throw new Error("SUMMARY_FORMAT_INVALID");
-    let quickSummary: string;
-    try { quickSummary = await generateQuickSummary(selected.client, selected.model, content, 2); }
-    catch { quickSummary = compactQuickSummary(content, 2); }
-    const summary: SummaryRecord = { paperId: job.paperId, content, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" };
+    const fallbackQuickSummary = compactQuickSummary(content, 2);
+    const summary: SummaryRecord = { paperId: job.paperId, content, quickSummary: fallbackQuickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "complete" };
     await analysis.saveSummary(summary);
+    const refineQuickSummary = async () => {
+      try {
+        const quickSummary = await generateQuickSummary(selected.client, selected.model, content, 2);
+        if (!quickSummary || quickSummary === fallbackQuickSummary) return;
+        const latest = await analysis.getSummary(job.paperId);
+        if (latest?.status === "complete" && latest.generatedAt === summary.generatedAt) await analysis.saveSummary({ ...summary, quickSummary });
+      } catch {
+        // The primary analysis is already saved; quick-summary refinement is best effort.
+      }
+    };
+    if (waitUntil) waitUntil(refineQuickSummary());
+    else await refineQuickSummary();
   } catch (error) {
     await analysis.saveSummary({ paperId: job.paperId, content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: SUMMARY_PROMPT_VERSION, status: "error", errorMessage: errorMessage(error) });
     throw error;
   }
 }
 
-async function answerQuestion(env: WorkerAnalysisEnvironment, job: AnalysisJob, analysis: D1AnalysisRepository, source: ExtractedPaper, settings: AiSettings): Promise<void> {
+async function answerQuestion(env: WorkerAnalysisEnvironment, job: AnalysisJob, analysis: D1AnalysisRepository, source: ExtractedPaper, settings: AiSettings, waitUntil?: WaitUntil): Promise<void> {
   if (!job.questionId) throw new Error("QUESTION_NOT_FOUND");
   const question = (await analysis.listQuestions(job.paperId)).find((item) => item.id === job.questionId);
   if (!question) throw new Error("QUESTION_NOT_FOUND");
   const selected = selectedLlm(env, settings);
   const startedAt = Date.now();
   try {
+    const jobs = new D1AnalysisJobRepository(env.DB);
+    await jobs.updatePhase(job.id, "answering");
     const summary = await analysis.getSummary(job.paperId);
     const summaryContext = summary?.status === "complete" && summary.content ? `\n\nPaper summary:\n${summary.content}` : "";
     const answer = await selected.client.complete({ model: selected.model, temperature: 0.2, messages: [{ role: "system", content: `Answer questions about a scientific paper accurately. Use only the supplied paper text and optional summary. Do not invent evidence. ${MATH_FORMATTING_INSTRUCTION}` }, { role: "user", content: `${question.prompt}${summaryContext}\n\nFull paper text:\n${source.text}` }] });
-    let quickSummary: string;
-    try { quickSummary = await generateQuickSummary(selected.client, selected.model, answer, 1); }
-    catch { quickSummary = compactQuickSummary(answer, 1); }
-    const record: QuestionAnswer = { content: answer, quickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" };
+    const fallbackQuickSummary = compactQuickSummary(answer, 1);
+    const record: QuestionAnswer = { content: answer, quickSummary: fallbackQuickSummary, provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "complete" };
     await analysis.saveAnswer(job.paperId, question.id, record);
+    const refineQuickSummary = async () => {
+      try {
+        const quickSummary = await generateQuickSummary(selected.client, selected.model, answer, 1);
+        if (!quickSummary || quickSummary === fallbackQuickSummary) return;
+        const latest = (await analysis.listQuestions(job.paperId)).find((item) => item.id === question.id)?.answer;
+        if (latest?.status === "complete" && latest.generatedAt === record.generatedAt) await analysis.saveAnswer(job.paperId, question.id, { ...record, quickSummary });
+      } catch {
+        // The primary answer is already saved; quick-summary refinement is best effort.
+      }
+    };
+    if (waitUntil) waitUntil(refineQuickSummary());
+    else await refineQuickSummary();
   } catch (error) {
     await analysis.saveAnswer(job.paperId, question.id, { content: "", provider: selected.provider, model: selected.model, generatedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, sourcePdfSha256: source.sha256, promptVersion: QUESTION_PROMPT_VERSION, questionDefinitionHash: question.definitionHash, status: "error", errorMessage: errorMessage(error) });
     throw error;
   }
 }
 
-export async function executeAnalysisJob(env: WorkerAnalysisEnvironment, job: AnalysisJob): Promise<void> {
+export async function executeAnalysisJob(env: WorkerAnalysisEnvironment, job: AnalysisJob, waitUntil?: WaitUntil): Promise<void> {
   const jobs = new D1AnalysisJobRepository(env.DB);
   const analysis = new D1AnalysisRepository(env.DB, () => hostedQuestionDefinitions);
   const paper = await new D1PaperRepository(env.DB).findById(job.paperId);
   if (!paper) throw new Error("PAPER_NOT_FOUND");
   await jobs.updatePhase(job.id, "extracting");
-  const source = await extractPdf(env, paper, job.kind === "summary" && job.mode !== "full" ? "opening-pages" : "full");
+  const source = await extractPdf(env, paper, job.kind === "summary" && job.mode !== "full" ? "opening-pages" : "full", jobs, job.id);
   const settings = await analysis.getSettings();
-  if (job.kind === "summary") await summarize(env, job, analysis, jobs, source, settings);
-  else await answerQuestion(env, job, analysis, source, settings);
+  if (job.kind === "summary") await summarize(env, job, analysis, jobs, source, settings, waitUntil);
+  else await answerQuestion(env, job, analysis, source, settings, waitUntil);
   await jobs.complete(job.id);
 }

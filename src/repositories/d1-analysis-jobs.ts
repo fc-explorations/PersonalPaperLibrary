@@ -65,8 +65,26 @@ export class D1AnalysisJobRepository {
     return row ? rowToJob(row) : null;
   }
 
+  async latestForQuestion(paperId: string, questionId: string): Promise<AnalysisJob | null> {
+    const row = await first<D1Row>(this.db, "SELECT * FROM analysis_jobs WHERE paper_id = ? AND kind = 'question' AND question_id = ? ORDER BY created_at DESC LIMIT 1", paperId, questionId);
+    return row ? rowToJob(row) : null;
+  }
+
+  async activeForPaper(paperId: string, kind: AnalysisJobKind, mode?: string, questionId?: string): Promise<AnalysisJob | null> {
+    const conditions = ["paper_id = ?", "kind = ?", "status IN ('queued', 'running')"];
+    const values: unknown[] = [paperId, kind];
+    if (mode) { conditions.push("mode = ?"); values.push(mode); }
+    if (questionId) { conditions.push("question_id = ?"); values.push(questionId); }
+    const row = await first<D1Row>(this.db, `SELECT * FROM analysis_jobs WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT 1`, ...values);
+    return row ? rowToJob(row) : null;
+  }
+
   async listForPaper(paperId: string): Promise<AnalysisJob[]> {
     return (await all<D1Row>(this.db, "SELECT * FROM analysis_jobs WHERE paper_id = ? ORDER BY created_at DESC", paperId)).map(rowToJob);
+  }
+
+  async listActiveForPaper(paperId: string): Promise<AnalysisJob[]> {
+    return (await all<D1Row>(this.db, "SELECT * FROM analysis_jobs WHERE paper_id = ? AND status IN ('queued', 'running') ORDER BY created_at DESC", paperId)).map(rowToJob);
   }
 
   async claim(id: string): Promise<AnalysisJob | null> {

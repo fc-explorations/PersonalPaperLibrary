@@ -571,6 +571,14 @@ describe("Cloudflare Worker API", () => {
     try {
       const queued = await worker.request(`/api/papers/${paperId}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "quick" }) }, env);
       expect(queued.status).toBe(202);
+      const queuedBody = await queued.json() as { job: { id: string; status: string } };
+      const duplicate = await worker.request(`/api/papers/${paperId}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "quick" }) }, env);
+      const duplicateBody = await duplicate.json() as { job: { id: string }; deduplicated?: boolean };
+      expect(duplicate.status).toBe(202);
+      expect(duplicateBody.job.id).toBe(queuedBody.job.id);
+      expect(duplicateBody.deduplicated).toBe(true);
+      const queuedProgress = await worker.request(`/api/papers/${paperId}/summary/progress?jobId=${queuedBody.job.id}`, {}, env);
+      expect((await queuedProgress.json() as { job: { status: string } }).job.status).toBe("queued");
       const acknowledged: string[] = [];
       await worker.queue({ messages: [{ body: messages[0], ack: () => acknowledged.push("ack"), retry: () => acknowledged.push("retry") }] }, env);
       expect(convertedPageCounts).toEqual([4]);

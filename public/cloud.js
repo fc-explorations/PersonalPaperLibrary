@@ -329,14 +329,51 @@ function setStatus(element, message, error = false) {
 
 function sleep(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 
-async function pollUntil(load, done, timeout = 120000, interval = 3000) {
+const ANALYSIS_POLL_TIMEOUT = 15 * 60 * 1000;
+const ANALYSIS_POLL_INTERVAL = 2000;
+
+function analysisElapsed(job) {
+  const started = Date.parse(job?.startedAt || job?.createdAt || "");
+  if (!Number.isFinite(started)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+  if (seconds < 60) return ` · ${seconds}s elapsed`;
+  return ` · ${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s elapsed`;
+}
+
+function analysisJobMessage(job) {
+  if (!job) return "Waiting for the analysis worker…";
+  if (job.status === "queued") return `Queued — waiting for an analysis worker${analysisElapsed(job)}…`;
+  const phase = String(job.phase || "working");
+  if (phase.startsWith("extracting:")) {
+    const [, range, total] = phase.split(":");
+    return `Extracting PDF pages ${range} of ${total}${analysisElapsed(job)}…`;
+  }
+  if (phase.startsWith("digesting:")) {
+    const [, completed, total] = phase.split(":");
+    return `Digesting paper sections ${completed} of ${total}${analysisElapsed(job)}…`;
+  }
+  if (phase === "synthesizing") return `Synthesizing the analysis${analysisElapsed(job)}…`;
+  if (phase === "answering") return `Writing the answer${analysisElapsed(job)}…`;
+  if (phase === "formatting") return `Formatting the analysis${analysisElapsed(job)}…`;
+  return `${phase.charAt(0).toUpperCase()}${phase.slice(1)}${analysisElapsed(job)}…`;
+}
+
+function isAnalysisStillRunning(error) { return error?.code === "ANALYSIS_STILL_RUNNING"; }
+
+async function pollUntil(load, done, timeout = ANALYSIS_POLL_TIMEOUT, interval = ANALYSIS_POLL_INTERVAL, onValue) {
   const started = Date.now();
+  let lastValue;
   while (Date.now() - started < timeout) {
     const value = await load();
+    lastValue = value;
+    onValue?.(value);
     if (done(value)) return value;
     await sleep(interval);
   }
-  throw new Error("The analysis job is taking longer than expected. Refresh to check its status.");
+  const error = new Error(`${analysisJobMessage(lastValue?.job)} This page will keep the job running in the background; refresh later to check the result.`);
+  error.code = "ANALYSIS_STILL_RUNNING";
+  error.lastValue = lastValue;
+  throw error;
 }
 
 function showAnalysisResult(element, heading, content, error = false) {
@@ -349,14 +386,30 @@ function showAnalysisResult(element, heading, content, error = false) {
 
 async function runSummary(paperId, onUpdate, mode = "quick") {
   onUpdate("Summary", "Queued…");
-  await request(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
+  const queued = await request(`/api/papers/${encodeURIComponent(paperId)}/summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
+  const jobId = queued.job?.id;
   const progress = await pollUntil(
-    () => request(`/api/papers/${encodeURIComponent(paperId)}/summary/progress`),
+    () => request(`/api/papers/${encodeURIComponent(paperId)}/summary/progress${jobId ? `?jobId=${encodeURIComponent(jobId)}` : ""}`),
     (value) => !value.job || ["complete", "error", "cancelled"].includes(value.job.status),
+    ANALYSIS_POLL_TIMEOUT,
+    ANALYSIS_POLL_INTERVAL,
+    (value) => onUpdate?.("Summary progress", analysisJobMessage(value.job), value.job),
   );
   if (!progress.job || progress.job.status !== "complete") throw new Error(progress.job?.errorMessage || "Summary generation failed.");
   const summary = await request(`/api/papers/${encodeURIComponent(paperId)}/summary`);
   await onUpdate("Summary", summary.summary?.content || "The summary completed without content.", summary.summary);
+}
+
+async function waitForHostedSummary(paperId, jobId, onProgress) {
+  const progress = await pollUntil(
+    () => request(`/api/papers/${encodeURIComponent(paperId)}/summary/progress?jobId=${encodeURIComponent(jobId)}`),
+    (value) => !value.job || ["complete", "error", "cancelled"].includes(value.job.status),
+    ANALYSIS_POLL_TIMEOUT,
+    ANALYSIS_POLL_INTERVAL,
+    (value) => onProgress?.(analysisJobMessage(value.job), value.job),
+  );
+  if (!progress.job || progress.job.status !== "complete") throw new Error(progress.job?.errorMessage || "Summary generation failed.");
+  return (await request(`/api/papers/${encodeURIComponent(paperId)}/summary`)).summary;
 }
 
 function markHostedSummaryComplete() {
@@ -386,12 +439,19 @@ async function runQuestion(paperId, question, onUpdate) {
   const queued = await request(`/api/papers/${encodeURIComponent(paperId)}/questions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: question.trim(), prompt: question.trim() }) });
   const questionId = queued.question?.id;
   if (!questionId) throw new Error("The question was not queued.");
+  const jobId = queued.job?.id;
   const answer = await pollUntil(
-    async () => (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId),
-    (value) => value?.answer && ["complete", "error", "stale"].includes(value.answer.status),
+    async () => jobId
+      ? request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}/progress?jobId=${encodeURIComponent(jobId)}`)
+      : (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId),
+    (value) => jobId ? !value.job || ["complete", "error", "cancelled"].includes(value.job.status) : value?.answer && ["complete", "error", "stale"].includes(value.answer.status),
+    ANALYSIS_POLL_TIMEOUT,
+    ANALYSIS_POLL_INTERVAL,
+    (value) => onUpdate?.("Answer progress", analysisJobMessage(value.job), value.job),
   );
-  if (!answer?.answer || answer.answer.status !== "complete") throw new Error(answer?.answer?.errorMessage || "Question generation failed.");
-  onUpdate("Answer", answer.answer.content);
+  const result = jobId ? (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId) : answer;
+  if (!result?.answer || result.answer.status !== "complete") throw new Error(result?.answer?.errorMessage || "Question generation failed.");
+  onUpdate("Answer", result.answer.content);
 }
 
 function libraryState() {
@@ -1211,14 +1271,35 @@ async function initAsk() {
   });
 }
 
-async function runHostedQuestion(paperId, questionId) {
-  await request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}`, { method: "POST" });
-  return pollUntil(
-    async () => (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId),
-    (item) => item?.answer && ["complete", "error", "stale"].includes(item.answer.status),
-    600000,
-    1000,
+async function runHostedQuestion(paperId, questionId, onProgress) {
+  const queued = await request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}`, { method: "POST" });
+  const jobId = queued.job?.id;
+  const result = await pollUntil(
+    async () => jobId
+      ? request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}/progress?jobId=${encodeURIComponent(jobId)}`)
+      : (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId),
+    (value) => jobId ? !value.job || ["complete", "error", "cancelled"].includes(value.job.status) : value?.answer && ["complete", "error", "stale"].includes(value.answer.status),
+    ANALYSIS_POLL_TIMEOUT,
+    ANALYSIS_POLL_INTERVAL,
+    (value) => onProgress?.(analysisJobMessage(value.job), value.job),
   );
+  if (jobId) {
+    if (!result.job || result.job.status !== "complete") throw new Error(result.job?.errorMessage || "Question generation failed.");
+    return (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId);
+  }
+  return result;
+}
+
+async function waitForHostedQuestionJob(paperId, questionId, jobId, onProgress) {
+  const progress = await pollUntil(
+    () => request(`/api/papers/${encodeURIComponent(paperId)}/questions/${encodeURIComponent(questionId)}/progress?jobId=${encodeURIComponent(jobId)}`),
+    (value) => !value.job || ["complete", "error", "cancelled"].includes(value.job.status),
+    ANALYSIS_POLL_TIMEOUT,
+    ANALYSIS_POLL_INTERVAL,
+    (value) => onProgress?.(analysisJobMessage(value.job), value.job),
+  );
+  if (!progress.job || progress.job.status !== "complete") throw new Error(progress.job?.errorMessage || "Question generation failed.");
+  return (await request(`/api/papers/${encodeURIComponent(paperId)}/questions`)).questions.find((item) => item.id === questionId);
 }
 
 function updateHostedQuestionOverview(item) {
@@ -1260,6 +1341,25 @@ function updateHostedQuickSummary(item, value) {
   quickSummary.querySelector(".analysis-quick-summary-content").innerHTML = renderHostedMarkdown(value);
 }
 
+function renderHostedQuestionResult(item, question) {
+  if (!item || question?.answer?.status !== "complete") return;
+  item.querySelector(".question-empty, .status-error, .status-warning")?.remove();
+  item.querySelector(".question-answer, .question-answer-meta")?.remove();
+  const answer = document.createElement("div");
+  answer.className = "analysis-content question-answer";
+  answer.innerHTML = renderHostedMarkdown(question.answer.content);
+  item.querySelector(".question-actions")?.before(answer);
+  const meta = document.createElement("p");
+  meta.className = "analysis-meta question-answer-meta muted";
+  meta.textContent = `${question.answer.provider} · ${question.answer.model} · ${new Date(question.answer.generatedAt).toLocaleString("en-GB")}${typeof question.answer.durationMs === "number" ? ` · ${Math.floor(question.answer.durationMs / 60000)}:${String(Math.floor(question.answer.durationMs / 1000) % 60).padStart(2, "0")}` : ""}`;
+  item.querySelector(".question-actions")?.before(meta);
+  updateHostedQuickSummary(item, question.answer.quickSummary);
+  typesetHostedMath([answer]);
+  updateHostedQuestionOverview(question);
+  const label = item.querySelector("[data-generate-question] span:last-child");
+  if (label) label.textContent = "Regenerate answer";
+}
+
 async function generateHostedQuestion(button) {
   const detail = document.querySelector(".paper-detail-page");
   const paperId = detail?.dataset.paperId;
@@ -1269,31 +1369,42 @@ async function generateHostedQuestion(button) {
   button.disabled = true;
   setStatus(status, "Generating…");
   try {
-    const question = await runHostedQuestion(paperId, button.dataset.generateQuestion);
-    item.querySelector(".question-empty, .status-error, .status-warning")?.remove();
-    item.querySelector(".question-answer, .question-answer-meta")?.remove();
+    const question = await runHostedQuestion(paperId, button.dataset.generateQuestion, (message) => setStatus(status, message));
     if (question?.answer?.status !== "complete") throw new Error(question?.answer?.errorMessage || "Question generation failed.");
-    const answer = document.createElement("div");
-    answer.className = "analysis-content question-answer";
-    answer.innerHTML = renderHostedMarkdown(question.answer.content);
-    item.querySelector(".question-actions")?.before(answer);
-    const meta = document.createElement("p");
-    meta.className = "analysis-meta question-answer-meta muted";
-    meta.textContent = `${question.answer.provider} · ${question.answer.model} · ${new Date(question.answer.generatedAt).toLocaleString("en-GB")}${typeof question.answer.durationMs === "number" ? ` · ${Math.floor(question.answer.durationMs / 60000)}:${String(Math.floor(question.answer.durationMs / 1000) % 60).padStart(2, "0")}` : ""}`;
-    item.querySelector(".question-actions")?.before(meta);
-    updateHostedQuickSummary(item, question.answer.quickSummary);
-    typesetHostedMath([answer]);
+    renderHostedQuestionResult(item, question);
     setStatus(status, "Saved.");
-    updateHostedQuestionOverview(question);
-    const label = button.querySelector("span:last-child");
-    if (label) label.textContent = "Regenerate answer";
     return true;
   } catch (error) {
     item.querySelector(".question-empty")?.remove();
-    setStatus(status, error.message, true);
-    return false;
+    const stillRunning = isAnalysisStillRunning(error);
+    setStatus(status, error.message, !stillRunning);
+    return stillRunning ? "pending" : "failed";
   } finally {
     button.disabled = false;
+  }
+}
+
+async function resumeHostedQuestionJobs(paperId, section) {
+  try {
+    const body = await request(`/api/papers/${encodeURIComponent(paperId)}/questions`);
+    for (const job of (body.jobs || []).filter((item) => item.kind === "question" && ["queued", "running"].includes(item.status) && item.questionId)) {
+      const item = [...section.querySelectorAll("[data-question-id]")].find((entry) => entry.dataset.questionId === job.questionId);
+      const button = item?.querySelector("[data-generate-question]");
+      const status = item?.querySelector("[data-question-status]");
+      if (!item || !button || !status) continue;
+      button.disabled = true;
+      setStatus(status, analysisJobMessage(job));
+      void waitForHostedQuestionJob(paperId, job.questionId, job.id, (message) => setStatus(status, message))
+        .then((question) => {
+          if (question?.answer?.status !== "complete") throw new Error(question?.answer?.errorMessage || "Question generation failed.");
+          renderHostedQuestionResult(item, question);
+          setStatus(status, "Saved.");
+        })
+        .catch((error) => setStatus(status, error.message, !isAnalysisStillRunning(error)))
+        .finally(() => { button.disabled = false; });
+    }
+  } catch {
+    // Loading the page should remain useful even when a background status check fails.
   }
 }
 
@@ -1301,6 +1412,7 @@ function initHostedQuestions() {
   const section = document.querySelector("[data-questions-section]");
   const detail = document.querySelector(".paper-detail-page");
   if (!section || !detail) return;
+  void resumeHostedQuestionJobs(detail.dataset.paperId, section);
   section.querySelectorAll("[data-generate-question]").forEach((button) => button.addEventListener("click", () => generateHostedQuestion(button)));
   section.querySelector("[data-toggle-questions]")?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1336,6 +1448,7 @@ function initHostedQuestions() {
     button.disabled = true;
     let completed = 0;
     let failed = 0;
+    let stillRunning = 0;
     const durations = [];
     const updateProgress = () => {
       const finished = completed + failed;
@@ -1348,11 +1461,14 @@ function initHostedQuestions() {
     updateProgress();
     await Promise.all(pending.map(async (questionButton) => {
       const startedAt = performance.now();
-      if (await generateHostedQuestion(questionButton)) completed += 1; else failed += 1;
+      const result = await generateHostedQuestion(questionButton);
+      if (result === true || result === "complete") completed += 1;
+      else if (result === "pending") stillRunning += 1;
+      else failed += 1;
       durations.push(performance.now() - startedAt);
       updateProgress();
     }));
-    setStatus(status, `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`, failed > 0);
+    setStatus(status, `Saved ${completed} answer${completed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} already generated` : ""}${stillRunning ? `; ${stillRunning} still running in the background` : ""}${failed ? `; ${failed} failed. Retry failed questions.` : "."}`, failed > 0);
     button.disabled = false;
   });
   section.querySelector("[data-add-question]")?.addEventListener("submit", async (event) => {
@@ -1389,10 +1505,21 @@ async function initPaper() {
     const tags = document.querySelector("#paper-tags");
     if (tags && paper.tags?.length) { tags.innerHTML = paper.tags.map((tag) => `<span class="tag">${escapeHtml(displayTagName(tag))}</span>`).join(" "); if (tagsSection) tagsSection.hidden = false; }
     const existing = await request(`/api/papers/${encodeURIComponent(id)}/summary`);
-    if (existing.summary?.status === "complete") {
-      summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(existing.summary.content)}</div>${renderHostedAnalysisMeta(existing.summary)}`;
+    const renderSummary = (record) => {
+      if (!record?.content) return;
+      summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(record.content)}</div>${renderHostedAnalysisMeta(record)}`;
+      updateHostedSummaryQuickSummary(record.quickSummary);
       markHostedSummaryComplete();
-      typesetHostedMath([summary]);
+      void typesetHostedMath([summary]);
+    };
+    if (existing.summary?.status === "complete") {
+      renderSummary(existing.summary);
+    }
+    if (existing.job && ["queued", "running"].includes(existing.job.status)) {
+      setStatus(analysisStatus, analysisJobMessage(existing.job));
+      void waitForHostedSummary(id, existing.job.id, (message) => setStatus(analysisStatus, message))
+        .then((record) => { renderSummary(record); setStatus(analysisStatus, "Summary ready."); })
+        .catch((error) => setStatus(analysisStatus, error.message, !isAnalysisStillRunning(error)));
     }
   } catch (error) { setStatus(paperStatus, error.message, true); }
   editForm?.addEventListener("submit", async (event) => {
@@ -1405,8 +1532,8 @@ async function initPaper() {
   });
   document.querySelectorAll("[data-summary-mode]").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
-    try { await runSummary(id, async (heading, content, record) => { if (content === "Queued…") { setStatus(analysisStatus, content); return; } summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; updateHostedSummaryQuickSummary(record?.quickSummary); markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
-    catch (error) { setStatus(analysisStatus, error.message, true); }
+    try { await runSummary(id, async (heading, content, record) => { if (heading === "Summary progress" || content === "Queued…") { setStatus(analysisStatus, content); return; } summary.innerHTML = `<div class="analysis-content">${renderHostedMarkdown(content)}</div>${renderHostedAnalysisMeta(record)}`; updateHostedSummaryQuickSummary(record?.quickSummary); markHostedSummaryComplete(); setStatus(analysisStatus, "Rendering summary…"); await new Promise((resolve) => window.requestAnimationFrame(resolve)); await typesetHostedMath([summary]); setStatus(analysisStatus, `${heading} ready.`); }, button.dataset.summaryMode || "quick"); }
+    catch (error) { setStatus(analysisStatus, error.message, !isAnalysisStillRunning(error)); }
     finally { event.currentTarget.disabled = false; }
   }));
   document.querySelector("#paper-question-button")?.addEventListener("click", async (event) => {
@@ -1414,8 +1541,8 @@ async function initPaper() {
     const question = input?.value || window.prompt("What would you like to ask about this paper?");
     if (!question?.trim()) return;
     event.currentTarget.disabled = true;
-    try { await runQuestion(id, question, (heading, content) => { if (content !== "Queued…") showAnalysisResult(answer, heading, content); setStatus(analysisStatus, content === "Queued…" ? content : `${heading} ready.`); }); }
-    catch (error) { showAnalysisResult(answer, "Answer unavailable", error.message, true); setStatus(analysisStatus, error.message, true); }
+    try { await runQuestion(id, question, (heading, content) => { if (heading === "Answer progress" || content === "Queued…") { setStatus(analysisStatus, content); return; } showAnalysisResult(answer, heading, content); setStatus(analysisStatus, `${heading} ready.`); }); }
+    catch (error) { if (!isAnalysisStillRunning(error)) showAnalysisResult(answer, "Answer unavailable", error.message, true); setStatus(analysisStatus, error.message, !isAnalysisStillRunning(error)); }
     finally { event.currentTarget.disabled = false; }
   });
   document.querySelector("#paper-delete")?.addEventListener("click", async () => {

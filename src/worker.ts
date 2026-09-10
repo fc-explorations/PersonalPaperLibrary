@@ -50,6 +50,8 @@ interface QueueBatch {
   messages: QueueMessage[];
 }
 
+type QueueExecutionContext = { waitUntil(promise: Promise<unknown>): void };
+
 type LookupProgressEvent = { phase: "sources" | "enrichment" | "pdf"; current: number; total: number; source?: string; message: string };
 type LookupProgressReporter = (event: LookupProgressEvent) => Promise<void> | void;
 type ScheduledController = { cron: string; scheduledTime: number };
@@ -157,7 +159,7 @@ function hostedShell(title: string, page: string, body: string): string {
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
     .replace(/styles\.css\?v=33/g, "styles.css?v=64")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=36")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=38")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -1394,7 +1396,10 @@ app.get("/api/papers/:id/summary", async (c) => {
 app.get("/api/papers/:id/summary/progress", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
-  return c.json({ job: await analysisJobs(c.env).latestForPaper(paper.id, "summary"), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
+  const jobId = c.req.query("jobId");
+  const job = jobId ? await analysisJobs(c.env).get(jobId) : await analysisJobs(c.env).latestForPaper(paper.id, "summary");
+  if (job && (job.paperId !== paper.id || job.kind !== "summary")) return jsonError(c, 404, "ANALYSIS_JOB_NOT_FOUND", "The analysis job was not found for this paper.");
+  return c.json({ job, generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
 });
 
 app.post("/api/papers/:id/summary", async (c) => {
@@ -1404,7 +1409,10 @@ app.post("/api/papers/:id/summary", async (c) => {
   if (!c.env.ANALYSIS_QUEUE) return jsonError(c, 501, "SUMMARY_GENERATION_UNAVAILABLE", "Hosted summary generation is not enabled until the analysis queue is configured.");
   try {
     const body = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }));
-    const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "summary", mode: body.mode === "full" ? "full" : "quick" });
+    const mode = body.mode === "full" ? "full" : "quick";
+    const existing = await analysisJobs(c.env).activeForPaper(paper.id, "summary", mode);
+    if (existing) return c.json({ job: existing, generation: "queued", deduplicated: true }, 202);
+    const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "summary", mode });
     try {
       await c.env.ANALYSIS_QUEUE.send({ jobId: job.id });
     } catch (error) {
@@ -1420,7 +1428,18 @@ app.post("/api/papers/:id/summary", async (c) => {
 app.get("/api/papers/:id/questions", async (c) => {
   const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
   if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
-  return c.json({ questions: await analysisRepository(c.env).listQuestions(paper.id), summary: await analysisRepository(c.env).getSummary(paper.id), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
+  return c.json({ questions: await analysisRepository(c.env).listQuestions(paper.id), summary: await analysisRepository(c.env).getSummary(paper.id), jobs: await analysisJobs(c.env).listActiveForPaper(paper.id), generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
+});
+
+app.get("/api/papers/:id/questions/:questionId/progress", async (c) => {
+  const paper = await new D1PaperRepository(c.env.DB).findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  const question = (await analysisRepository(c.env).listQuestions(paper.id)).find((item) => item.id === c.req.param("questionId"));
+  if (!question) return jsonError(c, 404, "QUESTION_NOT_FOUND", "Question not found.");
+  const jobId = c.req.query("jobId");
+  const job = jobId ? await analysisJobs(c.env).get(jobId) : await analysisJobs(c.env).latestForQuestion(paper.id, question.id);
+  if (job && (job.paperId !== paper.id || job.kind !== "question" || job.questionId !== question.id)) return jsonError(c, 404, "ANALYSIS_JOB_NOT_FOUND", "The analysis job was not found for this question.");
+  return c.json({ job, generation: c.env.ANALYSIS_QUEUE ? "queued" : "not_available" });
 });
 
 app.post("/api/papers/:id/questions", async (c) => {
@@ -1446,6 +1465,8 @@ app.post("/api/papers/:id/questions/:questionId", async (c) => {
   const question = (await analysisRepository(c.env).listQuestions(paper.id)).find((item) => item.id === c.req.param("questionId"));
   if (!question) return jsonError(c, 404, "QUESTION_NOT_FOUND", "Question not found.");
   if (!c.env.ANALYSIS_QUEUE) return jsonError(c, 501, "QUESTION_GENERATION_UNAVAILABLE", "Hosted question generation is not enabled until the analysis queue is configured.");
+  const existing = await analysisJobs(c.env).activeForPaper(paper.id, "question", undefined, question.id);
+  if (existing) return c.json({ job: existing, generation: "queued", deduplicated: true }, 202);
   const job = await analysisJobs(c.env).create({ paperId: paper.id, kind: "question", questionId: question.id });
   await c.env.ANALYSIS_QUEUE.send({ jobId: job.id });
   return c.json({ job, generation: "queued" }, 202);
@@ -1469,25 +1490,30 @@ const worker = {
     const created = await createHostedBackup(env, { kind });
     await cleanupHostedBackups(env, { [kind]: created.manifest.backupId });
   },
-  async queue(batch: QueueBatch, env: CloudflareBindings): Promise<void> {
+  async queue(batch: QueueBatch, env: CloudflareBindings, ctx?: QueueExecutionContext): Promise<void> {
     const jobs = analysisJobs(env);
-    await Promise.all(batch.messages.map(async (message) => {
-      try {
-        const claimed = await jobs.claim(message.body.jobId);
-        if (!claimed) {
-          message.ack();
-          return;
-        }
+    let nextIndex = 0;
+    const processMessage = async () => {
+      while (nextIndex < batch.messages.length) {
+        const message = batch.messages[nextIndex++];
         try {
-          await executeAnalysisJob(env, claimed);
-        } catch (error) {
-          await jobs.fail(claimed.id, errorMessage(error), errorMessage(error));
+          const claimed = await jobs.claim(message.body.jobId);
+          if (!claimed) {
+            message.ack();
+            continue;
+          }
+          try {
+            await executeAnalysisJob(env, claimed, ctx?.waitUntil.bind(ctx));
+          } catch (error) {
+            await jobs.fail(claimed.id, errorMessage(error), errorMessage(error));
+          }
+          message.ack();
+        } catch {
+          message.retry();
         }
-        message.ack();
-      } catch {
-        message.retry();
       }
-    }));
+    };
+    await Promise.all(Array.from({ length: Math.min(4, batch.messages.length) }, () => processMessage()));
   },
 };
 
