@@ -264,9 +264,11 @@ select { width: auto; min-width: 150px; }
 .paper-detail { margin-bottom: 60px; padding: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-bg); }
 .settings-page { margin-bottom: 60px; }
 .settings-stack { display: grid; gap: 24px; }
-.settings-card-panel { padding: 0 24px; }
+.settings-card-panel { padding: 0 clamp(40px, 5vw, 72px); }
 .settings-card-panel.hosted-backup-panel { padding: 0 clamp(28px, 4vw, 46px); }
 .settings-card-panel > .settings-group { border-bottom: 0; }
+.settings-card-panel > .settings-group:not([open]) { padding-top: 30px; padding-bottom: 30px; }
+.settings-stack + .panel { margin-top: 24px; }
 .settings-group { border-bottom: 1px solid var(--border); padding: 24px 0; }
 .settings-group form label { display: grid; gap: 5px; color: #5b574f; font-size: .9rem; font-weight: 700; }
 .settings-group form select, .settings-group form input { width: 100%; }
