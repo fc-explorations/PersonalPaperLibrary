@@ -39,6 +39,53 @@ describe("paper repository", () => {
     expect(repo.tags.list()).toEqual(["no pdf", "research"]);
     db.close();
   });
+
+  it("reports paper, PDF, abstract, summary, and answer coverage", () => {
+    const db = database();
+    const papers = new PaperRepository(db);
+    const analysis = new AnalysisRepository(db);
+    const noPdf = papers.create({ title: "No PDF", metadataSource: "manual" });
+    const pdfOnly = papers.create({ title: "PDF only", abstract: "Abstract", metadataSource: "manual" }, { key: "papers/pdf-only.pdf", sha256: "pdf-only" });
+    const complete = papers.create({ title: "Complete", abstract: "Abstract", metadataSource: "manual" }, { key: "papers/complete.pdf", sha256: "complete" });
+    const stale = papers.create({ title: "Stale", abstract: "Abstract", metadataSource: "manual" }, { key: "papers/stale.pdf", sha256: "stale" });
+    const failed = papers.create({ title: "Failed", abstract: "Abstract", metadataSource: "manual" }, { key: "papers/failed.pdf", sha256: "failed" });
+
+    analysis.saveSummary({ paperId: complete.id, content: "Current summary", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "summary-v1", status: "complete" });
+    const completeQuestion = analysis.listQuestions(complete.id)[0];
+    analysis.saveAnswer(complete.id, completeQuestion.id, { content: "Current answer", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "question-v1", questionDefinitionHash: completeQuestion.definitionHash, status: "complete" });
+    analysis.saveSummary({ paperId: stale.id, content: "Old summary", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "summary-v1", status: "stale" });
+    const staleQuestion = analysis.listQuestions(stale.id)[0];
+    analysis.saveAnswer(stale.id, staleQuestion.id, { content: "Old answer", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "question-v1", questionDefinitionHash: "old-definition", status: "complete" });
+    analysis.saveSummary({ paperId: failed.id, content: "", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "summary-v1", status: "error" });
+    const failedQuestion = analysis.listQuestions(failed.id)[0];
+    analysis.saveAnswer(failed.id, failedQuestion.id, { content: "", provider: "test", model: "test", generatedAt: new Date().toISOString(), promptVersion: "question-v1", questionDefinitionHash: failedQuestion.definitionHash, status: "error" });
+
+    expect(papers.getStatistics()).toMatchObject({
+      totalPapers: 5,
+      withPdf: 4,
+      withoutPdf: 1,
+      withAbstract: 4,
+      withoutAbstract: 1,
+      withSummary: 1,
+      withoutSummary: 4,
+      staleSummaries: 1,
+      failedSummaries: 1,
+      withAnswers: 1,
+      withoutAnswers: 4,
+      answeredQuestions: 1,
+      staleAnswers: 1,
+      failedAnswers: 1,
+      fullyEnriched: 1,
+      needsPdf: 1,
+      needsAbstract: 1,
+      needsSummary: 3,
+      needsAnswers: 3,
+      aiFailures: 2,
+    });
+    db.close();
+    void noPdf;
+    void pdfOnly;
+  });
 });
 
 describe("analysis repository", () => {

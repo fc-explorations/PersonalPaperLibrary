@@ -1203,6 +1203,33 @@ async function initSettings() {
   await loadBackups();
 }
 
+async function loadStatistics() {
+  const section = document.querySelector("[data-statistics-section]");
+  if (!section) return;
+  const status = section.querySelector("[data-statistics-status]");
+  const content = section.querySelector("[data-statistics-content]");
+  try {
+    const statistics = await request("/api/settings/statistics");
+    const total = Number(statistics.totalPapers || 0);
+    section.querySelectorAll("[data-stat-value]").forEach((element) => {
+      const key = element.dataset.statValue;
+      element.textContent = String(Number(statistics[key] || 0));
+    });
+    section.querySelectorAll("[data-stat-percent]").forEach((element) => {
+      const key = element.dataset.statPercent;
+      const value = Number(statistics[key] || 0);
+      element.textContent = `${total ? Math.round((value / total) * 100) : 0}% of papers`;
+    });
+    if (status) status.hidden = true;
+    if (content) content.hidden = false;
+  } catch (error) {
+    if (status) {
+      status.textContent = error.message;
+      status.classList.add("status-error");
+    }
+  }
+}
+
 async function initAsk() {
   const form = document.querySelector("#ask-form");
   if (!form) return;
@@ -1610,6 +1637,7 @@ async function initImport() {
 
 initLibrary();
 initSettings();
+loadStatistics();
 initAsk();
 initPaper();
 initHostedQuestions();

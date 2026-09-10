@@ -29,6 +29,18 @@ describe("theme settings rendering", () => {
     expect(html).toContain("<summary>HowTo</summary>");
     expect(html).toContain("Never invent metadata");
   });
+
+  it("shows a collapsible statistics section with the first-stage metrics", () => {
+    const html = renderSettingsPage();
+
+    expect(html).toContain('<details class="settings-group statistics-group" data-statistics-section>');
+    expect(html).toContain("<summary>Statistics</summary>");
+    expect(html).toContain('data-stat-value="withPdf"');
+    expect(html).toContain('data-stat-value="withSummary"');
+    expect(html).toContain('data-stat-value="withAnswers"');
+    expect(html).toContain('data-stat-value="fullyEnriched"');
+    expect(html).toContain("Needs attention");
+  });
 });
 
 describe("analysis Markdown rendering", () => {

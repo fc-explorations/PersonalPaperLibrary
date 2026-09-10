@@ -4,6 +4,7 @@ import type { MetadataSource, PaperDraftInput, PaperRecord, SortOrder } from "..
 import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { TagRepository } from "./tags.js";
 import { tagsForPdfStatus } from "../services/system-tags.js";
+import { libraryStatisticsFromRow, type LibraryStatistics } from "../services/statistics.js";
 
 type PaperRow = Record<string, unknown>;
 export type TagFilterMode = "and" | "or";
@@ -79,6 +80,65 @@ export class PaperRepository {
 
   constructor(private readonly db: Database.Database) {
     this.tags = new TagRepository(db);
+  }
+
+  getStatistics(): LibraryStatistics {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) AS total_papers,
+        COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_pdf,
+        COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.abstract, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_abstract,
+        COALESCE(SUM(CASE WHEN EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) THEN 1 ELSE 0 END), 0) AS with_summary,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND NOT EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) THEN 1 ELSE 0 END), 0) AS needs_summary,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND NOT EXISTS (
+          SELECT 1
+          FROM paper_question_answers a
+          JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+          WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+            AND a.question_definition_hash = q.definition_hash
+        ) THEN 1 ELSE 0 END), 0) AS needs_answers,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND TRIM(COALESCE(p.abstract, '')) <> '' AND EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) AND EXISTS (
+          SELECT 1
+          FROM paper_question_answers a
+          JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+          WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+            AND a.question_definition_hash = q.definition_hash
+        ) THEN 1 ELSE 0 END), 0) AS fully_enriched,
+        (SELECT COUNT(*) FROM paper_summaries WHERE status = 'stale') AS stale_summaries,
+        (SELECT COUNT(*) FROM paper_summaries WHERE status = 'error') AS failed_summaries,
+        (SELECT COUNT(DISTINCT a.paper_id)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+           AND a.question_definition_hash = q.definition_hash) AS with_answers,
+        (SELECT COUNT(*)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+           AND a.question_definition_hash = q.definition_hash) AS answered_questions,
+        (SELECT COUNT(*)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'stale' OR a.question_definition_hash IS NOT q.definition_hash) AS stale_answers,
+        (SELECT COUNT(*) FROM paper_question_answers WHERE status = 'error') AS failed_answers
+      FROM papers p
+    `).get() as Record<string, unknown>;
+    return libraryStatisticsFromRow(row);
   }
 
   findById(id: string): PaperRecord | null {

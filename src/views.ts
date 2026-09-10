@@ -131,7 +131,7 @@ function layout(title: string, body: string, showHeader = true): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=60">
+  <link rel="stylesheet" href="/styles.css?v=61">
   <script>window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]], displayMath: [["$$", "$$"], ["\\\\[", "\\\\]"]], macros: { textit: ["{\\\\mathit{#1}}", 1], emph: ["{\\\\mathit{#1}}", 1], textbf: ["{\\\\mathbf{#1}}", 1], texttt: ["{\\\\mathtt{#1}}", 1], url: ["{\\\\mathtt{#1}}", 1] } }, startup: { typeset: false }, options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
@@ -140,7 +140,7 @@ function layout(title: string, body: string, showHeader = true): string {
     ${showHeader ? `<header class="site-header"><div class="shell"><div class="brand-lockup"><a class="brand" href="/" aria-label="PersonalPaperLibrary">${wordmark()}</a>${brandVersion()}</div><div class="header-actions">${settingsLink()}</div></div></header>` : ""}
     <main class="shell">${body}</main>
   </div>
-    <script src="/app.js?v=44" defer></script>
+    <script src="/app.js?v=45" defer></script>
 </body>
 </html>`;
 }
@@ -643,10 +643,23 @@ export function renderHowToSection(): string {
   return `<details class="settings-group howto-group"><summary>HowTo</summary><div class="howto-body"><ol><li>Use <strong>Add paper</strong> to import by title, DOI, ISBN, arXiv ID, URL, or PDF.</li><li>Finding metadata or uploading a PDF saves the paper automatically; edit any fields afterward and changes are saved automatically.</li><li>Use search, tags, and filters to find papers; open a paper to edit metadata, replace its PDF, cite it, or generate analysis.</li><li>Use <strong>Settings</strong> for appearance, AI providers, and backups. Treat delete and replace actions as destructive and confirm them with the user.</li><li>When helping with computer use, follow visible labels, wait for status messages after actions, and report errors. Never invent metadata; ask before saving uncertain changes.</li></ol></div></details>`;
 }
 
+function statisticsValue(key: string, label: string, description: string, percentage = false): string {
+  return `<div class="statistics-card"><strong class="statistics-card-value" data-stat-value="${key}">—</strong>${percentage ? `<span class="statistics-card-percent" data-stat-percent="${key}"></span>` : ""}<span class="statistics-card-label">${label}</span><span class="statistics-card-description">${description}</span></div>`;
+}
+
+function statisticsAttentionRow(key: string, label: string): string {
+  return `<div class="statistics-attention-row"><span>${label}</span><strong data-stat-value="${key}">—</strong></div>`;
+}
+
+export function renderStatisticsSection(): string {
+  return `<details class="settings-group statistics-group" data-statistics-section><summary>Statistics</summary><div class="statistics-body"><p class="muted" data-statistics-status>Loading library statistics…</p><div class="statistics-content" data-statistics-content hidden><div class="statistics-grid">${statisticsValue("totalPapers", "Total papers", "All saved papers")}${statisticsValue("withPdf", "With PDF", "PDF available", true)}${statisticsValue("withoutPdf", "Without PDF", "PDF still missing", true)}${statisticsValue("withAbstract", "With abstract", "Abstract available", true)}${statisticsValue("withSummary", "With current summary", "Complete, non-stale AI summary", true)}${statisticsValue("withAnswers", "With answered questions", "At least one current AI answer", true)}${statisticsValue("answeredQuestions", "Answered questions", "Current answers across the library")}${statisticsValue("fullyEnriched", "Fully enriched", "PDF, abstract, summary, and answer", true)}</div><section class="statistics-attention"><h3>Needs attention</h3>${statisticsAttentionRow("needsPdf", "PDFs missing")}${statisticsAttentionRow("needsAbstract", "Abstracts missing")}${statisticsAttentionRow("needsSummary", "PDFs without a current summary")}${statisticsAttentionRow("needsAnswers", "Papers without an answered question")}${statisticsAttentionRow("staleSummaries", "Stale summaries")}${statisticsAttentionRow("staleAnswers", "Stale answers")}${statisticsAttentionRow("aiFailures", "AI failures")}</section></div></div></details>`;
+}
+
 export function renderSettingsPage(): string {
   const body = `<section class="page-heading"><div><h1>Settings</h1></div></section>
   <section class="panel settings-page">
     ${renderHowToSection()}
+    ${renderStatisticsSection()}
     <div class="settings-group"><h2>Accent color</h2><div class="theme-options">${themeOption("accent", "forest", "Forest", "#315c52")}${themeOption("accent", "blue", "Blue", "#3d5a80")}${themeOption("accent", "terracotta", "Terracotta", "#9a4e36")}${themeOption("accent", "plum", "Plum", "#6b4c73")}${themeOption("accent", "slate", "Slate", "#58606a")}${customThemeOption("accent", "#315c52")}</div></div>
     <div class="settings-group"><h2>Background color</h2><div class="theme-options">${themeOption("background", "paper", "Paper", "#f7f6f2")}${themeOption("background", "white", "White", "#ffffff")}${themeOption("background", "light-gray", "Light gray", "#eeeeec")}${themeOption("background", "warm", "Warm", "#f3efe8")}${themeOption("background", "mint", "Mint", "#f6fdfa")}${customThemeOption("background", "#f7f6f2")}</div>${derivedColorPreview()}</div>
     <div class="settings-group"><h2>Content width</h2><p class="muted">Choose the width of the central content area on larger screens.</p><div class="width-options">${widthOption("50")}${widthOption("60")}${widthOption("70")}${widthOption("80")}${widthOption("90")}${widthOption("100")}</div></div>

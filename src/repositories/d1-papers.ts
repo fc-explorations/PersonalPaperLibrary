@@ -3,6 +3,7 @@ import { parseAuthors, parseTags, parseYear } from "../services/validation.js";
 import { all, batch, first, placeholders, type D1Database, type D1Row } from "../cloudflare/d1.js";
 import { D1TagRepository } from "./d1-tags.js";
 import { NO_PDF_TAG, tagsForPdfStatus } from "../services/system-tags.js";
+import { libraryStatisticsFromRow, type LibraryStatistics } from "../services/statistics.js";
 
 export type D1TagFilterMode = "and" | "or";
 export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
@@ -127,6 +128,65 @@ export class D1PaperRepository {
 
   constructor(private readonly db: D1Database) {
     this.tags = new D1TagRepository(db);
+  }
+
+  async getStatistics(): Promise<LibraryStatistics> {
+    const row = await first<D1Row>(this.db, `
+      SELECT
+        COUNT(*) AS total_papers,
+        COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_pdf,
+        COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.abstract, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_abstract,
+        COALESCE(SUM(CASE WHEN EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) THEN 1 ELSE 0 END), 0) AS with_summary,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND NOT EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) THEN 1 ELSE 0 END), 0) AS needs_summary,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND NOT EXISTS (
+          SELECT 1
+          FROM paper_question_answers a
+          JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+          WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+            AND a.question_definition_hash = q.definition_hash
+        ) THEN 1 ELSE 0 END), 0) AS needs_answers,
+        COALESCE(SUM(CASE WHEN (
+          TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> ''
+        ) AND TRIM(COALESCE(p.abstract, '')) <> '' AND EXISTS (
+          SELECT 1 FROM paper_summaries s
+          WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
+        ) AND EXISTS (
+          SELECT 1
+          FROM paper_question_answers a
+          JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+          WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+            AND a.question_definition_hash = q.definition_hash
+        ) THEN 1 ELSE 0 END), 0) AS fully_enriched,
+        (SELECT COUNT(*) FROM paper_summaries WHERE status = 'stale') AS stale_summaries,
+        (SELECT COUNT(*) FROM paper_summaries WHERE status = 'error') AS failed_summaries,
+        (SELECT COUNT(DISTINCT a.paper_id)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+           AND a.question_definition_hash = q.definition_hash) AS with_answers,
+        (SELECT COUNT(*)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> ''
+           AND a.question_definition_hash = q.definition_hash) AS answered_questions,
+        (SELECT COUNT(*)
+         FROM paper_question_answers a
+         JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
+         WHERE a.status = 'stale' OR a.question_definition_hash IS NOT q.definition_hash) AS stale_answers,
+        (SELECT COUNT(*) FROM paper_question_answers WHERE status = 'error') AS failed_answers
+      FROM papers p
+    `);
+    return libraryStatisticsFromRow(row || {});
   }
 
   async findById(id: string): Promise<PaperRecord | null> {

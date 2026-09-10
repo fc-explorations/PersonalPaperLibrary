@@ -723,6 +723,9 @@ describe("HTTP application", () => {
     expect(settingsHtml).toContain("data-restore-backup-trigger");
     expect(settingsHtml).toContain("data-restore-backup-input");
     expect(settingsHtml).toContain("Entries per page");
+    const statistics = await source.app.request("/api/settings/statistics");
+    expect(statistics.status).toBe(200);
+    expect(await statistics.json()).toMatchObject({ totalPapers: 1, withPdf: 1, withoutPdf: 0, withAbstract: 0, withSummary: 0, withAnswers: 0 });
     expect(settingsHtml).toContain('value="10" data-theme-setting="pageSize"');
     expect(settingsHtml).toContain('value="25" data-theme-setting="pageSize"');
     const backupResponse = await source.app.request("/api/export/backup");

@@ -664,6 +664,8 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/settings", (c) => c.html(renderSettingsPage()));
 
+  app.get("/api/settings/statistics", (c) => c.json(repo.getStatistics()));
+
   app.get("/api/settings/llm", async (c) => {
     const settings = analysis.getSettings();
     const key = await keychain.get();
