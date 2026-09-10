@@ -665,7 +665,10 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get("/settings", (c) => c.html(renderSettingsPage()));
 
-  app.get("/api/settings/statistics", (c) => c.json(repo.getStatistics()));
+  app.get("/api/settings/statistics", (c) => {
+    const coverage = librarySearch.coverage();
+    return c.json({ ...repo.getStatistics(), indexedPapers: coverage.indexedPapers, pendingIndex: coverage.pendingPapers, failedIndex: coverage.failedPapers, unavailableIndex: coverage.unavailablePapers, runningJobs: summaryProgress.size });
+  });
 
   app.get("/api/settings/llm", async (c) => {
     const settings = analysis.getSettings();

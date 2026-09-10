@@ -1383,7 +1383,10 @@ app.get("/api/settings/llm", async (c) => {
 });
 
 app.get("/api/settings/statistics", async (c) => {
-  return c.json(await new D1PaperRepository(c.env.DB).getStatistics());
+  const analysis = analysisRepository(c.env);
+  const search = new D1LibrarySearchRepository(c.env.DB, analysis);
+  const [statistics, coverage, jobs] = await Promise.all([new D1PaperRepository(c.env.DB).getStatistics(), search.coverage(), new D1AnalysisJobRepository(c.env.DB).statusCounts()]);
+  return c.json({ ...statistics, indexedPapers: coverage.indexedPapers, pendingIndex: coverage.pendingPapers, failedIndex: coverage.failedPapers, unavailableIndex: coverage.unavailablePapers, ...jobs });
 });
 
 app.put("/api/settings/llm", async (c) => {

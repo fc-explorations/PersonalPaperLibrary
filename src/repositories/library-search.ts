@@ -181,7 +181,10 @@ export class LibrarySearchRepository {
     const summaryBackedPapers = Number((this.db.prepare("SELECT COUNT(*) AS count FROM paper_summaries WHERE status = 'complete' AND content <> ''").get() as { count: number }).count);
     const missingAbstractPapers = Number((this.db.prepare("SELECT COUNT(*) AS count FROM papers WHERE abstract IS NULL OR trim(abstract) = ''").get() as { count: number }).count);
     const abstractFailurePapers = Number((this.db.prepare("SELECT COUNT(*) AS count FROM paper_abstract_extraction f JOIN papers p ON p.id = f.paper_id WHERE p.abstract IS NULL OR trim(p.abstract) = ''").get() as { count: number }).count);
-    return { totalPapers, indexedPapers: counts.complete || 0, summaryBackedPapers, missingAbstractPapers, abstractFailurePapers, pendingPapers: counts.pending || 0, failedPapers: counts.failed || 0, unavailablePapers: counts.unavailable || 0 };
+    const indexedPapers = counts.complete || 0;
+    const failedPapers = counts.failed || 0;
+    const unavailablePapers = counts.unavailable || 0;
+    return { totalPapers, indexedPapers, summaryBackedPapers, missingAbstractPapers, abstractFailurePapers, pendingPapers: Math.max(0, totalPapers - indexedPapers - failedPapers - unavailablePapers), failedPapers, unavailablePapers };
   }
 
   async query(query: string, tags: string[], tagMode: TagFilterMode, limit: number, embedder: { provider: string; model: string; client?: EmbeddingClient }): Promise<LibrarySearchResult> {

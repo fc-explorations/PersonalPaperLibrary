@@ -87,6 +87,12 @@ export class D1AnalysisJobRepository {
     return (await all<D1Row>(this.db, "SELECT * FROM analysis_jobs WHERE paper_id = ? AND status IN ('queued', 'running') ORDER BY created_at DESC", paperId)).map(rowToJob);
   }
 
+  async statusCounts(): Promise<{ queuedJobs: number; runningJobs: number; failedJobs: number }> {
+    const rows = await all<{ status: string; count: number }>(this.db, "SELECT status, COUNT(*) AS count FROM analysis_jobs GROUP BY status");
+    const counts = Object.fromEntries(rows.map((row) => [row.status, Number(row.count)]));
+    return { queuedJobs: counts.queued || 0, runningJobs: counts.running || 0, failedJobs: counts.error || 0 };
+  }
+
   async claim(id: string): Promise<AnalysisJob | null> {
     const now = new Date().toISOString();
     await this.db.prepare("UPDATE analysis_jobs SET status = 'running', phase = 'starting', attempts = attempts + 1, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status = 'queued'").bind(now, now, id).run();

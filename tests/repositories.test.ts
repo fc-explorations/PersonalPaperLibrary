@@ -95,6 +95,25 @@ describe("paper repository", () => {
   });
 });
 
+describe("library health statistics", () => {
+  it("finds incomplete metadata, duplicates, recent papers, and unanalyzed papers", () => {
+    const db = database();
+    const papers = new PaperRepository(db);
+    new AnalysisRepository(db);
+    const first = papers.create({ title: "Repeated Paper", authors: ["Ada Lovelace"], year: 2024, doi: "10.1000/repeated", metadataSource: "manual" });
+    const duplicate = papers.create({ title: "Repeated Paper", authors: ["Ada Lovelace"], year: 2024, doi: "10.1000/repeated", metadataSource: "manual" });
+    const old = papers.create({ title: "Old Incomplete Paper", metadataSource: "manual" });
+    db.prepare("UPDATE papers SET created_at = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", old.id);
+
+    expect(papers.getStatistics()).toMatchObject({ metadataComplete: 2, withoutMetadata: 1, duplicateCandidates: 2, recentPapers: 2, neverAnalyzed: 3 });
+    expect(papers.list({ attention: "missing-metadata" }).map((paper) => paper.id)).toEqual([old.id]);
+    expect(papers.list({ attention: "duplicate-candidate" }).map((paper) => paper.id)).toEqual(expect.arrayContaining([first.id, duplicate.id]));
+    expect(papers.list({ attention: "never-analyzed" })).toHaveLength(3);
+    expect(papers.list({ attention: "recent" }).map((paper) => paper.id)).toEqual(expect.arrayContaining([first.id, duplicate.id]));
+    db.close();
+  });
+});
+
 describe("analysis repository", () => {
   it("marks answers stale when the question definition changes or provenance is missing", () => {
     const db = database();

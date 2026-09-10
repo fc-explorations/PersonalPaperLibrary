@@ -136,6 +136,10 @@ export class D1PaperRepository {
         COUNT(*) AS total_papers,
         COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_pdf,
         COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.abstract, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_abstract,
+        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM paper_authors pa WHERE pa.paper_id = p.id) THEN 1 ELSE 0 END), 0) AS with_authors,
+        COALESCE(SUM(CASE WHEN p.year IS NOT NULL THEN 1 ELSE 0 END), 0) AS with_year,
+        COALESCE(SUM(CASE WHEN TRIM(COALESCE(p.doi, '')) <> '' OR TRIM(COALESCE(p.arxiv_id, '')) <> '' OR TRIM(COALESCE(p.source_url, '')) <> '' THEN 1 ELSE 0 END), 0) AS with_identifier,
+        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM paper_authors pa WHERE pa.paper_id = p.id) AND p.year IS NOT NULL AND (TRIM(COALESCE(p.doi, '')) <> '' OR TRIM(COALESCE(p.arxiv_id, '')) <> '' OR TRIM(COALESCE(p.source_url, '')) <> '') THEN 1 ELSE 0 END), 0) AS metadata_complete,
         COALESCE(SUM(CASE WHEN EXISTS (
           SELECT 1 FROM paper_summaries s
           WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> ''
@@ -183,7 +187,18 @@ export class D1PaperRepository {
          FROM paper_question_answers a
          JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id
          WHERE a.status = 'stale' OR a.question_definition_hash IS NOT q.definition_hash) AS stale_answers,
-        (SELECT COUNT(*) FROM paper_question_answers WHERE status = 'error') AS failed_answers
+        (SELECT COUNT(*) FROM paper_question_answers WHERE status = 'error') AS failed_answers,
+        (SELECT COUNT(*) FROM papers ptu WHERE NOT EXISTS (SELECT 1 FROM paper_tags pttu JOIN tags ttu ON ttu.id = pttu.tag_id WHERE pttu.paper_id = ptu.id AND ttu.name != 'no pdf' COLLATE NOCASE)) AS untagged_papers,
+        (SELECT COUNT(*) FROM tags WHERE name != 'no pdf' COLLATE NOCASE) AS total_tags,
+        COALESCE(SUM(CASE WHEN EXISTS (
+          SELECT 1 FROM papers p2 WHERE p2.id != p.id AND (
+            (TRIM(COALESCE(p.title, '')) <> '' AND lower(trim(p2.title)) = lower(trim(p.title))) OR
+            (TRIM(COALESCE(p.doi, '')) <> '' AND lower(trim(p2.doi)) = lower(trim(p.doi))) OR
+            (TRIM(COALESCE(p.arxiv_id, '')) <> '' AND lower(trim(p2.arxiv_id)) = lower(trim(p.arxiv_id)))
+          )
+        ) THEN 1 ELSE 0 END), 0) AS duplicate_candidates,
+        COALESCE(SUM(CASE WHEN datetime(p.created_at) >= datetime('now', '-30 days') THEN 1 ELSE 0 END), 0) AS recent_papers,
+        COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id) AND NOT EXISTS (SELECT 1 FROM paper_question_answers a WHERE a.paper_id = p.id) THEN 1 ELSE 0 END), 0) AS never_analyzed
       FROM papers p
     `);
     return libraryStatisticsFromRow(row || {});
@@ -411,6 +426,10 @@ export class D1PaperRepository {
     if (options.untagged) clauses.push("NOT EXISTS (SELECT 1 FROM paper_tags ptu JOIN tags ttu ON ttu.id = ptu.tag_id WHERE ptu.paper_id = p.id AND ttu.name != 'no pdf' COLLATE NOCASE)");
     if (options.attention === "missing-pdf") clauses.push("TRIM(COALESCE(p.r2_key, '')) = '' AND TRIM(COALESCE(p.pdf_sha256, '')) = ''");
     if (options.attention === "missing-abstract") clauses.push("TRIM(COALESCE(p.abstract, '')) = ''");
+    if (options.attention === "missing-metadata") clauses.push("NOT (EXISTS (SELECT 1 FROM paper_authors pma WHERE pma.paper_id = p.id) AND p.year IS NOT NULL AND (TRIM(COALESCE(p.doi, '')) <> '' OR TRIM(COALESCE(p.arxiv_id, '')) <> '' OR TRIM(COALESCE(p.source_url, '')) <> ''))");
+    if (options.attention === "duplicate-candidate") clauses.push("EXISTS (SELECT 1 FROM papers p2 WHERE p2.id != p.id AND ((TRIM(COALESCE(p.title, '')) <> '' AND lower(trim(p2.title)) = lower(trim(p.title))) OR (TRIM(COALESCE(p.doi, '')) <> '' AND lower(trim(p2.doi)) = lower(trim(p.doi))) OR (TRIM(COALESCE(p.arxiv_id, '')) <> '' AND lower(trim(p2.arxiv_id)) = lower(trim(p.arxiv_id)))))");
+    if (options.attention === "never-analyzed") clauses.push("NOT EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id) AND NOT EXISTS (SELECT 1 FROM paper_question_answers a WHERE a.paper_id = p.id)");
+    if (options.attention === "recent") clauses.push("datetime(p.created_at) >= datetime('now', '-30 days')");
     if (options.attention === "missing-summary") clauses.push("(TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '') AND NOT EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id AND s.status = 'complete' AND TRIM(COALESCE(s.content, '')) <> '')");
     if (options.attention === "missing-answer") clauses.push("(TRIM(COALESCE(p.r2_key, '')) <> '' OR TRIM(COALESCE(p.pdf_sha256, '')) <> '') AND NOT EXISTS (SELECT 1 FROM paper_question_answers a JOIN paper_questions q ON q.paper_id = a.paper_id AND q.question_id = a.question_id WHERE a.paper_id = p.id AND a.status = 'complete' AND TRIM(COALESCE(a.content, '')) <> '' AND a.question_definition_hash = q.definition_hash)");
     if (options.attention === "stale-summary") clauses.push("EXISTS (SELECT 1 FROM paper_summaries s WHERE s.paper_id = p.id AND s.status = 'stale')");
