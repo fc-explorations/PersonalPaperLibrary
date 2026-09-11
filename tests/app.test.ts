@@ -829,7 +829,7 @@ describe("HTTP application", () => {
     };
     const context = testApp(undefined, undefined, { llmClient, keychain, pdfTextExtractor: async () => "Complete extracted paper text." });
     const settingsPage = await context.app.request("/settings");
-    expect(await settingsPage.text()).toContain("AI providers");
+    expect(await settingsPage.text()).toContain("<strong>AI</strong> section");
     const initialSettings = await (await context.app.request("/api/settings/llm")).json();
     expect(initialSettings.openaiModel).toBe("gpt-5-nano");
     const saveSettings = await context.app.request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", openaiModel: "gpt-5.4-nano", openaiApiKey: "secret-value" }) });

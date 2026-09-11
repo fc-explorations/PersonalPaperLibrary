@@ -27,6 +27,9 @@ describe("theme settings rendering", () => {
 
     expect(html.indexOf('<details class="settings-group howto-group">')).toBeLessThan(html.indexOf("Accent color"));
     expect(html).toContain("<summary>HowTo</summary>");
+    expect(html).toContain("A quick guide to getting the most from your paper library.");
+    expect(html).toContain("Configure a provider in the <strong>AI</strong> section");
+    expect(html).toContain("Hosted backups keep the newest daily and monthly copies");
     expect(html).toContain("Never invent metadata");
   });
 

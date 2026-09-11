@@ -286,8 +286,10 @@ select { width: auto; min-width: 150px; }
 .howto-group > summary::before { position: relative; top: -.1em; width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
 .howto-group[open] > summary::before { transform: rotate(90deg); }
 .howto-body { max-width: 78ch; padding: 18px 0 0 24px; }
+.howto-intro { margin: 0 0 14px; color: var(--muted); }
 .howto-body ol { margin: 0; padding-left: 20px; }
 .howto-body li + li { margin-top: 10px; }
+.howto-note { margin-top: 18px; padding: 12px 14px; border-left: 3px solid var(--accent); background: var(--accent-soft); color: var(--muted); }
 .statistics-group > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; font-size: var(--type-section); font-weight: 700; }
 .statistics-group > summary::-webkit-details-marker { display: none; }
 .statistics-group > summary::before { position: relative; top: -.1em; width: 14px; flex: 0 0 14px; color: var(--accent); content: "›"; display: inline-block; font-size: 1.75rem; font-weight: 400; line-height: .7; text-align: center; transition: transform .15s ease; }
@@ -316,7 +318,7 @@ select { width: auto; min-width: 150px; }
 .statistics-hint { margin: 0 0 -8px; font-size: .85rem; }
 .active-library-filter { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 0; padding: 10px 14px; border: 1px solid var(--accent-border); border-radius: 7px; background: var(--accent-soft); color: var(--muted); font-size: .9rem; }
 .active-library-filter a { color: var(--accent); font-weight: 700; }
-.credits-group { padding-bottom: 0; }
+.settings-card-panel.credits-group { padding-top: 24px; padding-bottom: 24px; }
 .credits-box { max-width: 420px; padding-left: 24px; }
 .credits-box h2 { margin: 0 0 14px; }
 .credits-box p { margin: 6px 0 0; }
