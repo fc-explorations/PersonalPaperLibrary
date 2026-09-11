@@ -44,6 +44,7 @@ import { renderLoginPage } from "./views/login.js";
 import type { PaperDraftInput, PaperMetadata } from "./types.js";
 import { APP_VERSION } from "./version.js";
 import { parseAttentionFilter } from "./services/statistics.js";
+import { deduplicatePapers } from "./services/duplicate-cleanup.js";
 
 export interface AppDependencies {
   db?: Database;
@@ -1369,6 +1370,33 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ ok: true, deleted: papers.length });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), "The paper group could not be deleted.");
+    }
+  });
+
+  app.post("/api/papers/deduplicate", async (c) => {
+    try {
+      const papers = repo.list({});
+      const summaries = new Map(papers.map((paper) => [paper.id, analysis.getSummary(paper.id)] as const));
+      const questions = new Map(papers.map((paper) => [paper.id, analysis.listQuestions(paper.id)] as const));
+      const cleanup = deduplicatePapers(papers, { summaries, questions });
+      if (!cleanup.removeIds.length) return c.json({ ok: true, groups: 0, kept: 0, deleted: 0 });
+      const moved: StorageMove[] = [];
+      try {
+        for (const paper of cleanup.groups.flatMap((group) => group.remove)) {
+          if (paper.r2Key) {
+            const move = await storage.moveToTrash(paper.id);
+            if (move) moved.push(move);
+          }
+        }
+        repo.deleteMany(cleanup.removeIds);
+      } catch (error) {
+        for (const move of moved.reverse()) await storage.restoreFromTrash(move);
+        throw error;
+      }
+      for (const move of moved) await finalizeMove(storage, move);
+      return c.json({ ok: true, groups: cleanup.groups.length, kept: cleanup.groups.length, deleted: cleanup.removeIds.length });
+    } catch (error) {
+      return jsonError(c, 500, errorMessage(error), "Duplicate entries could not be removed.");
     }
   });
 

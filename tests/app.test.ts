@@ -706,6 +706,21 @@ describe("HTTP application", () => {
     rmSync(context.root, { recursive: true, force: true });
   });
 
+  it("removes weaker duplicate entries while keeping the more complete paper", async () => {
+    const context = testApp();
+    const repo = new PaperRepository(context.db);
+    repo.create({ id: "duplicate-keep", title: "Duplicate cleanup paper", abstract: "The complete abstract.", authors: ["Complete Author"], year: 2024, doi: "10.1000/duplicate", metadataSource: "manual", tags: [] });
+    repo.create({ id: "duplicate-remove", title: "Duplicate cleanup paper", metadataSource: "manual", tags: [] });
+
+    const response = await context.app.request("/api/papers/deduplicate", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, groups: 1, kept: 1, deleted: 1 });
+    expect((await context.app.request("/api/papers/duplicate-keep")).status).toBe(200);
+    expect((await context.app.request("/api/papers/duplicate-remove")).status).toBe(404);
+    context.db.close();
+    rmSync(context.root, { recursive: true, force: true });
+  });
+
   it("exposes backup and restore controls in settings and restores a library", async () => {
     const source = testApp();
     const form = new FormData();

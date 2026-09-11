@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import worker, { type CloudflareBindings } from "../src/worker.js";
+import { D1PaperRepository } from "../src/repositories/d1-papers.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
 import { createZip } from "../src/services/zip.js";
@@ -329,6 +330,20 @@ describe("Cloudflare Worker API", () => {
     await expect((await worker.request("/api/papers/bulk-one", {}, env)).text()).resolves.toContain("important");
     const deleted = await worker.request("/api/papers/bulk-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedIds: ["bulk-one", "bulk-two"] }) }, env);
     expect(deleted.status).toBe(200);
+    env.d1.db.close();
+  });
+
+  it("removes weaker hosted duplicate entries while keeping the more complete paper", async () => {
+    const env = bindings();
+    const repo = new D1PaperRepository(env.DB);
+    await repo.create({ id: "hosted-duplicate-keep", title: "Hosted duplicate cleanup paper", abstract: "The complete abstract.", authors: ["Complete Author"], year: 2024, doi: "10.1000/hosted-duplicate", metadataSource: "manual", tags: [] });
+    await repo.create({ id: "hosted-duplicate-remove", title: "Hosted duplicate cleanup paper", metadataSource: "manual", tags: [] });
+
+    const response = await worker.request("/api/papers/deduplicate", { method: "POST" }, env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, groups: 1, kept: 1, deleted: 1 });
+    expect((await worker.request("/api/papers/hosted-duplicate-keep", {}, env)).status).toBe(200);
+    expect((await worker.request("/api/papers/hosted-duplicate-remove", {}, env)).status).toBe(404);
     env.d1.db.close();
   });
 

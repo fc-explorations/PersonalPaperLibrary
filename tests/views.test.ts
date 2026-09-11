@@ -51,6 +51,8 @@ describe("theme settings rendering", () => {
     expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=missing-pdf"');
     expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=with-pdf"');
     expect(html).toContain('class="statistics-card statistics-card-link" href="/?attention=fully-enriched"');
+    expect(html).toContain('data-deduplicate-papers');
+    expect(html).toContain("Keep the most complete paper in each duplicate group");
   });
 
   it("groups visual and LLM preferences into separate collapsible sections", () => {

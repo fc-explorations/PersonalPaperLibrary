@@ -315,6 +315,9 @@ select { width: auto; min-width: 150px; }
 .statistics-card-link { color: inherit; text-decoration: none; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
 .statistics-card-link:hover { border-color: var(--accent-border); background: var(--accent-soft); transform: translateY(-1px); }
 .statistics-card-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.statistics-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+.statistics-actions p { margin: 4px 0 0; }
+.statistics-actions .form-status { margin: 0; }
 .statistics-hint { margin: 0 0 -8px; font-size: .85rem; }
 .active-library-filter { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 0; padding: 10px 14px; border: 1px solid var(--accent-border); border-radius: 7px; background: var(--accent-soft); color: var(--muted); font-size: .9rem; }
 .active-library-filter a { color: var(--accent); font-weight: 700; }

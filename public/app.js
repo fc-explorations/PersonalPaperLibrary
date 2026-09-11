@@ -311,7 +311,34 @@ async function loadStatistics() {
   }
 }
 
+function initDeduplicatePapers() {
+  const section = document.querySelector("[data-statistics-section]");
+  const button = section?.querySelector("[data-deduplicate-papers]");
+  const status = section?.querySelector("[data-deduplicate-status]");
+  if (!button) return;
+  const showStatus = (message, error = false) => {
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle("status-error", error);
+  };
+  button.addEventListener("click", async () => {
+    if (!window.confirm("Remove duplicate entries? This keeps the most complete paper in each group and permanently deletes the other entries and their PDFs. This cannot be undone.")) return;
+    button.disabled = true;
+    showStatus("Finding duplicates…");
+    try {
+      const result = await jsonRequest("/api/papers/deduplicate", { method: "POST" });
+      showStatus(result.deleted ? `Removed ${result.deleted} duplicate paper${result.deleted === 1 ? "" : "s"} from ${result.groups} group${result.groups === 1 ? "" : "s"}.` : "No duplicate entries found.");
+      await loadStatistics();
+    } catch (error) {
+      showStatus(clientErrorMessage(error), true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 loadStatistics();
+initDeduplicatePapers();
 
 const aiSettingsForm = document.querySelector("[data-ai-settings]");
 if (aiSettingsForm) {

@@ -1255,6 +1255,29 @@ async function loadStatistics() {
   }
 }
 
+function initDeduplicatePapers() {
+  const section = document.querySelector("[data-statistics-section]");
+  const button = section?.querySelector("[data-deduplicate-papers]");
+  const status = section?.querySelector("[data-deduplicate-status]");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    if (!window.confirm("Remove duplicate entries? This keeps the most complete paper in each group and permanently deletes the other entries and their PDFs. This cannot be undone.")) return;
+    button.disabled = true;
+    setStatus(status, "Finding duplicates…");
+    try {
+      const result = await request("/api/papers/deduplicate", { method: "POST" });
+      setStatus(status, result.deleted ? `Removed ${result.deleted} duplicate paper${result.deleted === 1 ? "" : "s"} from ${result.groups} group${result.groups === 1 ? "" : "s"}.` : "No duplicate entries found.");
+      await loadStatistics();
+    } catch (error) {
+      setStatus(status, error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+initDeduplicatePapers();
+
 async function initAsk() {
   const form = document.querySelector("#ask-form");
   if (!form) return;

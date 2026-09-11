@@ -32,6 +32,7 @@ import { hostedQuestionDefinitions } from "./services/question-catalog.js";
 import { compactQuickSummary } from "./services/quick-summary.js";
 import { APP_VERSION_LABEL } from "./version.js";
 import { parseAttentionFilter } from "./services/statistics.js";
+import { deduplicatePapers } from "./services/duplicate-cleanup.js";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -160,8 +161,8 @@ function hostedShell(title: string, page: string, body: string): string {
   return withCredits
     .replace(/(<body data-hosted-page="[^"]+">)/, "$1\n    <div class=\"render-root\">")
     .replace(/\n    <script src="\/cloud\.js\?v=10/, "\n    </div>\n    <script src=\"/cloud.js?v=10")
-    .replace(/styles\.css\?v=33/g, "styles.css?v=65")
-    .replace(/cloud\.js\?v=10/g, "cloud.js?v=39")
+    .replace(/styles\.css\?v=33/g, "styles.css?v=66")
+    .replace(/cloud\.js\?v=10/g, "cloud.js?v=40")
     .replace(/<svg class="settings-icon"[\s\S]*?<\/svg>/, hostedSettingsIcon());
 }
 
@@ -1306,6 +1307,34 @@ app.post("/api/papers/bulk-delete", async (c) => {
     }
   } catch (error) {
     return jsonError(c, 400, errorMessage(error), "The selected papers could not be deleted.");
+  }
+});
+
+app.post("/api/papers/deduplicate", async (c) => {
+  const repo = new D1PaperRepository(c.env.DB);
+  const storage = new R2Storage(c.env.PAPER_PDFS);
+  try {
+    const analysis = analysisRepository(c.env);
+    const [papers, summaries, questions] = await Promise.all([repo.list({}), analysis.listSummariesByPaper(), analysis.listQuestionsByPaper()]);
+    const cleanup = deduplicatePapers(papers, { summaries, questions });
+    if (!cleanup.removeIds.length) return c.json({ ok: true, groups: 0, kept: 0, deleted: 0 });
+    const moved: Array<NonNullable<Awaited<ReturnType<R2Storage["moveToTrash"]>>>> = [];
+    try {
+      for (const paper of cleanup.groups.flatMap((group) => group.remove)) {
+        if (paper.r2Key) {
+          const move = await storage.moveToTrash(paper.id);
+          if (move) moved.push(move);
+        }
+      }
+      await repo.deleteMany(cleanup.removeIds);
+    } catch (error) {
+      for (const move of moved.reverse()) await storage.restoreFromTrash(move).catch(() => {});
+      throw error;
+    }
+    for (const move of moved) await storage.finalizeTrash(move);
+    return c.json({ ok: true, groups: cleanup.groups.length, kept: cleanup.groups.length, deleted: cleanup.removeIds.length });
+  } catch (error) {
+    return jsonError(c, 500, errorMessage(error), "Duplicate entries could not be removed.");
   }
 });
 
