@@ -1130,16 +1130,18 @@ async function initSettings() {
   const form = document.querySelector("#settings-form");
   if (!form) return;
   const status = document.querySelector("#settings-status");
+  const openRouterKeyStatus = document.querySelector("#openrouter-key-status");
   try {
     const settings = await request("/api/settings/llm");
     form.elements.provider.value = settings.provider; form.elements.openaiModel.value = settings.openaiModel; form.elements.openaiEmbeddingModel.value = settings.openaiEmbeddingModel;
     setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured.");
+    setStatus(openRouterKeyStatus, settings.openRouterConfigured ? "OpenRouter Worker Secret is configured; it must be changed with Wrangler." : "OpenRouter Worker Secret is not configured.");
   } catch (error) { setStatus(status, error.message, true); }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
       const settings = await request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: form.elements.provider.value, openaiModel: form.elements.openaiModel.value, openaiEmbeddingModel: form.elements.openaiEmbeddingModel.value }) });
-      setStatus(status, "Settings saved."); setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured.");
+      setStatus(status, "Settings saved."); setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured."); setStatus(openRouterKeyStatus, settings.openRouterConfigured ? "OpenRouter Worker Secret is configured; it must be changed with Wrangler." : "OpenRouter Worker Secret is not configured.");
     } catch (error) { setStatus(status, error.message, true); }
   });
   const backupCreate = document.querySelector("#backup-create");

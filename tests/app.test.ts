@@ -14,7 +14,7 @@ import { APP_VERSION } from "../src/version.js";
 const atom = `<feed><entry><title>Test arXiv Paper</title><summary>Test abstract</summary><published>2024-01-01T00:00:00Z</published><updated>2024-01-01T00:00:00Z</updated><author><name>Test Author</name></author><category term="cs.AI"/><arxiv:comment>Accepted at NeurIPS 2024.</arxiv:comment></entry></feed>`;
 const pdf = new TextEncoder().encode("%PDF-1.7\ntest");
 
-function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "embeddingClient" | "pdfTextExtractor" | "pdfExcerptTextExtractor" | "keychain"> = {}) {
+function testApp(fetcherOverride?: typeof fetch, authPassword?: string, extras: Pick<AppDependencies, "llmClient" | "embeddingClient" | "pdfTextExtractor" | "pdfExcerptTextExtractor" | "keychain" | "openRouterKeychain"> = {}) {
   const root = mkdtempSync(join(tmpdir(), "paper-app-"));
   const db = new Database(":memory:");
   db.exec(`PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL); CREATE TABLE papers (id TEXT PRIMARY KEY, arxiv_id TEXT, arxiv_base_id TEXT, title TEXT NOT NULL, abstract TEXT, published_date TEXT, updated_date TEXT, year INTEGER, primary_category TEXT, categories TEXT, journal_ref TEXT, accepted_venue TEXT, doi TEXT, isbn TEXT, bibtex TEXT, source_url TEXT, arxiv_url TEXT, r2_key TEXT, pdf_sha256 TEXT, metadata_source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE UNIQUE INDEX idx_papers_arxiv_base_id ON papers(lower(arxiv_base_id)) WHERE arxiv_base_id IS NOT NULL; CREATE TABLE authors (id TEXT PRIMARY KEY, display_name TEXT NOT NULL); CREATE TABLE paper_authors (paper_id TEXT NOT NULL, author_id TEXT NOT NULL, author_order INTEGER NOT NULL, PRIMARY KEY (paper_id, author_id)); CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT NOT NULL); CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));`);
@@ -826,6 +826,7 @@ describe("HTTP application", () => {
 
   it("stores AI settings, generates summaries and persists custom paper questions", async () => {
     let storedKey: string | undefined;
+    let storedOpenRouterKey: string | undefined;
     let calls = 0;
     const llmClient = {
       complete: async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
@@ -842,16 +843,28 @@ describe("HTTP application", () => {
       set: async (value: string) => { storedKey = value; },
       clear: async () => { storedKey = undefined; },
     };
-    const context = testApp(undefined, undefined, { llmClient, keychain, pdfTextExtractor: async () => "Complete extracted paper text." });
+    const openRouterKeychain = {
+      source: "keychain" as const,
+      writable: true,
+      get: async () => storedOpenRouterKey,
+      set: async (value: string) => { storedOpenRouterKey = value; },
+      clear: async () => { storedOpenRouterKey = undefined; },
+    };
+    const context = testApp(undefined, undefined, { llmClient, keychain, openRouterKeychain, pdfTextExtractor: async () => "Complete extracted paper text." });
     const settingsPage = await context.app.request("/settings");
-    expect(await settingsPage.text()).toContain("<strong>AI</strong> section");
+    const settingsHtml = await settingsPage.text();
+    expect(settingsHtml).toContain("<strong>AI</strong> section");
     const initialSettings = await (await context.app.request("/api/settings/llm")).json();
     expect(initialSettings.openaiModel).toBe("gpt-5-nano");
-    const saveSettings = await context.app.request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", openaiModel: "gpt-5.4-nano", openaiApiKey: "secret-value" }) });
+    expect(initialSettings.openRouterConfigured).toBe(false);
+    expect(settingsHtml).toContain("name=\"openRouterApiKey\"");
+    const saveSettings = await context.app.request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", openaiModel: "gpt-5.4-nano", openaiApiKey: "secret-value", openRouterApiKey: "openrouter-secret-value" }) });
     expect(saveSettings.status).toBe(200);
     const settings = await saveSettings.json();
     expect(settings.openaiConfigured).toBe(true);
+    expect(settings.openRouterConfigured).toBe(true);
     expect(JSON.stringify(settings)).not.toContain("secret-value");
+    expect(JSON.stringify(settings)).not.toContain("openrouter-secret-value");
     const form = new FormData();
     form.append("file", new File([pdf], "ai-paper.pdf", { type: "application/pdf" }));
     const upload = await (await context.app.request("/api/uploads", { method: "POST", body: form })).json();
@@ -898,6 +911,8 @@ describe("HTTP application", () => {
     expect((await (await context.app.request(`/api/papers/${paperId}/questions`)).json()).questions.some((question: { id: string }) => question.id === custom.question.id)).toBe(false);
     await context.app.request("/api/settings/llm/openai-key", { method: "DELETE" });
     expect(storedKey).toBeUndefined();
+    await context.app.request("/api/settings/llm/openrouter-key", { method: "DELETE" });
+    expect(storedOpenRouterKey).toBeUndefined();
     context.db.close();
     rmSync(context.root, { recursive: true, force: true });
   });

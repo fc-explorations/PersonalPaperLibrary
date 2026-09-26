@@ -25,7 +25,7 @@ import { FileStorage } from "./services/storage.js";
 import type { StorageMove } from "./services/storage.js";
 import { AnalysisRepository, type AiSettings } from "./repositories/analysis.js";
 import { LibrarySearchRepository } from "./repositories/library-search.js";
-import { createKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
+import { createKeychainAdapter, createOpenRouterKeychainAdapter, type KeychainAdapter } from "./services/keychain.js";
 import { OllamaEmbeddingClient, OpenAiEmbeddingClient, type EmbeddingClient } from "./services/embeddings.js";
 import { MATH_FORMATTING_INSTRUCTION, OllamaLlmClient, OpenAiLlmClient, type LlmClient, type LlmProvider } from "./services/llm.js";
 import { groupLibraryResults, rephraseLibraryQuery } from "./services/library-query.js";
@@ -58,6 +58,7 @@ export interface AppDependencies {
   pdfTextExtractor?: PdfTextExtractor;
   pdfExcerptTextExtractor?: PdfTextExtractor;
   keychain?: KeychainAdapter;
+  openRouterKeychain?: KeychainAdapter;
   maxBackupBytes?: number;
 }
 
@@ -347,6 +348,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   const analysis = new AnalysisRepository(db);
   const librarySearch = new LibrarySearchRepository(db, (paperId) => analysis.getSummary(paperId));
   const keychain = dependencies.keychain || createKeychainAdapter();
+  const openRouterKeychain = dependencies.openRouterKeychain || createOpenRouterKeychainAdapter();
   const pdfTextExtractor = dependencies.pdfTextExtractor || extractPdfText;
   const pdfExcerptTextExtractor = dependencies.pdfExcerptTextExtractor || (dependencies.pdfTextExtractor
     ? async (path: string) => (await pdfTextExtractor(path)).slice(0, 18_000)
@@ -674,7 +676,16 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.get("/api/settings/llm", async (c) => {
     const settings = analysis.getSettings();
     const key = await keychain.get();
-    return c.json({ ...settings, openaiConfigured: Boolean(key), openaiKeySource: key ? keychain.source : "none", openaiKeyEditable: keychain.writable });
+    const openRouterKey = await openRouterKeychain.get();
+    return c.json({
+      ...settings,
+      openaiConfigured: Boolean(key),
+      openaiKeySource: key ? keychain.source : "none",
+      openaiKeyEditable: keychain.writable,
+      openRouterConfigured: Boolean(openRouterKey),
+      openRouterKeySource: openRouterKey ? openRouterKeychain.source : "none",
+      openRouterKeyEditable: openRouterKeychain.writable,
+    });
   });
 
   app.get("/api/settings/llm/ollama/models", async (c) => {
@@ -707,6 +718,10 @@ export function createApp(dependencies: AppDependencies = {}) {
         if (typeof body.openaiApiKey !== "string" || !body.openaiApiKey.trim()) return jsonError(c, 400, "OPENAI_KEY_REQUIRED", "Enter an OpenAI API key.");
         await keychain.set(body.openaiApiKey);
       }
+      if (body.openRouterApiKey !== undefined) {
+        if (typeof body.openRouterApiKey !== "string" || !body.openRouterApiKey.trim()) return jsonError(c, 400, "OPENROUTER_KEY_REQUIRED", "Enter an OpenRouter API key.");
+        await openRouterKeychain.set(body.openRouterApiKey);
+      }
       const update: Partial<AiSettings> = {};
       if (provider) update.provider = provider;
       if (openaiModel) update.openaiModel = openaiModel;
@@ -716,7 +731,16 @@ export function createApp(dependencies: AppDependencies = {}) {
       if (ollamaBaseUrl) update.ollamaBaseUrl = ollamaBaseUrl;
       const settings = analysis.updateSettings(update);
       const key = await keychain.get();
-      return c.json({ ...settings, openaiConfigured: Boolean(key), openaiKeySource: key ? keychain.source : "none", openaiKeyEditable: keychain.writable });
+      const openRouterKey = await openRouterKeychain.get();
+      return c.json({
+        ...settings,
+        openaiConfigured: Boolean(key),
+        openaiKeySource: key ? keychain.source : "none",
+        openaiKeyEditable: keychain.writable,
+        openRouterConfigured: Boolean(openRouterKey),
+        openRouterKeySource: openRouterKey ? openRouterKeychain.source : "none",
+        openRouterKeyEditable: openRouterKeychain.writable,
+      });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), "The AI provider settings could not be saved.");
     }
@@ -728,6 +752,15 @@ export function createApp(dependencies: AppDependencies = {}) {
       return c.json({ ok: true });
     } catch (error) {
       return jsonError(c, 400, errorMessage(error), "The OpenAI API key could not be cleared.");
+    }
+  });
+
+  app.delete("/api/settings/llm/openrouter-key", async (c) => {
+    try {
+      await openRouterKeychain.clear();
+      return c.json({ ok: true });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "The OpenRouter API key could not be cleared.");
     }
   });
 

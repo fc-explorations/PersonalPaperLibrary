@@ -344,6 +344,8 @@ const aiSettingsForm = document.querySelector("[data-ai-settings]");
 if (aiSettingsForm) {
   const keyStatus = aiSettingsForm.querySelector("[data-openai-key-status]");
   const clearKey = aiSettingsForm.querySelector("[data-clear-openai-key]");
+  const openRouterKeyStatus = aiSettingsForm.querySelector("[data-openrouter-key-status]");
+  const clearOpenRouterKey = aiSettingsForm.querySelector("[data-clear-openrouter-key]");
   const ollamaModel = aiSettingsForm.elements.namedItem("ollamaModel");
   const ollamaBaseUrl = aiSettingsForm.elements.namedItem("ollamaBaseUrl");
   const ollamaModelStatus = aiSettingsForm.querySelector("[data-ollama-model-status]");
@@ -385,9 +387,13 @@ if (aiSettingsForm) {
       preserveOllamaModel(settings.ollamaModel);
       await loadOllamaModels(settings.ollamaModel);
       if (keyStatus) keyStatus.textContent = settings.openaiConfigured ? `OpenAI key configured (${settings.openaiKeySource}).${settings.openaiKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenAI key not configured.";
+      if (openRouterKeyStatus) openRouterKeyStatus.textContent = settings.openRouterConfigured ? `OpenRouter key configured (${settings.openRouterKeySource}).${settings.openRouterKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenRouter key not configured.";
       if (clearKey) clearKey.disabled = !settings.openaiConfigured || !settings.openaiKeyEditable;
+      if (clearOpenRouterKey) clearOpenRouterKey.disabled = !settings.openRouterConfigured || !settings.openRouterKeyEditable;
       const keyInput = aiSettingsForm.elements.namedItem("openaiApiKey");
       if (keyInput) keyInput.disabled = !settings.openaiKeyEditable;
+      const openRouterKeyInput = aiSettingsForm.elements.namedItem("openRouterApiKey");
+      if (openRouterKeyInput) openRouterKeyInput.disabled = !settings.openRouterKeyEditable;
     } catch (error) {
       if (keyStatus) keyStatus.textContent = clientErrorMessage(error);
     }
@@ -400,10 +406,13 @@ if (aiSettingsForm) {
     const body = { provider: value(aiSettingsForm, "provider"), openaiModel: value(aiSettingsForm, "openaiModel"), openaiEmbeddingModel: value(aiSettingsForm, "openaiEmbeddingModel"), ollamaBaseUrl: value(aiSettingsForm, "ollamaBaseUrl"), ollamaModel: value(aiSettingsForm, "ollamaModel"), ollamaEmbeddingModel: value(aiSettingsForm, "ollamaEmbeddingModel") };
     const key = value(aiSettingsForm, "openaiApiKey");
     if (key) body.openaiApiKey = key;
+    const openRouterKey = value(aiSettingsForm, "openRouterApiKey");
+    if (openRouterKey) body.openRouterApiKey = openRouterKey;
     setStatus(aiSettingsForm, "Saving AI settings…");
     try {
       await jsonRequest("/api/settings/llm", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       aiSettingsForm.elements.namedItem("openaiApiKey").value = "";
+      aiSettingsForm.elements.namedItem("openRouterApiKey").value = "";
       setStatus(aiSettingsForm, "AI settings saved.");
       await loadAiSettings();
     } catch (error) {
@@ -415,6 +424,16 @@ if (aiSettingsForm) {
     try {
       await jsonRequest("/api/settings/llm/openai-key", { method: "DELETE" });
       setStatus(aiSettingsForm, "OpenAI key cleared.");
+      await loadAiSettings();
+    } catch (error) {
+      setStatus(aiSettingsForm, clientErrorMessage(error), true);
+    }
+  });
+  clearOpenRouterKey?.addEventListener("click", async () => {
+    if (!window.confirm("Clear the stored OpenRouter API key?")) return;
+    try {
+      await jsonRequest("/api/settings/llm/openrouter-key", { method: "DELETE" });
+      setStatus(aiSettingsForm, "OpenRouter key cleared.");
       await loadAiSettings();
     } catch (error) {
       setStatus(aiSettingsForm, clientErrorMessage(error), true);

@@ -88,6 +88,7 @@ export interface CloudflareBindings {
   MAX_PDF_BYTES?: string;
   MAX_REQUEST_BYTES?: string;
   OPENAI_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
   ANALYSIS_QUEUE?: AnalysisQueue;
   AI?: WorkersAiMarkdownBinding;
 }
@@ -1428,7 +1429,15 @@ app.post("/api/tags", async (c) => {
 
 app.get("/api/settings/llm", async (c) => {
   const settings = await analysisRepository(c.env).getSettings();
-  return c.json({ ...settings, openaiConfigured: Boolean(c.env.OPENAI_API_KEY), openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none", openaiKeyEditable: false });
+  return c.json({
+    ...settings,
+    openaiConfigured: Boolean(c.env.OPENAI_API_KEY),
+    openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none",
+    openaiKeyEditable: false,
+    openRouterConfigured: Boolean(c.env.OPENROUTER_API_KEY),
+    openRouterKeySource: c.env.OPENROUTER_API_KEY ? "worker-secret" : "none",
+    openRouterKeyEditable: false,
+  });
 });
 
 app.get("/api/settings/statistics", async (c) => {
@@ -1442,7 +1451,15 @@ app.put("/api/settings/llm", async (c) => {
   try {
     const update = analysisSettingsInput(await c.req.json<Record<string, unknown>>());
     const settings = await analysisRepository(c.env).updateSettings(update);
-    return c.json({ ...settings, openaiConfigured: Boolean(c.env.OPENAI_API_KEY), openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none", openaiKeyEditable: false });
+    return c.json({
+      ...settings,
+      openaiConfigured: Boolean(c.env.OPENAI_API_KEY),
+      openaiKeySource: c.env.OPENAI_API_KEY ? "worker-secret" : "none",
+      openaiKeyEditable: false,
+      openRouterConfigured: Boolean(c.env.OPENROUTER_API_KEY),
+      openRouterKeySource: c.env.OPENROUTER_API_KEY ? "worker-secret" : "none",
+      openRouterKeyEditable: false,
+    });
   } catch (error) {
     return jsonError(c, 400, errorMessage(error), "The hosted AI settings could not be saved.");
   }

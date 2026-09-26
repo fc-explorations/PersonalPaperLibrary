@@ -552,6 +552,7 @@ describe("Cloudflare Worker API", () => {
 
   it("persists hosted AI settings and custom questions without enabling generation", async () => {
     const env = bindings();
+    env.OPENROUTER_API_KEY = "openrouter-worker-secret";
     const create = await worker.request("/api/papers", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -561,7 +562,10 @@ describe("Cloudflare Worker API", () => {
 
     const settings = await worker.request("/api/settings/llm", {}, env);
     expect(settings.status).toBe(200);
-    expect((await settings.json() as { openaiConfigured: boolean }).openaiConfigured).toBe(false);
+    const initialSettings = await settings.json() as { openaiConfigured: boolean; openRouterConfigured: boolean };
+    expect(initialSettings.openaiConfigured).toBe(false);
+    expect(initialSettings.openRouterConfigured).toBe(true);
+    expect(JSON.stringify(initialSettings)).not.toContain("openrouter-worker-secret");
 
     const updated = await worker.request("/api/settings/llm", {
       method: "PUT",

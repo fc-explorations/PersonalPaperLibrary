@@ -53,9 +53,23 @@ The application includes optional AI features beyond basic cataloguing:
 
 Analysis results can become stale when source PDFs or metadata change and should be regenerated where needed. The product does not claim that an AI summary or answer replaces reading the paper.
 
+### Planned: OpenRouter automatic tag classification
+
+Automatic tag classification and OpenRouter model use are not implemented yet. Local OpenRouter key entry and secure storage are implemented: Settings saves to a separate macOS Keychain item or reads `OPENROUTER_API_KEY` as a read-only environment value. Hosted Settings reports whether the `OPENROUTER_API_KEY` Worker Secret is configured; set it with Wrangler because a Worker cannot write its own secrets. The key is not used until classification is implemented. Add OpenRouter as a separate, optional provider for classification; do not silently change the provider used for existing summaries, questions, or semantic search.
+
+- Provide OpenRouter model settings and a library-wide **Automatically tag papers** action on the Settings page. Reuse the implemented local credential field and hosted Worker Secret; do not create a second credential flow. The action shows the number of papers and existing user tags it will process, then lets the user start a run over the full library.
+- Use the existing user-created tags as the only classification choices. Never create new tags or classify the system `NO PDF` tag. For each paper, ask the configured OpenRouter model whether each candidate existing tag applies.
+- Request strict structured JSON output using a JSON Schema with no additional properties. The response shape is `{"assignments":[{"tagId":"…","assign":true}]}`; constrain `tagId` to the IDs supplied for that paper, require exactly one decision per candidate tag, and reject missing, duplicate, or unknown IDs. Validate the response against a runtime type/schema before use and fail closed on malformed output. OpenRouter supports JSON Schema structured outputs for compatible models; configure strict mode and do not fall back to trusting free-form text when a model lacks support ([OpenRouter Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs)).
+- Automatically add tags whose validated assignment is `true`. Do not remove existing tags. Re-running is idempotent: an already attached tag remains attached. Manual tag edits continue to work normally.
+- Use only the information needed to classify a paper, such as title, authors, abstract, categories, and an available saved summary. Do not send the PDF binary or full extracted PDF text by default. Make clear in Settings that the selected paper metadata and candidate tag names are sent to OpenRouter for classification.
+- Show progress and final counts for tagged papers, unchanged papers, and per-paper failures. Process bounded batches so one provider error or malformed response does not abandon the whole library run; allow the user to retry failed papers.
+- Treat provider/model unavailability, rate limits, timeouts, and invalid structured responses as recoverable errors. Leave that paper's tags unchanged on failure and never imply a failed classification succeeded.
+
+Protect the OpenRouter credential as a server-side secret. For local use, the implemented Settings flow stores it in a distinct macOS Keychain item and supports a read-only `OPENROUTER_API_KEY` environment fallback, consistent with the OpenAI key handling. Local Settings shows only whether a key is configured and allows a Keychain-backed key to be replaced or cleared. For the hosted Worker, use an `OPENROUTER_API_KEY` Worker Secret; hosted Settings reports its configured status and documents the Wrangler command, since a Worker cannot update its own secrets. Never return or log the key. Exclude it from snapshots, hosted backups, and client-side code.
+
 ### Appearance and settings
 
-Settings include appearance controls (accent and background colors, content width, rendering scale, and entries per page), AI provider configuration, library statistics, duplicate cleanup, and backup/restore controls. The hosted and local settings differ where the hosting environment has different credential, storage, or queue capabilities.
+Settings include appearance controls (accent and background colors, content width, rendering scale, and entries per page), AI provider configuration, library statistics, duplicate cleanup, and backup/restore controls. The planned OpenRouter configuration and library-wide automatic tag run belong on the Settings page. The hosted and local settings differ where the hosting environment has different credential, storage, or queue capabilities.
 
 ## Data, storage, and recovery
 
@@ -83,6 +97,7 @@ Local SQLite migrations are in `migrations/`; Cloudflare D1 migrations are in `m
 - Validate metadata and upload inputs, enforce configured PDF/request/backup limits, reject non-PDF payloads, and use parameterized database queries.
 - Escape metadata rendered as HTML. Treat imported paper metadata and BibTeX as untrusted input; never execute or render imported markup.
 - Do not place credentials in client-side code or committed configuration. Keep the hosted OpenAI credential in a Worker Secret.
+- Keep the planned OpenRouter credential in local Keychain or a server-side environment fallback, and in the hosted `OPENROUTER_API_KEY` Worker Secret. Never expose it to the browser, logs, exports, or backups.
 - Remote PDF retrieval is limited to known metadata-provider results and canonical paper resources. Do not turn the importer into an unrestricted URL fetcher or bypass publisher access controls.
 
 ## Architecture and source map
@@ -116,4 +131,4 @@ Cloudflare deployment commands and configuration are documented in `README.md`. 
 
 ## Product boundaries
 
-The application remains a personal research library. Do not add collaboration, multi-user sharing, nested folders, citation insertion into writing tools, publisher paywall circumvention, or unrestricted scraping without an explicit product decision. Do not present reading-state management, priorities, personal annotations, or recommendations as existing features. AI summaries, question answers, PDF text extraction, semantic library search, ISBN/Open Library support, and appearance controls are existing features and must not be removed merely because they were marked out of scope in the original build brief.
+The application remains a personal research library. Do not add collaboration, multi-user sharing, nested folders, citation insertion into writing tools, publisher paywall circumvention, or unrestricted scraping without an explicit product decision. Do not present reading-state management, priorities, personal annotations, or recommendations as existing features. AI summaries, question answers, PDF text extraction, semantic library search, ISBN/Open Library support, appearance controls, and secure OpenRouter key configuration are existing features and must not be removed merely because they were marked out of scope in the original build brief. OpenRouter-backed automatic tag classification is planned as specified above, but is not an existing feature until implemented.
