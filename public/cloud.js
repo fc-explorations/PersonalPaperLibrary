@@ -1130,18 +1130,16 @@ async function initSettings() {
   const form = document.querySelector("#settings-form");
   if (!form) return;
   const status = document.querySelector("#settings-status");
-  const openRouterKeyStatus = document.querySelector("#openrouter-key-status");
   try {
     const settings = await request("/api/settings/llm");
     form.elements.provider.value = settings.provider; form.elements.openaiModel.value = settings.openaiModel; form.elements.openaiEmbeddingModel.value = settings.openaiEmbeddingModel;
     setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured.");
-    setStatus(openRouterKeyStatus, settings.openRouterConfigured ? "OpenRouter Worker Secret is configured; it must be changed with Wrangler." : "OpenRouter Worker Secret is not configured.");
   } catch (error) { setStatus(status, error.message, true); }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
       const settings = await request("/api/settings/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: form.elements.provider.value, openaiModel: form.elements.openaiModel.value, openaiEmbeddingModel: form.elements.openaiEmbeddingModel.value }) });
-      setStatus(status, "Settings saved."); setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured."); setStatus(openRouterKeyStatus, settings.openRouterConfigured ? "OpenRouter Worker Secret is configured; it must be changed with Wrangler." : "OpenRouter Worker Secret is not configured.");
+      setStatus(status, "Settings saved."); setStatus(document.querySelector("#key-status"), settings.openaiConfigured ? "OpenAI Worker Secret is configured." : "OpenAI Worker Secret is not configured.");
     } catch (error) { setStatus(status, error.message, true); }
   });
   const backupCreate = document.querySelector("#backup-create");
@@ -1228,6 +1226,73 @@ async function initSettings() {
   });
   await loadBackups();
   window.setInterval(loadBackups, 60_000);
+}
+
+async function initClassificationSettings() {
+  const form = document.querySelector("[data-classification-settings]");
+  if (!form) return;
+  const status = form.querySelector("[data-classification-settings-status]");
+  const keyStatus = form.querySelector("[data-classification-key-status]");
+  const runButton = document.querySelector("[data-classification-run]");
+  const retryButton = document.querySelector("[data-classification-retry]");
+  const runStatus = document.querySelector("[data-classification-run-status]");
+  const results = document.querySelector("[data-classification-results]");
+  const progress = document.querySelector("[data-classification-progress]");
+  const progressFill = document.querySelector("[data-classification-progress-fill]");
+  let failedIds = [];
+  const loadSettings = async () => {
+    const settings = await request("/api/settings/classification");
+    form.elements.model.value = settings.model;
+    form.elements.threshold.value = String(settings.threshold);
+    if (keyStatus) keyStatus.textContent = settings.openRouterConfigured ? "OpenRouter Worker Secret is configured; change it with Wrangler." : "OpenRouter Worker Secret is not configured.";
+  };
+  try { await loadSettings(); } catch (error) { if (keyStatus) keyStatus.textContent = error.message; }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await request("/api/settings/classification", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: form.elements.model.value, threshold: Number(form.elements.threshold.value) }) });
+      setStatus(form, "Classification settings saved.");
+      await loadSettings();
+    } catch (error) { setStatus(status, error.message, true); }
+  });
+  const renderResult = (item) => {
+    const row = document.createElement("p");
+    row.className = `classification-result classification-${item.status}`;
+    row.textContent = item.status === "failed" ? `${item.title}: failed (${item.error || "retry available"})` : item.status === "tagged" ? `${item.title}: added ${item.tags.join(", ")}` : `${item.title}: no new tags`;
+    results?.append(row);
+  };
+  const run = async (retry = false) => {
+    const retryIds = retry ? failedIds.slice() : [];
+    runButton.disabled = true; if (retryButton) retryButton.disabled = true;
+    if (progress) progress.hidden = false;
+    results?.replaceChildren(); failedIds = [];
+    try {
+      let total = 0; let completed = 0;
+      if (retry) total = retryIds.length;
+      else {
+        const preview = await request("/api/classification/preview");
+        total = Number(preview.paperCount) || 0;
+        const tagCount = Array.isArray(preview.tags) ? preview.tags.length : 0;
+        if (!total || !tagCount) { runStatus.textContent = !total ? "There are no papers to classify." : "Create at least one user tag first."; return; }
+        if (!confirm(`Classify ${total} papers against ${tagCount} existing user tags? Selected paper metadata and candidate tag names will be sent to OpenRouter.`)) return;
+      }
+      if (retry) runStatus.textContent = `Retrying ${total} failed paper${total === 1 ? "" : "s"}…`;
+      const chunks = retry ? Array.from({ length: Math.ceil(total / 5) }, (_, index) => retryIds.slice(index * 5, index * 5 + 5)) : Array.from({ length: Math.ceil(total / 5) }, (_, index) => ({ offset: index * 5, limit: 5 }));
+      for (const chunk of chunks) {
+        const response = await request("/api/classification/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(retry ? { paperIds: chunk } : chunk) });
+        for (const item of response.results || []) { completed += 1; renderResult(item); if (item.status === "failed") failedIds.push(item.paperId); }
+        if (progress) { const percent = total ? Math.round(completed * 100 / total) : 100; progress.setAttribute("aria-valuenow", String(percent)); if (progressFill) progressFill.style.width = `${percent}%`; }
+        runStatus.textContent = `Processed ${completed} of ${total} papers. ${failedIds.length} failed.`;
+      }
+      const tagged = results?.querySelectorAll(".classification-tagged").length || 0;
+      const unchanged = results?.querySelectorAll(".classification-unchanged").length || 0;
+      runStatus.textContent = `Finished: ${tagged} papers tagged, ${unchanged} unchanged, ${failedIds.length} failed.`;
+      if (retryButton) retryButton.hidden = failedIds.length === 0;
+    } catch (error) { runStatus.textContent = error.message; }
+    finally { runButton.disabled = false; if (retryButton) retryButton.disabled = false; }
+  };
+  runButton?.addEventListener("click", () => run(false));
+  retryButton?.addEventListener("click", () => run(true));
 }
 
 async function loadStatistics() {
@@ -1687,6 +1752,7 @@ async function initImport() {
 
 initLibrary();
 initSettings();
+initClassificationSettings();
 loadStatistics();
 initAsk();
 initPaper();

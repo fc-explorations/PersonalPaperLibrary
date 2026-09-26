@@ -45,6 +45,7 @@ import type { PaperDraftInput, PaperMetadata } from "./types.js";
 import { APP_VERSION } from "./version.js";
 import { parseAttentionFilter } from "./services/statistics.js";
 import { deduplicatePapers } from "./services/duplicate-cleanup.js";
+import { classifyPaperTags, type ClassificationSettings } from "./services/tag-classification.js";
 
 export interface AppDependencies {
   db?: Database;
@@ -686,6 +687,71 @@ export function createApp(dependencies: AppDependencies = {}) {
       openRouterKeySource: openRouterKey ? openRouterKeychain.source : "none",
       openRouterKeyEditable: openRouterKeychain.writable,
     });
+  });
+
+  app.get("/api/settings/classification", async (c) => {
+    const settings = analysis.getClassificationSettings();
+    const openRouterKey = await openRouterKeychain.get();
+    return c.json({ ...settings, openRouterConfigured: Boolean(openRouterKey), openRouterKeySource: openRouterKey ? openRouterKeychain.source : "none", openRouterKeyEditable: openRouterKeychain.writable });
+  });
+
+  app.put("/api/settings/classification", async (c) => {
+    try {
+      const body = await c.req.json<Record<string, unknown>>();
+      const update: Partial<ClassificationSettings> = {};
+      if (body.model !== undefined) {
+        if (typeof body.model !== "string" || !/^[\w~./:-]{1,120}$/.test(body.model.trim())) return jsonError(c, 400, "CLASSIFICATION_MODEL_INVALID", "Enter a supported OpenRouter model identifier.");
+        update.model = body.model.trim();
+      }
+      if (body.threshold !== undefined) {
+        const threshold = Number(body.threshold);
+        if (!Number.isFinite(threshold) || threshold < 0.5 || threshold > 1) return jsonError(c, 400, "CLASSIFICATION_THRESHOLD_INVALID", "Choose a threshold from 0.50 to 1.00.");
+        update.threshold = threshold;
+      }
+      if (body.openRouterApiKey !== undefined) {
+        if (typeof body.openRouterApiKey !== "string" || !body.openRouterApiKey.trim()) return jsonError(c, 400, "OPENROUTER_KEY_REQUIRED", "Enter an OpenRouter API key.");
+        await openRouterKeychain.set(body.openRouterApiKey);
+      }
+      const settings = analysis.updateClassificationSettings(update);
+      const key = await openRouterKeychain.get();
+      return c.json({ ...settings, openRouterConfigured: Boolean(key), openRouterKeySource: key ? openRouterKeychain.source : "none", openRouterKeyEditable: openRouterKeychain.writable });
+    } catch (error) {
+      return jsonError(c, 400, errorMessage(error), "Classification settings could not be saved.");
+    }
+  });
+
+  app.get("/api/classification/preview", (c) => c.json({ paperCount: repo.count(), tags: repo.tags.listWithIds().map(({ id, name }) => ({ id, name })) }));
+
+  app.post("/api/classification/run", async (c) => {
+    let body: { offset?: number; limit?: number; paperIds?: string[] };
+    try { body = await c.req.json(); } catch { return jsonError(c, 400, "CLASSIFICATION_REQUEST_INVALID", "The classification request is invalid."); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(c, 400, "CLASSIFICATION_REQUEST_INVALID", "The classification request is invalid.");
+    const ids = Array.isArray(body.paperIds) ? [...new Set(body.paperIds.filter((id): id is string => typeof id === "string" && id.length <= 100))].slice(0, 20) : undefined;
+    const offset = Number.isFinite(body.offset) ? Math.max(0, Math.floor(body.offset || 0)) : 0;
+    const limit = Math.min(5, Math.max(1, Math.floor(Number(body.limit) || 5)));
+    const papers = ids ? ids.map((id) => repo.findById(id)).filter((paper): paper is NonNullable<typeof paper> => Boolean(paper)) : repo.list({ sort: "oldest", limit, offset });
+    const allTags = repo.tags.listWithIds();
+    if (!allTags.length) return c.json({ results: papers.map((paper) => ({ paperId: paper.id, title: paper.title, status: "unchanged", tags: [] })) });
+    const apiKey = await openRouterKeychain.get();
+    if (!apiKey) return jsonError(c, 409, "OPENROUTER_KEY_MISSING", "Configure an OpenRouter key before starting classification.");
+    const settings = analysis.getClassificationSettings();
+    const results = await mapWithConcurrency(papers, 2, async (paper) => {
+      const existing = new Set(paper.tags.map((name) => name.toLocaleLowerCase()));
+      const candidates = allTags.filter((tag) => !existing.has(tag.name.toLocaleLowerCase()));
+      if (!candidates.length) return { paperId: paper.id, title: paper.title, status: "unchanged", tags: [] as string[] };
+      try {
+        const summary = analysis.getSummary(paper.id);
+        const decisions = await classifyPaperTags({ fetcher, apiKey, settings, paper, tags: candidates, savedSummary: summary?.status === "complete" ? summary.quickSummary || summary.content : undefined });
+        const addIds = decisions.map((decision) => decision.tagId);
+        repo.tags.attachExistingIds(paper.id, addIds);
+        return { paperId: paper.id, title: paper.title, status: addIds.length ? "tagged" : "unchanged", tags: decisions.map((decision) => decision.name) };
+      } catch (error) {
+        const message = errorMessage(error);
+        const safeMessage = /RATE_LIMITED|TIMEOUT|HTTP_\d{3}|RESPONSE_INVALID|METADATA_TOO_LARGE/.test(message) ? message : "CLASSIFICATION_FAILED";
+        return { paperId: paper.id, title: paper.title, status: "failed", tags: [] as string[], error: safeMessage };
+      }
+    });
+    return c.json({ results });
   });
 
   app.get("/api/settings/llm/ollama/models", async (c) => {

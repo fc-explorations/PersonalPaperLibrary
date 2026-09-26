@@ -344,8 +344,6 @@ const aiSettingsForm = document.querySelector("[data-ai-settings]");
 if (aiSettingsForm) {
   const keyStatus = aiSettingsForm.querySelector("[data-openai-key-status]");
   const clearKey = aiSettingsForm.querySelector("[data-clear-openai-key]");
-  const openRouterKeyStatus = aiSettingsForm.querySelector("[data-openrouter-key-status]");
-  const clearOpenRouterKey = aiSettingsForm.querySelector("[data-clear-openrouter-key]");
   const ollamaModel = aiSettingsForm.elements.namedItem("ollamaModel");
   const ollamaBaseUrl = aiSettingsForm.elements.namedItem("ollamaBaseUrl");
   const ollamaModelStatus = aiSettingsForm.querySelector("[data-ollama-model-status]");
@@ -387,13 +385,9 @@ if (aiSettingsForm) {
       preserveOllamaModel(settings.ollamaModel);
       await loadOllamaModels(settings.ollamaModel);
       if (keyStatus) keyStatus.textContent = settings.openaiConfigured ? `OpenAI key configured (${settings.openaiKeySource}).${settings.openaiKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenAI key not configured.";
-      if (openRouterKeyStatus) openRouterKeyStatus.textContent = settings.openRouterConfigured ? `OpenRouter key configured (${settings.openRouterKeySource}).${settings.openRouterKeyEditable ? " Replace or clear it below." : " It is managed externally and cannot be edited here."}` : "OpenRouter key not configured.";
       if (clearKey) clearKey.disabled = !settings.openaiConfigured || !settings.openaiKeyEditable;
-      if (clearOpenRouterKey) clearOpenRouterKey.disabled = !settings.openRouterConfigured || !settings.openRouterKeyEditable;
       const keyInput = aiSettingsForm.elements.namedItem("openaiApiKey");
       if (keyInput) keyInput.disabled = !settings.openaiKeyEditable;
-      const openRouterKeyInput = aiSettingsForm.elements.namedItem("openRouterApiKey");
-      if (openRouterKeyInput) openRouterKeyInput.disabled = !settings.openRouterKeyEditable;
     } catch (error) {
       if (keyStatus) keyStatus.textContent = clientErrorMessage(error);
     }
@@ -406,13 +400,10 @@ if (aiSettingsForm) {
     const body = { provider: value(aiSettingsForm, "provider"), openaiModel: value(aiSettingsForm, "openaiModel"), openaiEmbeddingModel: value(aiSettingsForm, "openaiEmbeddingModel"), ollamaBaseUrl: value(aiSettingsForm, "ollamaBaseUrl"), ollamaModel: value(aiSettingsForm, "ollamaModel"), ollamaEmbeddingModel: value(aiSettingsForm, "ollamaEmbeddingModel") };
     const key = value(aiSettingsForm, "openaiApiKey");
     if (key) body.openaiApiKey = key;
-    const openRouterKey = value(aiSettingsForm, "openRouterApiKey");
-    if (openRouterKey) body.openRouterApiKey = openRouterKey;
     setStatus(aiSettingsForm, "Saving AI settings…");
     try {
       await jsonRequest("/api/settings/llm", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       aiSettingsForm.elements.namedItem("openaiApiKey").value = "";
-      aiSettingsForm.elements.namedItem("openRouterApiKey").value = "";
       setStatus(aiSettingsForm, "AI settings saved.");
       await loadAiSettings();
     } catch (error) {
@@ -429,16 +420,94 @@ if (aiSettingsForm) {
       setStatus(aiSettingsForm, clientErrorMessage(error), true);
     }
   });
-  clearOpenRouterKey?.addEventListener("click", async () => {
-    if (!window.confirm("Clear the stored OpenRouter API key?")) return;
+}
+
+const classificationSettingsForm = document.querySelector("[data-classification-settings]");
+if (classificationSettingsForm) {
+  const status = classificationSettingsForm.querySelector("[data-classification-settings-status]");
+  const keyStatus = classificationSettingsForm.querySelector("[data-classification-key-status]");
+  const keyInput = classificationSettingsForm.elements.namedItem("openRouterApiKey");
+  const clearKey = document.querySelector("[data-clear-classification-key]");
+  const runButton = document.querySelector("[data-classification-run]");
+  const retryButton = document.querySelector("[data-classification-retry]");
+  const runStatus = document.querySelector("[data-classification-run-status]");
+  const results = document.querySelector("[data-classification-results]");
+  const progress = document.querySelector("[data-classification-progress]");
+  const progressFill = document.querySelector("[data-classification-progress-fill]");
+  let failedIds = [];
+  const loadClassificationSettings = async () => {
     try {
-      await jsonRequest("/api/settings/llm/openrouter-key", { method: "DELETE" });
-      setStatus(aiSettingsForm, "OpenRouter key cleared.");
-      await loadAiSettings();
-    } catch (error) {
-      setStatus(aiSettingsForm, clientErrorMessage(error), true);
-    }
+      const settings = await jsonRequest("/api/settings/classification");
+      classificationSettingsForm.elements.namedItem("model").value = settings.model;
+      classificationSettingsForm.elements.namedItem("threshold").value = String(settings.threshold);
+      if (keyStatus) keyStatus.textContent = settings.openRouterConfigured ? `OpenRouter key configured (${settings.openRouterKeySource}).${settings.openRouterKeyEditable ? " Replace or clear it below." : " It is managed externally."}` : "OpenRouter key not configured.";
+      if (keyInput) keyInput.disabled = !settings.openRouterKeyEditable;
+      if (clearKey) clearKey.disabled = !settings.openRouterConfigured || !settings.openRouterKeyEditable;
+    } catch (error) { if (keyStatus) keyStatus.textContent = clientErrorMessage(error); }
+  };
+  loadClassificationSettings();
+  classificationSettingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = { model: value(classificationSettingsForm, "model"), threshold: Number(value(classificationSettingsForm, "threshold")) };
+    const key = keyInput ? keyInput.value.trim() : "";
+    if (key) body.openRouterApiKey = key;
+    setStatus(classificationSettingsForm, "Saving classification settings…");
+    try {
+      const settings = await jsonRequest("/api/settings/classification", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (keyInput) keyInput.value = "";
+      if (keyStatus) keyStatus.textContent = settings.openRouterConfigured ? `OpenRouter key configured (${settings.openRouterKeySource}). Replace or clear it below.` : "OpenRouter key not configured.";
+      setStatus(classificationSettingsForm, "Classification settings saved.");
+      await loadClassificationSettings();
+    } catch (error) { setStatus(classificationSettingsForm, clientErrorMessage(error), true); }
   });
+  clearKey?.addEventListener("click", async () => {
+    if (!window.confirm("Clear the stored OpenRouter API key?")) return;
+    try { await jsonRequest("/api/settings/llm/openrouter-key", { method: "DELETE" }); await loadClassificationSettings(); }
+    catch (error) { if (keyStatus) keyStatus.textContent = clientErrorMessage(error); }
+  });
+  const renderResult = (item) => {
+    const row = document.createElement("p");
+    row.className = `classification-result classification-${item.status}`;
+    row.textContent = item.status === "failed" ? `${item.title}: failed (${item.error || "retry available"})` : item.status === "tagged" ? `${item.title}: added ${item.tags.join(", ")}` : `${item.title}: no new tags`;
+    results?.append(row);
+  };
+  const runClassification = async (retry = false) => {
+    if (!runButton || !runStatus) return;
+    const retryIds = retry ? failedIds.slice() : [];
+    runButton.disabled = true; if (retryButton) retryButton.disabled = true;
+    if (progress) progress.hidden = false;
+    if (results) results.replaceChildren();
+    failedIds = [];
+    try {
+      let total = 0; let completed = 0;
+      if (retry) {
+        total = retryIds.length;
+      } else {
+        const preview = await jsonRequest("/api/classification/preview");
+        total = Number(preview.paperCount) || 0;
+        const userTagCount = Array.isArray(preview.tags) ? preview.tags.length : 0;
+        if (!total || !userTagCount) { runStatus.textContent = !total ? "There are no papers to classify." : "Create at least one user tag first."; return; }
+        if (!window.confirm(`Classify ${total} papers against ${userTagCount} existing user tags? Selected paper metadata and candidate tag names will be sent to OpenRouter.`)) return;
+        runStatus.textContent = `Classifying 0 of ${total} papers…`;
+      }
+      if (retry) { total = retryIds.length; runStatus.textContent = `Retrying ${total} failed paper${total === 1 ? "" : "s"}…`; }
+      const requests = retry ? Array.from({ length: Math.ceil(total / 5) }, (_, index) => retryIds.slice(index * 5, index * 5 + 5)) : Array.from({ length: Math.ceil(total / 5) }, (_, index) => ({ offset: index * 5, limit: 5 }));
+      for (const requestBody of requests) {
+        const body = retry ? { paperIds: requestBody } : requestBody;
+        const response = await jsonRequest("/api/classification/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        for (const item of response.results || []) { completed += 1; renderResult(item); if (item.status === "failed") failedIds.push(item.paperId); }
+        if (progress) { const percent = total ? Math.round(completed * 100 / total) : 100; progress.setAttribute("aria-valuenow", String(percent)); if (progressFill) progressFill.style.width = `${percent}%`; }
+        runStatus.textContent = `Processed ${completed} of ${total} papers. ${failedIds.length} failed.`;
+      }
+      const taggedCount = results?.querySelectorAll(".classification-tagged").length || 0;
+      const unchangedCount = results?.querySelectorAll(".classification-unchanged").length || 0;
+      runStatus.textContent = `Finished: ${taggedCount} papers tagged, ${unchangedCount} unchanged, ${failedIds.length} failed.`;
+      if (retryButton) retryButton.hidden = failedIds.length === 0;
+    } catch (error) { runStatus.textContent = clientErrorMessage(error); }
+    finally { runButton.disabled = false; if (retryButton) retryButton.disabled = false; }
+  };
+  runButton?.addEventListener("click", () => runClassification(false));
+  retryButton?.addEventListener("click", () => runClassification(true));
 }
 
 function renderPreview(data, stagingToken = "") {

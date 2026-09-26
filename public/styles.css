@@ -414,6 +414,13 @@ form[data-import-form] .inline-form > .button, #import-form .inline-form > .butt
 .result-success { color: var(--accent); }
 .result-muted { color: #726e65; }
 .bulk-results { max-height: 240px; margin-top: 14px; overflow-y: auto; padding: 4px 10px 4px 0; overflow-wrap: anywhere; }
+.classification-run { display: grid; gap: 10px; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.classification-run h3 { margin: 0; }
+.classification-run > p { margin: 0; }
+.classification-results { max-height: 320px; overflow-y: auto; overflow-wrap: anywhere; }
+.classification-result { margin: 7px 0; font-size: .9rem; }
+.classification-tagged { color: var(--accent); }
+.classification-failed { color: #9d493a; }
 .operation-progress, .bulk-progress { height: 5px; margin-top: 4px; overflow: hidden; border-radius: 999px; background: var(--accent-soft); }
 .operation-progress > span, .bulk-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .operation-progress.is-indeterminate > span, .bulk-progress.is-indeterminate > span { width: 32%; animation: progress-slide 1.2s ease-in-out infinite; }

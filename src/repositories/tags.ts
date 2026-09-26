@@ -16,6 +16,15 @@ export class TagRepository {
     return (this.db.prepare("SELECT name FROM tags ORDER BY name COLLATE NOCASE").all() as { name: string }[]).map((row) => row.name);
   }
 
+  listWithIds(): Array<{ id: string; name: string }> {
+    return (this.db.prepare("SELECT id, name FROM tags WHERE name != ? COLLATE NOCASE AND EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id) ORDER BY name COLLATE NOCASE").all(NO_PDF_TAG) as Array<{ id: string; name: string }>);
+  }
+
+  attachExistingIds(paperId: string, tagIds: string[]): void {
+    const statement = this.db.prepare("INSERT OR IGNORE INTO paper_tags (paper_id, tag_id) SELECT ?, id FROM tags WHERE id = ? AND name != ? COLLATE NOCASE");
+    this.db.transaction(() => tagIds.forEach((id) => statement.run(paperId, id, NO_PDF_TAG)))();
+  }
+
   create(name: string): string {
     const clean = normalizeTagName(name);
     if (!clean) throw new Error("TAG_NAME_REQUIRED");

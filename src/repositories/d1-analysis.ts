@@ -1,6 +1,7 @@
 import type { QuestionDefinition } from "../services/questions.js";
 import type { AiSettings, QuestionAnswer, StoredQuestion, SummaryRecord } from "./analysis.js";
 import { all, batch, first, type D1Database, type D1Row } from "../cloudflare/d1.js";
+import { DEFAULT_CLASSIFICATION_SETTINGS, type ClassificationSettings } from "../services/tag-classification.js";
 
 export type D1QuestionCatalog = () => QuestionDefinition[];
 
@@ -41,6 +42,26 @@ export class D1AnalysisRepository {
       { query: "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", values: ["ai.ollamaBaseUrl", next.ollamaBaseUrl, now] },
       { query: "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", values: ["ai.ollamaModel", next.ollamaModel, now] },
       { query: "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", values: ["ai.ollamaEmbeddingModel", next.ollamaEmbeddingModel, now] },
+    ]);
+    return next;
+  }
+
+  async getClassificationSettings(): Promise<ClassificationSettings> {
+    const rows = await all<{ name: string; value: string }>(this.db, "SELECT name, value FROM app_settings WHERE name IN ('classification.model', 'classification.threshold')");
+    const values = Object.fromEntries(rows.map((row) => [row.name, row.value]));
+    const threshold = Number(values["classification.threshold"]);
+    return {
+      model: values["classification.model"]?.trim() || DEFAULT_CLASSIFICATION_SETTINGS.model,
+      threshold: Number.isFinite(threshold) && threshold >= 0.5 && threshold <= 1 ? threshold : DEFAULT_CLASSIFICATION_SETTINGS.threshold,
+    };
+  }
+
+  async updateClassificationSettings(input: Partial<ClassificationSettings>): Promise<ClassificationSettings> {
+    const next = { ...(await this.getClassificationSettings()), ...input };
+    const now = new Date().toISOString();
+    await batch(this.db, [
+      { query: "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", values: ["classification.model", next.model, now] },
+      { query: "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", values: ["classification.threshold", String(next.threshold), now] },
     ]);
     return next;
   }

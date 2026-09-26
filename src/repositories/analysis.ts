@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import * as crypto from "node:crypto";
 import { questionDefinitions, type QuestionDefinition } from "../services/questions.js";
+import { DEFAULT_CLASSIFICATION_SETTINGS, type ClassificationSettings } from "../services/tag-classification.js";
 
 export type AiSettings = {
   provider: "openai" | "ollama";
@@ -67,6 +68,27 @@ export class AnalysisRepository {
       upsert.run("ai.ollamaBaseUrl", next.ollamaBaseUrl, now);
       upsert.run("ai.ollamaModel", next.ollamaModel, now);
       upsert.run("ai.ollamaEmbeddingModel", next.ollamaEmbeddingModel, now);
+    })();
+    return next;
+  }
+
+  getClassificationSettings(): ClassificationSettings {
+    const rows = this.db.prepare("SELECT name, value FROM app_settings WHERE name IN ('classification.model', 'classification.threshold')").all() as Array<{ name: string; value: string }>;
+    const values = Object.fromEntries(rows.map((row) => [row.name, row.value]));
+    const threshold = Number(values["classification.threshold"]);
+    return {
+      model: values["classification.model"]?.trim() || DEFAULT_CLASSIFICATION_SETTINGS.model,
+      threshold: Number.isFinite(threshold) && threshold >= 0.5 && threshold <= 1 ? threshold : DEFAULT_CLASSIFICATION_SETTINGS.threshold,
+    };
+  }
+
+  updateClassificationSettings(input: Partial<ClassificationSettings>): ClassificationSettings {
+    const next = { ...this.getClassificationSettings(), ...input };
+    const now = new Date().toISOString();
+    const upsert = this.db.prepare("INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
+    this.db.transaction(() => {
+      upsert.run("classification.model", next.model, now);
+      upsert.run("classification.threshold", String(next.threshold), now);
     })();
     return next;
   }

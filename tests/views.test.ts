@@ -58,11 +58,12 @@ describe("theme settings rendering", () => {
   it("groups visual and LLM preferences into separate collapsible sections", () => {
     const html = renderSettingsPage();
 
-    expect(html.match(/<section class="panel settings-card-panel">/g)).toHaveLength(5);
+    expect(html.match(/<section class="panel settings-card-panel">/g)).toHaveLength(6);
     expect(html).toContain('<details class="settings-group settings-collapsible visual-preferences-group">');
     expect(html).toContain("<summary>Visual preferences</summary>");
     expect(html).toContain('<details class="settings-group settings-collapsible llm-group">');
     expect(html).toContain("<summary>AI</summary>");
+    expect(html).toContain("<summary>Classification AI</summary>");
     expect(html).toContain('<details class="settings-group settings-collapsible backup-group">');
     expect(html).toContain("<summary>Backup</summary>");
     expect(html.indexOf("Visual preferences")).toBeLessThan(html.indexOf("<summary>AI</summary>"));

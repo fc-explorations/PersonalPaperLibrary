@@ -14,6 +14,19 @@ export class D1TagRepository {
     return rows.map((row) => row.name);
   }
 
+  async listWithIds(): Promise<Array<{ id: string; name: string }>> {
+    await this.ensureSystemTags();
+    return all<{ id: string; name: string }>(this.db, "SELECT id, name FROM tags WHERE name != 'no pdf' COLLATE NOCASE AND EXISTS (SELECT 1 FROM paper_tags WHERE tag_id = tags.id) ORDER BY name COLLATE NOCASE");
+  }
+
+  async attachExistingIds(paperId: string, tagIds: string[]): Promise<void> {
+    if (!tagIds.length) return;
+    await batch(this.db, tagIds.map((id) => ({
+      query: "INSERT OR IGNORE INTO paper_tags (paper_id, tag_id) SELECT ?, id FROM tags WHERE id = ? AND name != 'no pdf' COLLATE NOCASE",
+      values: [paperId, id],
+    })));
+  }
+
   async create(name: string): Promise<string> {
     await this.ensureSystemTags();
     const clean = normalizeD1TagName(name);
