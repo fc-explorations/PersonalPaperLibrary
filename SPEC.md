@@ -1,770 +1,119 @@
 # PersonalPaperLibrary
 
-## Build brief
+## Purpose
 
-Build a small, private, single-user web application for collecting academic papers during research.
+PersonalPaperLibrary is a private, single-user research library for collecting academic papers, keeping their PDFs available, and finding them again by metadata, tags, or meaning. It is a focused paper library with optional AI-assisted analysis, not a general-purpose reference manager or collaboration product.
 
-The main use case is maintaining a personal reading queue:
+This document describes the implementation present in the repository. It is an as-built product and architecture reference, not a request to recreate the application. When changing behavior, keep the local and hosted implementations aligned where practical and document intentional differences.
 
-```text
-Paste an arXiv URL or ID → fetch metadata and PDF → add grouping tags → find it later
-```
+## Repository status
 
-The secondary use case is uploading a PDF that is already on the user's computer and entering or editing its basic metadata.
+- Application version: `2.20.0` (the package, lockfile, and runtime version are maintained together).
+- Local runtime: Node.js, Hono, SQLite via `better-sqlite3`, and filesystem storage under `data/` (or `DATA_DIR`). The server binds to `127.0.0.1` by default.
+- Hosted runtime: Cloudflare Workers and static assets, D1, private R2, Workers AI PDF conversion, and a Cloudflare Queue for hosted analysis jobs.
+- Authentication: local use is unauthenticated on loopback by default; `APP_PASSWORD` enables the local login gate and is required when binding beyond loopback. The Worker validates Cloudflare Access JWTs when `ACCESS_REQUIRED=true` (the checked-in Wrangler configuration sets it to `true`).
+- Cloudflare resources and preview bindings are described in `wrangler.jsonc`. The repository documents a provisioned D1 database and applied baseline migration. This specification does not assert that the latest code is deployed or that the public endpoint has passed a smoke test; confirm those separately before claiming a release is live.
+- `README.md` is the operator guide for installation, configuration, and routine commands. This file records product behavior and architecture.
 
-This is a focused research collection tool, not a general-purpose reference manager.
+## Product capabilities
 
-## Current implementation status
+### Paper intake and metadata
 
-The repository currently provides a local single-user implementation using Node.js, Hono, SQLite (`better-sqlite3`), and filesystem storage under `data/`. The Cloudflare Workers, D1, R2, and Access architecture described below is the planned deployment target, not the current local runtime. Current behavior takes precedence when this brief differs from the implemented routes and UI.
+The add and edit flows accept arXiv identifiers and URLs, DOI values and URLs, ISBNs, titles, and BibTeX. Metadata lookup uses:
 
-The coding LLM should implement, test, and deploy the application when the required credentials and tools are available. It should keep the codebase small and should not add features that are not required below.
+1. Exact arXiv identifiers through arXiv.
+2. ISBNs through Open Library.
+3. Exact DOI and corrected-title searches through Crossref.
+4. OpenAlex title lookup.
+5. Semantic Scholar title lookup.
 
----
+Where a matched record provides a usable arXiv, open-access, or publisher PDF URL, the application attempts to download and stage the PDF. PDF retrieval is best-effort: a failed download leaves the metadata editable and offers manual PDF upload or an available web resource. Preserve a canonical arXiv abstract link for arXiv papers. Users can also import and validate their own BibTeX record.
 
-## Product decisions
+The metadata record supports arXiv ID and base ID, title, abstract, ordered authors, publication and update dates, year, categories and primary category, journal reference, accepted venue, DOI, ISBN, source and arXiv URLs, BibTeX, metadata source, tags, timestamps, and PDF storage/hash information. Only a title is required for a manually created paper. Metadata sources are `arxiv`, `manual`, and `mixed`.
 
-### Required in version 1
+Users can upload one PDF or import a folder of PDFs. The server filters out non-PDF files, validates PDF signatures and configured size limits, detects exact duplicates by content hash, and reports imported, skipped, and failed files individually. Folder names can be added as tags. Bulk import can extract lightweight first-page metadata and resolve detected arXiv identifiers; it does not silently fail the entire folder because one file is invalid.
 
-- Add a paper by pasting an arXiv ID or arXiv URL.
-- Fetch metadata from arXiv automatically.
-- Resolve paper titles and DOI inputs through Crossref, OpenAlex, and Semantic Scholar fallbacks.
-- Fetch and store the arXiv PDF when available.
-- Preserve a link to the canonical arXiv abstract page.
-- Upload a PDF manually from the user's computer.
-- Import a folder containing multiple PDFs.
-- Edit basic metadata for any saved paper.
-- Refresh metadata from arXiv, Crossref, OpenAlex, or Semantic Scholar using an arXiv ID, DOI, or title.
-- Group papers with user-defined tags.
-- Search and browse the collection.
-- Open and download stored PDFs.
-- Delete papers and their stored PDFs.
-- Copy a generated BibTeX entry from the paper detail page.
-- Keep access private for one user.
-- Export metadata and document backup and recovery.
+### Library, organization, and citation output
 
-### Explicitly out of scope
+The library supports keyword search over paper metadata, abstracts, tags, and saved analysis text; pagination; sorting by date added, publication year, or title; tag filtering with selectable AND/OR behavior; and attention/statistics filters such as papers without PDFs or abstracts. The interface identifies PDF availability. Extracted full-PDF text is used for analysis, but is not itself indexed for keyword search. The semantic index uses paper metadata and completed summaries.
 
-Do not implement:
+Users can add, remove, and bulk-apply tags; bulk-delete or download the current selection; open and edit paper records; and remove duplicate entries through an explicit cleanup action. Duplicate checks include normalized arXiv base ID, normalized source URL, and PDF hash. Similar-title records may be surfaced as duplicate candidates for review/cleanup; title similarity does not silently merge records. The system `NO PDF` tag reflects PDF availability and is not a user reading state.
 
-- Reading states such as `to-read`, `reading`, or `read`.
-- Priority, stars, favourites, or ranking.
-- Personal notes, highlights, annotations, or summaries.
-- Citation-style formatting, RIS management, or citation insertion.
-- Folders or nested collections.
-- Collaboration or multiple users.
-- Recommendations, AI summaries, or automatic classification.
-- Full-text PDF extraction, OCR, or full-text search.
-- Browser extensions or mobile applications.
-- Broad publisher-specific scraping.
-- DOI/article webpage import as a primary workflow.
+Paper details include available citation metadata, tags, dates, PDF open/download actions, and copyable BibTeX. The library can export metadata JSON, BibTeX, or a filtered ZIP of PDFs. The browser's built-in PDF viewer is used.
 
-Tags are only for grouping papers by topic, project, method, author, or any other label the user chooses. They are not reading-state labels managed by the application.
+### PDF analysis and library search
 
----
+The application includes optional AI features beyond basic cataloguing:
 
-## Primary workflows
+- Extract PDF text and attempt abstract extraction. Local PDF text extraction uses the configured local tools/libraries; hosted extraction uses Workers AI's `toMarkdown` binding.
+- Generate and store quick and full paper summaries, answer built-in or user-added questions about a paper, and show analysis status/progress. Hosted work is queued; the local runtime processes its own requests.
+- Configure an AI provider and models. Local settings support OpenAI and Ollama; the hosted Worker uses its configured OpenAI secret and rejects hosted Ollama until a secured reachable service is provided. Credentials are not included in backups; local OpenAI credentials are kept in macOS Keychain when available, with `OPENAI_API_KEY` as a read-only fallback.
+- Index papers and perform semantic library search with tag filters, optional query rephrasing, and optional result grouping. Index coverage and progress are visible. Semantic search requires a configured embedding provider and may be unavailable until indexing completes.
+- Suggest grouping tags. Suggestions remain user-controlled; they do not introduce reading-state tags.
 
-### Add from arXiv
+Analysis results can become stale when source PDFs or metadata change and should be regenerated where needed. The product does not claim that an AI summary or answer replaces reading the paper.
 
-The Add Paper page accepts either an arXiv ID or an arXiv URL:
+### Appearance and settings
 
-```text
-2401.12345
-arXiv:2401.12345
-https://arxiv.org/abs/2401.12345
-https://arxiv.org/pdf/2401.12345
-```
+Settings include appearance controls (accent and background colors, content width, rendering scale, and entries per page), AI provider configuration, library statistics, duplicate cleanup, and backup/restore controls. The hosted and local settings differ where the hosting environment has different credential, storage, or queue capabilities.
 
-The application should:
+## Data, storage, and recovery
 
-1. Normalise the input to an arXiv identifier.
-2. Reject inputs that are not recognisable arXiv identifiers or arXiv URLs.
-3. Fetch metadata from arXiv.
-4. Display an editable preview.
-5. Download the arXiv PDF when available and stage it in local storage.
-6. Allow the user to add tags.
-7. Save the paper.
+### Local
 
-If metadata or PDF retrieval fails, show the specific failure and allow the user to continue by editing the metadata or uploading the PDF manually. An import failure must not silently lose a paper.
+Local data is stored in `data/` or `DATA_DIR`:
 
-The canonical external link should be:
+- `library.sqlite`: paper metadata, authors, tags, AI settings/results, questions, and search-index records.
+- `pdfs/`: stored PDFs.
+- `staging/`: uploads awaiting confirmation.
+- `trash/`: files retained during recoverable replacement/deletion operations.
 
-```text
-https://arxiv.org/abs/{arxiv_id}
-```
+The Settings page downloads a ZIP64 snapshot containing the SQLite database and PDFs. Restore stages a replacement snapshot; restart the local app for it to take effect. Treat snapshots as private because they contain the library and documents.
 
-If the user supplies an explicit version, preserve it in the stored identifier and link. For duplicate detection, treat different versions of the same base arXiv identifier as the same paper unless the user explicitly chooses to keep both.
+### Cloudflare
 
-### Refresh citation metadata
+The Worker uses D1 for records and analysis/search metadata and a private R2 bucket for PDFs and backup copies. PDF routes stream objects through the authenticated Worker; the bucket must not be public. Cloud backups use a versioned JSON manifest and protected R2 PDF copies. Daily and monthly scheduled backups use the configured retention policy. Merge restore is the default and retains unrelated current records. Replace restore creates a safety backup, restores in batches, and prunes unrelated data only after successful batches; it attempts rollback if pruning fails.
 
-The add and edit forms provide a `Find` action. Lookup precedence is:
+Local SQLite migrations are in `migrations/`; Cloudflare D1 migrations are in `migrations/cloudflare/`. Keep both schemas and migrations current when shared data behavior changes.
 
-1. Exact arXiv ID through arXiv.
-2. Exact DOI through Crossref.
-3. Corrected title through Crossref title search.
-4. Title search through OpenAlex.
-5. Title search through Semantic Scholar.
+## Security and privacy requirements
 
-Populate the form with the matched authors, publication date/year, venue or journal reference, abstract, DOI, and source URL, then save the result automatically. Preserve the user's current title where no better title is found. A failed lookup must leave the existing form unchanged.
+- Keep the library single-user and private. Local server access is intended for loopback unless protected with `APP_PASSWORD`; hosted access requires Cloudflare Access when enabled.
+- Keep PDFs private in R2 and serve them only through authenticated application routes.
+- Validate metadata and upload inputs, enforce configured PDF/request/backup limits, reject non-PDF payloads, and use parameterized database queries.
+- Escape metadata rendered as HTML. Treat imported paper metadata and BibTeX as untrusted input; never execute or render imported markup.
+- Do not place credentials in client-side code or committed configuration. Keep the hosted OpenAI credential in a Worker Secret.
+- Remote PDF retrieval is limited to known metadata-provider results and canonical paper resources. Do not turn the importer into an unrestricted URL fetcher or bypass publisher access controls.
 
-After metadata is found, try to obtain a PDF from the matched record's canonical arXiv PDF URL, open-access PDF URL, or publisher PDF link. Stage the first valid PDF locally and carry its staging token through the form so that the automatic save commits it with the paper. PDF retrieval is best-effort: an unavailable or invalid PDF must produce a warning while leaving the metadata result usable for manual upload.
+## Architecture and source map
 
-When automatic retrieval fails but the metadata includes a direct PDF URL, arXiv page, publisher page, or DOI resource, show an `Open web resource` action beside `Find`. Prefer an arXiv page, then the DOI resolver, then a publisher landing page, over a direct PDF candidate that has already failed. The action opens the highest-priority available resource in a new tab and does not alter the stored record.
+The implementations share product concepts and services where possible, but have runtime-specific persistence and request handling:
 
-### Add from a local PDF
+- `src/app.ts`: local Hono routes and application orchestration.
+- `src/worker.ts`: Cloudflare Worker routes, Access verification, D1/R2 integration, scheduled backup work, and Queue consumer.
+- `src/repositories/`: SQLite and D1 repositories for papers, tags, search, analysis, and hosted analysis jobs.
+- `src/services/`: metadata providers, validation, storage, PDF analysis, LLM/embeddings, backups, ZIP handling, and search helpers.
+- `src/db/` and `migrations/`: local SQLite setup and migrations.
+- `migrations/cloudflare/`: D1 schema migrations.
+- `src/views.ts`, `src/views/login.ts`, `public/app.js`, `public/cloud.js`, and `public/styles.css`: rendered pages and browser behavior.
+- `config/questions.yaml`: local built-in question catalog.
+- `tests/`: automated unit and application tests.
+- `wrangler.jsonc`: Worker, static asset, D1, R2, AI, Queue, scheduled trigger, and preview configuration.
 
-The Add Paper page also provides an Upload PDF action.
+Keep provider clients, storage adapters, database repositories, and HTTP route logic separated. Do not replace the current stack or introduce a large framework without a concrete product need.
 
-The user selects a local `.pdf` file. The application should:
+## HTTP surface
 
-1. Validate the `.pdf` extension, PDF signature, and configured maximum size.
-2. Stage the file in local storage.
-3. Create an editable paper record.
-4. Require only a title to save the record.
-5. Allow the user to enter authors, year, abstract, categories, arXiv ID, and source URL when known.
+The local app and Worker expose the library, add, settings, paper detail/edit, login (local), imports, metadata lookup, single and bulk upload, abstract extraction, paper CRUD, PDF streaming, tag operations, filtered PDF/BibTeX/metadata export, and AI/search APIs. Both include paper summary and question endpoints and hosted/local-specific settings. The Worker additionally exposes hosted backup management and restore APIs; the local app provides ZIP64 snapshot export/restore.
 
-Do not attempt expensive PDF parsing, OCR, or full-text indexing in version 1. A local PDF upload is valid even when no arXiv ID is available.
+Routes are implemented in `src/app.ts` and `src/worker.ts`. This section describes route families rather than promising identical methods or exact parity; consult those files when changing an API.
 
-### Bulk import a folder
+## Verification and release status
 
-The Add Paper page also provides a folder upload control. The browser should use a directory-capable file input where supported and send the selected PDFs to `POST /api/bulk-upload`.
+The repository contains automated tests for arXiv and citation input, metadata providers, validation, storage, repositories, views, imports, search, PDF analysis, backups/snapshots, Worker behavior, and other services. CI configuration is in `.github/workflows/ci.yml`. Run `npm run verify` when verification is requested or required for a code change; this status review did not execute the test suite.
 
-The browser and server filter the selection to `.pdf` files. Non-PDF files are ignored rather than reported as failures. Only selected PDFs that cannot be validated or stored are reported as failed.
+Cloudflare deployment commands and configuration are documented in `README.md`. Before describing a release as deployed, confirm the account resources, apply migrations as required, configure Access and secrets, deploy, and smoke-test through an authenticated session. No deployed URL or latest production smoke-test result is asserted here.
 
-For each file:
+## Product boundaries
 
-- Validate that it is a PDF and is within the configured size limit.
-- Derive the initial title from the filename without its extension.
-- Store the PDF immediately in local storage.
-- Create a manual paper record with the derived title.
-- Detect exact duplicates by PDF hash and skip them.
-- Add the selected folder's name as a tag when it is available from the directory path.
-
-Bulk import performs lightweight first-page metadata extraction when the local `pdftotext` utility is available. When a detected arXiv identifier can be resolved, prefer exact arXiv metadata. Each created record can be edited later. The response and UI must report imported, skipped, and failed files individually so one bad file does not abort the whole folder.
-
-### Browse the library
-
-The home page is the library. It should make it easy to answer:
-
-```text
-What papers have I collected, and which papers belong to this topic or project?
-```
-
-Provide:
-
-- Search input.
-- Add Paper action.
-- A list or compact table of saved papers.
-- Available tags as filters.
-- Multiple selected tags combined with AND semantics.
-- Bulk download, delete, and tag actions for the current search/tag selection.
-- A clear PDF-available indicator.
-- Sorting by date added, publication year, and title.
-
-Each result should show at least the title, authors, publication year or arXiv date, arXiv identifier when available, tags, and PDF availability.
-
-Clicking a result opens the paper detail page. Clicking a tag filters the library to papers with that tag.
-
-### View a paper
-
-The paper detail page should show:
-
-- Title.
-- Authors in author order.
-- Abstract, when available.
-- Publication year and dates.
-- arXiv identifier and canonical arXiv link, when available.
-- arXiv categories, when available.
-- Journal reference or DOI, when supplied by arXiv or entered manually.
-- Tags.
-- Date added.
-- Open PDF.
-- Download PDF.
-- Edit.
-- Delete.
-- Copyable BibTeX entry.
-
-Use the browser's PDF viewer. Do not build a custom PDF renderer.
-
----
-
-## Metadata model
-
-ArXiv is the primary metadata source. Store useful fields exposed by arXiv, but do not make every field mandatory.
-
-Suggested fields:
-
-- `arxiv_id`
-- `title`
-- `abstract`
-- `authors`
-- `categories`
-- `primary_category`
-- `published_date`
-- `updated_date`
-- `year`
-- `journal_ref`
-- `doi`
-- `source_url`
-- `arxiv_url`
-- `r2_key`
-- `pdf_sha256`
-- `metadata_source`
-- `created_at`
-- `updated_at`
-
-For manually uploaded PDFs, `title` is the only required metadata field.
-
-Metadata precedence:
-
-1. User edits.
-2. ArXiv metadata for the exact arXiv identifier.
-3. Metadata inferred from the upload context.
-4. Empty values.
-
-Never overwrite a field that the user has manually edited during an automatic refresh unless the user explicitly requests a refresh.
-
-At minimum, distinguish `arxiv`, `manual`, and `mixed` metadata sources.
-
----
-
-## Duplicate detection
-
-Prevent accidental duplicates. Check in this order:
-
-1. Normalised base arXiv identifier.
-2. Exact normalised source URL.
-3. PDF content hash, when available.
-4. Similar titles are not treated as duplicates automatically.
-
-Normalise URL prefixes, `arXiv:`, case, and version suffixes consistently.
-
-If a matching paper exists, show the existing record and offer to open it. Do not silently create a duplicate.
-
-Title similarity is not used by the current implementation; exact arXiv base ID, source URL, and PDF hash are used instead.
-
----
-
-## Tags
-
-Tags are the application's only organisational system.
-
-Examples:
-
-```text
-transformers
-reinforcement-learning
-computer-vision
-thesis
-project-name
-```
-
-Requirements:
-
-- Add a tag while importing or editing a paper.
-- Remove a tag from a paper.
-- Select an existing tag or enter a new tag for bulk actions.
-- Enter comma-separated tags when editing a paper.
-- Treat tag names case-insensitively for uniqueness.
-- Click a tag to filter the library.
-- Remove unused tags automatically when they are detached from their last paper.
-- Do not create built-in tags for reading state or priority.
-
----
-
-## Search and sorting
-
-Use local SQLite queries. Do not introduce an external search engine.
-
-Search at least:
-
-- Title.
-- Author display name.
-- Abstract.
-- arXiv identifier.
-- Categories.
-- Tags.
-
-Basic substring search is sufficient for version 1. Results may update after form submission or with a modest debounce.
-
-Support:
-
-- Newest added first — default.
-- Oldest added first.
-- Publication year descending.
-- Publication year ascending.
-- Title A–Z.
-
----
-
-## Planned deployment architecture
-
-The planned deployment target is a minimal TypeScript stack deployed to Cloudflare:
-
-- Cloudflare Workers for application logic and HTTP routes.
-- Cloudflare static assets for the frontend.
-- Hono or a similarly small Worker-compatible router.
-- Cloudflare D1 for metadata.
-- Cloudflare R2 for private PDF storage.
-- Wrangler for local development, migrations, and deployment.
-- Cloudflare Access for authentication where practical.
-
-Prefer plain HTML/CSS and lightweight client-side JavaScript. Use a frontend framework only if it materially simplifies implementation.
-
-Avoid Next.js, large React stacks, Node-only libraries, Docker, PostgreSQL, Redis, queues, server-side PDF parsing, and unnecessary dependencies.
-
-The implementation must fit the selected Cloudflare account limits. Do not hard-code external service limits; make upload size and other operational limits configurable.
-
-### Data flow
-
-```text
-Browser
-  ├─ arXiv ID/URL → Worker → arXiv metadata/PDF → D1 + private R2
-  └─ local PDF    → Worker → D1 + private R2
-
-Browser → authenticated Worker → D1 metadata
-Browser → authenticated Worker → Worker streams PDF from private R2
-```
-
-Do not make the R2 bucket public. Do not store PDF binary data in D1.
-
-Use streaming for PDF transfers where possible. Each stored PDF should receive an internal key such as:
-
-```text
-papers/{paper_uuid}.pdf
-```
-
-Never derive security-sensitive object paths directly from user input.
-
----
-
-## ArXiv integration
-
-Implement a small, isolated arXiv client with functions similar to:
-
-```ts
-normalizeArxivInput(input: string): NormalizedArxivInput | null
-fetchArxivMetadata(id: string): Promise<PaperMetadata>
-fetchArxivPdf(id: string): Promise<Response>
-mapArxivEntryToPaper(entry: unknown): PaperMetadata
-```
-
-Support common modern and legacy arXiv identifier forms where practical. Understand abstract URLs and PDF URLs, and preserve an explicit version.
-
-Use arXiv's public metadata endpoint and canonical PDF endpoint. Parse only the fields needed by the application:
-
-- Title.
-- Authors.
-- Abstract.
-- Categories.
-- Primary category.
-- Published date.
-- Updated date.
-- Journal reference.
-- DOI.
-
-Handle invalid identifiers, not-found responses, rate limiting, timeouts, incomplete responses, unavailable PDFs, oversized PDFs, and non-PDF responses.
-
-Cache metadata where practical and avoid repeated requests for the same identifier. Respect arXiv service policies and do not hammer the endpoint.
-
-The application does not need generic DOI or publisher import in version 1. DOI and journal-reference fields may still be stored when arXiv provides them or the user enters them manually.
-
----
-
-## Database schema
-
-Use deterministic migrations. A small relational schema is preferred:
-
-```sql
-CREATE TABLE papers (
-    id TEXT PRIMARY KEY,
-    arxiv_id TEXT,
-    title TEXT NOT NULL,
-    abstract TEXT,
-    published_date TEXT,
-    updated_date TEXT,
-    year INTEGER,
-    primary_category TEXT,
-    categories TEXT,
-    journal_ref TEXT,
-    doi TEXT,
-    source_url TEXT,
-    arxiv_url TEXT,
-    r2_key TEXT,
-    pdf_sha256 TEXT,
-    metadata_source TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX idx_papers_arxiv_id
-ON papers(lower(arxiv_id))
-WHERE arxiv_id IS NOT NULL;
-
-CREATE INDEX idx_papers_created_at ON papers(created_at);
-CREATE INDEX idx_papers_year ON papers(year);
-
-CREATE TABLE authors (
-    id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL
-);
-
-CREATE TABLE paper_authors (
-    paper_id TEXT NOT NULL,
-    author_id TEXT NOT NULL,
-    author_order INTEGER NOT NULL,
-    PRIMARY KEY (paper_id, author_id),
-    FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE
-);
-
-CREATE TABLE tags (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE paper_tags (
-    paper_id TEXT NOT NULL,
-    tag_id TEXT NOT NULL,
-    PRIMARY KEY (paper_id, tag_id),
-    FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-);
-```
-
-Use parameterised SQL. Keep categories as a simple serialised field unless there is a demonstrated need for a separate category table.
-
----
-
-## Suggested routes
-
-Pages:
-
-```text
-GET /                 Library
-GET /add              Add paper
-GET /settings         Appearance settings
-GET /papers/:id       Paper detail
-GET /papers/:id/edit  Edit paper
-```
-
-API:
-
-```text
-GET    /api/papers
-POST   /api/import             Resolve a title, DOI, URL, or arXiv input
-POST   /api/import/arxiv       Resolve arXiv metadata and PDF status
-POST   /api/metadata/lookup    Find metadata by arXiv ID, DOI, or title
-POST   /api/uploads             Stage one local PDF
-POST   /api/bulk-upload         Import multiple local PDFs
-POST   /api/papers             Create a paper record
-GET    /api/papers/:id
-PATCH  /api/papers/:id
-DELETE /api/papers/:id
-POST   /api/papers/bulk-delete Delete the current filtered paper set
-POST   /api/papers/bulk-tags   Add or remove a tag from the current filtered set
-GET    /api/papers/:id/pdf     Stream PDF inline
-GET    /api/papers/:id/pdf?download=1
-GET    /api/export/pdfs        Download current filtered PDFs as a ZIP
-
-GET    /api/tags
-POST   /api/tags
-DELETE /api/tags/:name
-POST   /api/papers/:id/tags
-DELETE /api/papers/:id/tags/:tag
-
-GET    /api/export/metadata
-```
-
-JSON endpoints should return appropriate status codes and structured errors, for example:
-
-```json
-{
-  "error": {
-    "code": "ARXIV_PDF_UNAVAILABLE",
-    "message": "Metadata was found, but the PDF could not be stored. You can upload it manually."
-  }
-}
-```
-
-An unavailable PDF is a recoverable warning, not a fatal metadata error.
-
----
-
-## UI requirements
-
-Use a restrained academic-library interface:
-
-- Light background.
-- Readable typography.
-- Clear titles and author information.
-- Compact paper list.
-- Generous whitespace.
-- Minimal borders.
-- Responsive on desktop, tablet, and phone.
-- Subtle loading feedback only.
-- No dashboard charts or decorative SaaS patterns.
-
-The Add Paper page should make the two supported inputs obvious:
-
-```text
-Add from arXiv
-[ arXiv URL or ID                         ] [Import]
-
-Upload a PDF
-[Choose PDF] [Upload]
-```
-
-During an arXiv import, show stages such as `Checking arXiv identifier…`, `Fetching metadata…`, `Downloading PDF…`, and `Preparing paper…`.
-
-Errors should say what failed and what the user can do next. Always offer manual editing or PDF upload when automatic import is incomplete.
-
----
-
-## Security and privacy
-
-The library is private and intended for one user.
-
-Prefer Cloudflare Access in front of the application. Configure a policy that allows only the owner's email identity. If Access cannot be configured automatically, provide exact dashboard steps after deployment.
-
-PDFs must not be publicly readable from R2. PDF routes must require application authentication and should stream the corresponding R2 object through the Worker.
-
-Minimum requirements:
-
-- Validate all user input.
-- Use parameterised D1 queries.
-- Escape metadata before rendering it as HTML.
-- Do not render imported HTML.
-- Do not put secrets in client-side JavaScript.
-- Keep configuration and secrets in Worker bindings or secrets.
-- Enforce a configurable maximum PDF size.
-- Reject clearly non-PDF uploads.
-- Apply request and response timeouts where applicable.
-- Limit upload and import resource usage.
-
-Because version 1 accepts only arXiv identifiers/URLs and local uploads, do not add a general remote-URL fetcher. This keeps the import surface narrow and avoids unnecessary SSRF risk.
-
-Do not implement paywall circumvention, CAPTCHA bypass, credential extraction, or access to private publisher content. If arXiv cannot provide a PDF, ask the user to upload one they already have access to.
-
----
-
-## Authentication and Cloudflare resources
-
-Recommended bindings:
-
-```text
-DB       D1 database for metadata
-PAPERS   R2 bucket for private PDFs
-```
-
-Recommended environment variables:
-
-```text
-APP_NAME=PersonalPaperLibrary
-MAX_PDF_MB=50
-OWNER_EMAIL=owner@example.com
-```
-
-Do not commit secrets. Use `wrangler.jsonc` for Worker configuration, static assets, D1, R2, and the compatibility date. Resource names may be chosen during implementation, but should be documented after creation.
-
----
-
-## Repository structure
-
-Use a structure similar to:
-
-```text
-/
-├── src/
-│   ├── index.ts
-│   ├── routes/
-│   │   ├── papers.ts
-│   │   ├── import-arxiv.ts
-│   │   ├── tags.ts
-│   │   └── pdf.ts
-│   ├── services/
-│   │   ├── arxiv.ts
-│   │   ├── metadata.ts
-│   │   ├── pdf-storage.ts
-│   │   └── validation.ts
-│   ├── db/
-│   │   ├── papers.ts
-│   │   └── tags.ts
-│   └── views/
-├── public/
-│   ├── app.js
-│   └── styles.css
-├── migrations/
-│   └── 0001_initial.sql
-├── tests/
-├── wrangler.jsonc
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
-Adjust the structure if the selected framework has a better conventional layout, but keep import, storage, database, validation, and route responsibilities separate.
-
----
-
-## Export, backup, and recovery
-
-Provide a metadata export action that downloads JSON containing papers, authors, tags, relationships, arXiv/source URLs, and R2 object keys.
-
-Provide a filtered bulk PDF ZIP download. In the current local implementation it is streamed from filesystem storage; the planned deployment should stream it from private R2 where practical.
-
-Document how to back up and restore the current SQLite database, the `data/pdfs/` directory, and the exported metadata JSON. For the planned deployment, document the equivalent D1/R2 recovery steps.
-
----
-
-## Tests
-
-At minimum, add automated tests for:
-
-### ArXiv input normalisation
-
-These should resolve to the same identifier:
-
-```text
-2401.12345
-arXiv:2401.12345
-https://arxiv.org/abs/2401.12345
-https://arxiv.org/pdf/2401.12345.pdf
-```
-
-Test version suffixes and invalid inputs.
-
-### ArXiv metadata mapping
-
-Mock a representative arXiv response and verify title, authors, abstract, dates, categories, journal reference, DOI, and canonical URL.
-
-### Duplicate handling
-
-Adding the same arXiv paper twice must not create two records. Version normalisation should behave consistently.
-
-### PDF validation
-
-Reject an oversized upload and a clearly non-PDF upload. Store a valid PDF and make it retrievable through the PDF route.
-
-Also verify that a single upload returns a staging token that can be used when saving its metadata.
-
-### Tags
-
-- Create a tag.
-- Attach it to a paper.
-- Filter by it.
-- Remove it.
-- Prevent duplicate case variants.
-- Delete an unused tag.
-
-### Search and sorting
-
-Verify title, author, abstract, arXiv ID, category, and tag searches, plus all supported sort orders.
-
-### Security
-
-Verify imported metadata is safely rendered. The current local app binds to localhost and has no authentication layer; authenticated access through Cloudflare Access is a planned deployment requirement.
-
----
-
-## Acceptance tests
-
-The project is complete when these scenarios work in the deployed environment.
-
-### Scenario 1: arXiv import
-
-I paste an arXiv URL or ID. The app recognises and normalises it, fetches metadata, shows an editable preview, stores the PDF when arXiv provides it, preserves the canonical arXiv link, lets me add grouping tags, and displays the paper in the library.
-
-### Scenario 2: local PDF
-
-I upload a PDF. The current app stages it in local filesystem storage, creates an editable paper record, requires only a title, lets me add optional metadata and tags, and displays it in the library. The planned deployment stores it in private R2.
-
-### Scenario 3: grouping
-
-I add tags such as `computer-vision` and `project-name` to a paper. Clicking either tag shows the papers with that tag.
-
-### Scenario 4: search
-
-Searching a title, author, abstract phrase, arXiv identifier, category, or tag returns the matching paper.
-
-### Scenario 5: PDF access
-
-The detail page opens the stored PDF inline and offers a download action. In the planned deployment, the R2 object is not public.
-
-### Scenario 6: duplicate import
-
-Importing an existing arXiv paper shows the existing record instead of silently creating a duplicate.
-
-### Scenario 7: private access
-
-The deployed application is protected by Cloudflare Access so an unauthorised visitor cannot see the library, metadata, or PDFs. The local development server is intentionally localhost-only and unauthenticated.
-
----
-
-## Deployment workflow
-
-When credentials and permissions are available, the coding LLM should:
-
-1. Inspect the repository and existing configuration.
-2. Install dependencies.
-3. Implement the smallest complete version described here.
-4. Run formatting, type checks, linting, and tests.
-5. Create or identify the D1 database and R2 bucket.
-6. Add resource IDs to Wrangler configuration.
-7. Apply migrations locally and remotely as appropriate.
-8. Configure secrets and environment variables.
-9. Deploy the Worker and static assets.
-10. Configure Cloudflare Access for the owner.
-11. Test the deployed URL over HTTP.
-12. Import a real public arXiv paper as a smoke test.
-13. Verify metadata, canonical link, PDF storage, PDF viewing, tagging, search, duplicate handling, upload, and deletion.
-14. Document the final URL, resources, commands, and any manual dashboard steps.
-
-Do not claim deployment success until the deployed application has been tested. If credentials are unavailable, finish the local implementation and provide exact commands for the remaining deployment steps.
-
----
-
-## Definition of version 1
-
-Version 1 local implementation is complete when it provides single-user localhost access, arXiv ID/URL import, title/DOI metadata lookup with Crossref/OpenAlex/Semantic Scholar fallbacks, canonical arXiv links, arXiv PDF retrieval where available, manual PDF upload, local PDF storage, SQLite metadata storage, metadata editing, user-defined grouping tags, multi-tag AND filtering, bulk tag/delete/download actions, local search and sorting, PDF viewing and downloading, duplicate detection, BibTeX copying, deletion, JSON metadata export, responsive UI, and documented Cloudflare deployment plans.
-
-It is not necessary to implement anything listed as out of scope.
-
----
-
-## Future extension points
-
-Keep the code organised so these can be added later without redesigning the core model:
-
-- Additional metadata providers such as PubMed.
-- DOI or publisher webpage import.
-- RIS export and richer citation formatting.
-- Browser bookmarklet or extension.
-- Full-text extraction and search.
-- Notes or annotations.
-- Reading states.
-- Multiple users or shared libraries.
-
-Do not implement these features now.
-
----
-
-## Final instruction to the coding LLM
-
-Build the private arXiv-first paper library described above.
-
-Prioritise the user's actual workflow: collect papers for research, keep them available for later reading, and group them with tags. Keep the interface calm and catalogue-like. Do not turn the project into a citation manager, task manager, note-taking application, or social product.
-
-At completion, report:
-
-- What was implemented.
-- Repository structure.
-- Tests run and their results.
-- Cloudflare resources created or required.
-- Authentication status.
-- Deployed URL, if deployed.
-- Known limitations.
-- Exact redeployment commands.
-- Exact backup and recovery instructions.
+The application remains a personal research library. Do not add collaboration, multi-user sharing, nested folders, citation insertion into writing tools, publisher paywall circumvention, or unrestricted scraping without an explicit product decision. Do not present reading-state management, priorities, personal annotations, or recommendations as existing features. AI summaries, question answers, PDF text extraction, semantic library search, ISBN/Open Library support, and appearance controls are existing features and must not be removed merely because they were marked out of scope in the original build brief.
