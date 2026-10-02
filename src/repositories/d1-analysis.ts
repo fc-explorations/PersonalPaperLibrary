@@ -1,5 +1,4 @@
-import type { QuestionDefinition } from "../services/questions.js";
-import type { AiSettings, QuestionAnswer, StoredQuestion, SummaryRecord } from "./analysis.js";
+import type { AiSettings, QuestionAnswer, QuestionDefinition, StoredQuestion, SummaryRecord } from "../types.js";
 import { all, batch, first, type D1Database, type D1Row } from "../cloudflare/d1.js";
 import { DEFAULT_CLASSIFICATION_SETTINGS, type ClassificationSettings } from "../services/tag-classification.js";
 

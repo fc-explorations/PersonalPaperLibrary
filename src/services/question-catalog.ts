@@ -1,4 +1,4 @@
-import type { QuestionDefinition } from "./questions.js";
+import type { QuestionDefinition } from "../types.js";
 
 /** Generated from config/questions.yaml for the Cloudflare Worker runtime. */
 export const hostedQuestionDefinitions: QuestionDefinition[] = [

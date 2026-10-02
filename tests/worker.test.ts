@@ -1,11 +1,12 @@
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import worker, { type CloudflareBindings } from "../src/worker.js";
 import { D1PaperRepository } from "../src/repositories/d1-papers.js";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import type { R2BucketLike, R2ObjectBodyLike, R2ObjectLike } from "../src/services/r2-storage.js";
-import { createZip } from "../src/services/zip.js";
+import { createWorkerZip } from "../src/services/worker-zip.js";
 import { createCloudBackupManifest } from "../src/services/cloud-backup.js";
 import { APP_VERSION } from "../src/version.js";
 import { PDFDocument } from "pdf-lib";
@@ -94,6 +95,19 @@ function bindings(): CloudflareBindings & { d1: MemoryD1; r2: MemoryR2 } {
 const testPdf = await PDFDocument.create();
 for (let index = 0; index < 24; index += 1) testPdf.addPage();
 const pdf = new Uint8Array(await testPdf.save());
+const accessKeyPair = await generateKeyPair("RS256");
+const accessKeyId = crypto.randomUUID();
+const accessJwk = { ...await exportJWK(accessKeyPair.publicKey), kid: accessKeyId, alg: "RS256", use: "sig" };
+
+afterEach(() => vi.unstubAllGlobals());
+
+async function issueAccessToken(issuer: string, audience: string, claims: Record<string, unknown>) {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/cdn-cgi/access/certs")) return new Response(JSON.stringify({ keys: [accessJwk] }), { headers: { "content-type": "application/json" } });
+    return new Response("not found", { status: 404 });
+  });
+  return new SignJWT(claims).setProtectedHeader({ alg: "RS256", kid: accessKeyId }).setIssuer(issuer).setAudience(audience).setIssuedAt().setExpirationTime("5m").sign(accessKeyPair.privateKey);
+}
 
 describe("Cloudflare Worker API", () => {
   it("uploads, creates, lists, reads, and deletes a paper through D1 and R2", async () => {
@@ -129,6 +143,40 @@ describe("Cloudflare Worker API", () => {
     const deleted = await worker.request(`/api/papers/${paper.id}`, { method: "DELETE" }, env);
     expect(deleted.status).toBe(200);
     expect((await worker.request(`/api/papers/${paper.id}`, {}, env)).status).toBe(404);
+    env.d1.db.close();
+  });
+
+  it("serves integration search, tags, pagination, and inline PDFs without internal storage keys", async () => {
+    const env = bindings();
+    const repo = new D1PaperRepository(env.DB);
+    await repo.create({ id: "omarchy-alpha", title: "Alpha Paper", authors: ["Ada Lovelace"], publishedDate: "2024-04-15", year: 2024, tags: ["integration"], metadataSource: "manual" }, { key: "papers/omarchy-alpha.pdf", sha256: "a".repeat(64) });
+    await repo.create({ id: "omarchy-beta", title: "Beta Paper", authors: ["Grace Hopper"], publishedDate: "2021-06-03", year: 2021, tags: ["integration"], metadataSource: "manual" });
+    env.d1.db.prepare("UPDATE papers SET created_at = ? WHERE id = ?").run("2025-02-01T00:00:00.000Z", "omarchy-alpha");
+    env.d1.db.prepare("UPDATE papers SET created_at = ? WHERE id = ?").run("2023-02-01T00:00:00.000Z", "omarchy-beta");
+    await env.r2.put("papers/omarchy-alpha.pdf", pdf, { httpMetadata: { contentType: "application/pdf" } });
+
+    const listing = await worker.request("/api/integrations/v1/papers?q=paper&tag=integration&tagMode=and&sort=title&limit=1&offset=0", {}, env);
+    expect(listing.status).toBe(200);
+    const result = await listing.json() as { papers: Array<Record<string, unknown>>; total: number; stored: number; limit: number; offset: number };
+    expect(result).toMatchObject({ total: 2, stored: 1, limit: 1, offset: 0 });
+    expect(result.papers[0]).toMatchObject({ id: "omarchy-alpha", title: "Alpha Paper", hasPdf: true, pdfUrl: "/api/integrations/v1/papers/omarchy-alpha/pdf" });
+    expect(result.papers[0]).not.toHaveProperty("r2Key");
+    expect(result.papers[0]).not.toHaveProperty("pdfSha256");
+
+    const byWordsTagsAndPublicationDate = await worker.request("/api/integrations/v1/papers?q=paper&tag=integration&publishedFrom=2024-01-01&publishedTo=2024-12-31", {}, env);
+    expect((await byWordsTagsAndPublicationDate.json() as { papers: Array<{ id: string }> }).papers.map(({ id }) => id)).toEqual(["omarchy-alpha"]);
+    const byAddedDate = await worker.request("/api/integrations/v1/papers?addedFrom=2025-02-01&addedTo=2025-02-28", {}, env);
+    expect((await byAddedDate.json() as { papers: Array<{ id: string }> }).papers.map(({ id }) => id)).toEqual(["omarchy-alpha"]);
+    const invalidDate = await worker.request("/api/integrations/v1/papers?publishedFrom=2024-02-30", {}, env);
+    expect(invalidDate.status).toBe(400);
+
+    const tags = await worker.request("/api/integrations/v1/tags", {}, env);
+    expect((await tags.json() as { tags: string[] }).tags).toContain("integration");
+    const pdfResponse = await worker.request("/api/integrations/v1/papers/omarchy-alpha/pdf", {}, env);
+    expect(pdfResponse.status).toBe(200);
+    expect(pdfResponse.headers.get("content-type")).toBe("application/pdf");
+    expect(pdfResponse.headers.get("content-disposition")).toContain("inline");
+    expect(new Uint8Array(await pdfResponse.arrayBuffer())).toEqual(pdf);
     env.d1.db.close();
   });
 
@@ -220,6 +268,37 @@ describe("Cloudflare Worker API", () => {
     env.ACCESS_AUDIENCE = "audience";
     expect((await worker.request("/api/health", {}, env)).status).toBe(200);
     expect((await worker.request("/api/papers", {}, env)).status).toBe(401);
+    expect((await worker.request("/api/integrations/v1/papers", {}, env)).status).toBe(401);
+    env.d1.db.close();
+  });
+
+  it("limits the Access service identity to read-only integration routes", async () => {
+    const env = bindings();
+    const issuer = `https://service-${crypto.randomUUID()}.cloudflareaccess.com`;
+    env.ACCESS_REQUIRED = "true";
+    env.ACCESS_TEAM_DOMAIN = issuer;
+    env.ACCESS_AUDIENCE = "omarchy-audience";
+    env.ACCESS_ALLOWED_EMAIL = "owner@example.com";
+    env.OMARCHY_ACCESS_CLIENT_ID = "omarchy-service-client-id";
+
+    const paperRepo = new D1PaperRepository(env.DB);
+    await paperRepo.create({ id: "service-visible", title: "Visible to Omarchy", metadataSource: "manual" });
+    const serviceToken = await issueAccessToken(issuer, env.ACCESS_AUDIENCE, { common_name: env.OMARCHY_ACCESS_CLIENT_ID });
+    const serviceHeaders = { "cf-access-jwt-assertion": serviceToken, "content-type": "application/json" };
+
+    expect((await worker.request("/api/integrations/v1/papers", {}, env)).status).toBe(401);
+    const list = await worker.request("/api/integrations/v1/papers", { headers: serviceHeaders }, env);
+    expect(list.status).toBe(200);
+    expect((await list.json() as { papers: Array<{ id: string }> }).papers.map(({ id }) => id)).toContain("service-visible");
+    const deniedWrite = await worker.request("/api/papers", { method: "POST", headers: serviceHeaders, body: JSON.stringify({ id: "should-not-exist", title: "Denied", metadataSource: "manual" }) }, env);
+    expect(deniedWrite.status).toBe(403);
+    expect((await worker.request("/settings", { headers: { "cf-access-jwt-assertion": serviceToken } }, env)).status).toBe(403);
+    const methodNotAllowed = await worker.request("/api/integrations/v1/papers", { method: "POST", headers: serviceHeaders, body: JSON.stringify({}) }, env);
+    expect(methodNotAllowed.status).toBe(405);
+
+    const ownerToken = await issueAccessToken(issuer, env.ACCESS_AUDIENCE, { email: "owner@example.com" });
+    const ownerRead = await worker.request("/api/papers", { headers: { "cf-access-jwt-assertion": ownerToken } }, env);
+    expect(ownerRead.status).toBe(200);
     env.d1.db.close();
   });
 
@@ -283,6 +362,8 @@ describe("Cloudflare Worker API", () => {
     const settingsHtml = await settings.text();
     expect(settingsHtml).toContain("Automatic backups run daily at midnight UTC");
     expect(settingsHtml).toContain('id="backup-list"');
+    expect(settingsHtml).toContain('<option value="openai">OpenAI</option>');
+    expect(settingsHtml).not.toContain("Ollama (local only)");
     expect(settingsHtml).toContain("<h2>Credits</h2>");
     expect(settingsHtml).toContain('<a href="mailto:xfcosta@gmail.com">xfcosta@gmail.com</a>');
     expect(settingsHtml).toContain(`<strong>Version:</strong> v${APP_VERSION}`);
@@ -302,7 +383,7 @@ describe("Cloudflare Worker API", () => {
   it("imports hosted folders and ZIP archives as editable papers", async () => {
     const env = bindings();
     const zippedPdf = new Uint8Array(new TextEncoder().encode("%PDF-1.7\nhosted zip paper"));
-    const archive = createZip([{ name: "papers/zipped-paper.pdf", data: zippedPdf }]);
+    const archive = createWorkerZip([{ name: "papers/zipped-paper.pdf", bytes: zippedPdf }]);
     const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
     const form = new FormData();
     form.append("files", new File([pdf], "folder-paper.pdf", { type: "application/pdf" }));

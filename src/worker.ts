@@ -18,8 +18,7 @@ import { parseBibtex } from "./services/bibtex.js";
 import { fetchWithTimeout, readResponseBytes } from "./services/http.js";
 import { backupPaperMetadata, CLOUD_BACKUP_MAX_PAPERS, CLOUD_BACKUP_MONTHLY_TTL_MS, CLOUD_BACKUP_TTL_MS, createCloudBackupManifest, parseCloudBackupManifest, type CloudBackupKind, type CloudBackupManifest } from "./services/cloud-backup.js";
 import { DEFAULT_MAX_PDF_BYTES, isbnFromInput, normalizeIsbn, parseAuthors, parseOptionalDate, parseOptionalDoi, parseOptionalUrl, parseSortOrder, parseTags, parseYear, validatePdf } from "./services/validation.js";
-import type { AiSettings } from "./repositories/analysis.js";
-import type { MetadataSource, PaperDraftInput, PaperMetadata } from "./types.js";
+import type { AiSettings, MetadataSource, PaperDraftInput, PaperMetadata, SummaryRecord, StoredQuestion } from "./types.js";
 import { OpenAiEmbeddingClient } from "./services/embeddings.js";
 import { createWorkerZip, extractWorkerPdfFiles, type WorkerZipFile } from "./services/worker-zip.js";
 import { takeFirstPages } from "./services/pdf-analysis-core.js";
@@ -86,6 +85,7 @@ export interface CloudflareBindings {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUDIENCE?: string;
   ACCESS_ALLOWED_EMAIL?: string;
+  OMARCHY_ACCESS_CLIENT_ID?: string;
   MAX_PDF_BYTES?: string;
   MAX_REQUEST_BYTES?: string;
   OPENAI_API_KEY?: string;
@@ -472,9 +472,6 @@ async function verifyAccess(env: CloudflareBindings, request: Request): Promise<
   if (!token) return new Response(JSON.stringify({ error: { code: "ACCESS_REQUIRED", message: "Cloudflare Access authentication is required." } }), { status: 401, headers: { "content-type": "application/json" } });
   try {
     const result = await jwtVerify(token, accessJwks(teamDomain), { issuer: teamDomain, audience });
-    const allowedEmail = env.ACCESS_ALLOWED_EMAIL?.trim().toLowerCase();
-    const email = typeof result.payload.email === "string" ? result.payload.email.toLowerCase() : "";
-    if (allowedEmail && email !== allowedEmail) return new Response(JSON.stringify({ error: { code: "ACCESS_FORBIDDEN", message: "This Cloudflare Access identity is not allowed." } }), { status: 403, headers: { "content-type": "application/json" } });
     return result;
   } catch {
     return new Response(JSON.stringify({ error: { code: "ACCESS_INVALID", message: "Cloudflare Access authentication could not be verified." } }), { status: 401, headers: { "content-type": "application/json" } });
@@ -510,7 +507,7 @@ function draftFromBody(body: Record<string, unknown>): PaperDraftInput {
   };
 }
 
-function listOptions(url: URL) {
+function listOptions(url: URL, includeAdvancedFilters = true) {
   const limitValue = Number(url.searchParams.get("limit"));
   const offsetValue = Number(url.searchParams.get("offset"));
   const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
@@ -519,13 +516,29 @@ function listOptions(url: URL) {
     q: url.searchParams.get("q")?.trim() || undefined,
     tag: tags.length ? tags : undefined,
     tagMode: url.searchParams.get("tagMode") === "and" ? "and" as D1TagFilterMode : "or" as D1TagFilterMode,
-    ids: ids.length ? ids : undefined,
+    ids: includeAdvancedFilters && ids.length ? ids : undefined,
     untagged: url.searchParams.get("untagged") === "1",
-    attention: parseAttentionFilter(url.searchParams.get("attention")),
+    attention: includeAdvancedFilters ? parseAttentionFilter(url.searchParams.get("attention")) : undefined,
+    publishedFrom: includeAdvancedFilters ? undefined : url.searchParams.get("publishedFrom") || undefined,
+    publishedTo: includeAdvancedFilters ? undefined : url.searchParams.get("publishedTo") || undefined,
+    addedFrom: includeAdvancedFilters ? undefined : url.searchParams.get("addedFrom") || undefined,
+    addedTo: includeAdvancedFilters ? undefined : url.searchParams.get("addedTo") || undefined,
     sort: parseSortOrder(url.searchParams.get("sort")),
     limit: Number.isFinite(limitValue) ? Math.min(100, Math.max(1, Math.floor(limitValue))) : 50,
     offset: Number.isFinite(offsetValue) ? Math.max(0, Math.floor(offsetValue)) : 0,
   };
+}
+
+function validIntegrationDate(value: string | null): boolean {
+  if (value === null) return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function integrationDateFiltersValid(url: URL): boolean {
+  return ["publishedFrom", "publishedTo", "addedFrom", "addedTo"]
+    .every((key) => validIntegrationDate(url.searchParams.get(key)));
 }
 
 function analysisRepository(env: CloudflareBindings): D1AnalysisRepository {
@@ -563,10 +576,24 @@ function analysisSettingsInput(body: Record<string, unknown>): Partial<AiSetting
   return update;
 }
 
-app.use("/api/*", async (c, next) => {
+app.use("*", async (c, next) => {
   if (c.req.path === "/api/health") return next();
+  if (!accessRequired(c.env)) return next();
   const result = await verifyAccess(c.env, c.req.raw);
   if (result instanceof Response) return result;
+  const isOmarchyIntegration = c.req.path.startsWith("/api/integrations/v1/");
+  const email = typeof result.payload.email === "string" ? result.payload.email.toLowerCase() : "";
+  const allowedEmail = c.env.ACCESS_ALLOWED_EMAIL?.trim().toLowerCase();
+  const serviceClientId = typeof result.payload.common_name === "string" ? result.payload.common_name : "";
+  const isOwner = allowedEmail ? email === allowedEmail : !serviceClientId;
+  if (isOmarchyIntegration) {
+    if (c.req.method !== "GET") return jsonError(c, 405, "READ_ONLY", "The Omarchy integration only allows GET requests.");
+    const configuredServiceClientId = c.env.OMARCHY_ACCESS_CLIENT_ID?.trim();
+    const isOmarchyService = Boolean(configuredServiceClientId && serviceClientId === configuredServiceClientId);
+    if (!isOwner && !isOmarchyService) return jsonError(c, 403, "ACCESS_FORBIDDEN", "This Cloudflare Access identity is not allowed.");
+    return next();
+  }
+  if (!isOwner) return jsonError(c, 403, "ACCESS_FORBIDDEN", "This Cloudflare Access identity is not allowed.");
   return next();
 });
 
@@ -1058,6 +1085,37 @@ app.get("/api/health", (c) => c.json({
   accessRequired: accessRequired(c.env),
   bindings: { d1: Boolean(c.env.DB), r2: Boolean(c.env.PAPER_PDFS), assets: Boolean(c.env.ASSETS) },
 }));
+
+app.get("/api/integrations/v1/papers", async (c) => {
+  try {
+    const url = new URL(c.req.url);
+    if (!integrationDateFiltersValid(url)) return jsonError(c, 400, "INVALID_DATE_FILTER", "Date filters must use a valid YYYY-MM-DD date.");
+    const repo = new D1PaperRepository(c.env.DB);
+    const options = listOptions(url, false);
+    const [papers, total, stored] = await Promise.all([repo.list(options), repo.count(options), repo.countStored(options)]);
+    const integrationPapers = papers.map(({ r2Key, pdfSha256: _pdfSha256, ...paper }) => ({
+      ...paper,
+      hasPdf: Boolean(r2Key),
+      pdfUrl: r2Key ? `/api/integrations/v1/papers/${encodeURIComponent(paper.id)}/pdf` : null,
+    }));
+    return c.json({ papers: integrationPapers, total, stored, limit: options.limit, offset: options.offset });
+  } catch (error) {
+    return jsonError(c, 500, errorMessage(error), "The paper list could not be loaded.");
+  }
+});
+
+app.get("/api/integrations/v1/tags", async (c) => c.json({ tags: await new D1PaperRepository(c.env.DB).tags.list() }));
+
+app.get("/api/integrations/v1/papers/:id/pdf", async (c) => {
+  const repo = new D1PaperRepository(c.env.DB);
+  const paper = await repo.findById(c.req.param("id"));
+  if (!paper) return jsonError(c, 404, "PAPER_NOT_FOUND", "Paper not found.");
+  if (!paper.r2Key) return jsonError(c, 404, "PDF_NOT_FOUND", "This paper does not have a stored PDF.");
+  const object = await c.env.PAPER_PDFS.get(paper.r2Key);
+  if (!object) return jsonError(c, 404, "PDF_NOT_FOUND", "The stored PDF is missing from R2.");
+  const body = object.body || new Uint8Array(await object.arrayBuffer());
+  return new Response(body as BodyInit, { status: 200, headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${paper.id}.pdf"` } });
+});
 
 app.get("/api/papers", async (c) => {
   try {

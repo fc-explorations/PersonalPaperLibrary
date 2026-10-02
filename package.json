@@ -4,10 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/src/index.js",
-    "local": "./scripts/start-local.sh",
-    "build": "tsc && node scripts/copy-public.mjs",
+    "dev": "wrangler dev",
+    "dev:preview": "wrangler dev --env preview",
+    "build": "wrangler deploy --dry-run --env=\"\"",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm test",
     "test": "vitest run",
@@ -16,8 +15,6 @@
     "version:bump": "node scripts/version-policy.mjs bump",
     "version:release": "node scripts/version-policy.mjs release",
     "test:watch": "vitest",
-    "db:migrate": "tsx src/db/migrate.ts",
-    "metadata:backfill": "npm run build && node dist/src/db/backfill-metadata.js",
     "cf:dev": "wrangler dev",
     "cf:dev:preview": "wrangler dev --env preview",
     "cf:deploy": "wrangler deploy",
@@ -29,22 +26,14 @@
     "cf:test-pdf-extractor": "node scripts/test-worker-pdf-extractor.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.0",
-    "archiver": "^8.0.0",
-    "better-sqlite3": "^12.4.1",
-    "busboy": "^1.6.0",
     "hono": "^4.9.7",
     "jose": "^6.2.12",
-    "pdf-lib": "^1.17.1",
-    "unzipper": "^0.12.5"
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
-    "@types/archiver": "^8.0.0",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/busboy": "^1.5.4",
     "@types/node": "^24.3.0",
-    "@types/unzipper": "^0.10.11",
-    "tsx": "^4.19.4",
+    "better-sqlite3": "^12.11.1",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.129.1"

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { D1Database, D1PreparedStatement, D1Row } from "../src/cloudflare/d1.js";
 import { D1PaperRepository } from "../src/repositories/d1-papers.js";
 import { D1AnalysisRepository } from "../src/repositories/d1-analysis.js";
-import type { QuestionDefinition } from "../src/services/questions.js";
+import type { QuestionDefinition } from "../src/types.js";
 
 class MemoryD1 implements D1Database {
   readonly db = new Database(":memory:");

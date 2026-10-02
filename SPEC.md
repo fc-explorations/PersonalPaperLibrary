@@ -1,130 +1,42 @@
-# PersonalPaperLibrary
+# PersonalPaperLibrary — Cloudflare Runtime
 
-## Purpose
+## Purpose and source of truth
 
-PersonalPaperLibrary is a private, single-user research library for collecting academic papers, keeping their PDFs available, and finding them again by metadata, tags, or meaning. It is a focused paper library with optional AI-assisted analysis, not a general-purpose reference manager or collaboration product.
+PersonalPaperLibrary is a private, single-owner hosted paper library. The active application runs on Cloudflare Workers, with D1 for metadata and analysis state, private R2 for PDFs and backups, Workers AI for PDF text extraction, and a Cloudflare Queue for durable analysis jobs. The retired Node.js/SQLite/filesystem runtime is preserved as a historical source archive under `archive/local-library/` and is outside the active build and test workflow.
 
-This document describes the implementation present in the repository. It is an as-built product and architecture reference, not a request to recreate the application. When changing behavior, keep the local and hosted implementations aligned where practical and document intentional differences.
+Cloudflare D1 and R2 are canonical. Local runtime data is not migrated or deleted by code changes in this repository.
 
-## Repository status
+## Active capabilities
 
-- Application version: `2.21.0` (the package, lockfile, and runtime version are maintained together).
-- Local runtime: Node.js, Hono, SQLite via `better-sqlite3`, and filesystem storage under `data/` (or `DATA_DIR`). The server binds to `127.0.0.1` by default.
-- Hosted runtime: Cloudflare Workers and static assets, D1, private R2, Workers AI PDF conversion, and a Cloudflare Queue for hosted analysis jobs.
-- Authentication: local use is unauthenticated on loopback by default; `APP_PASSWORD` enables the local login gate and is required when binding beyond loopback. The Worker validates Cloudflare Access JWTs when `ACCESS_REQUIRED=true` (the checked-in Wrangler configuration sets it to `true`).
-- Cloudflare resources and preview bindings are described in `wrangler.jsonc`. The repository documents a provisioned D1 database and applied baseline migration. This specification does not assert that the latest code is deployed or that the public endpoint has passed a smoke test; confirm those separately before claiming a release is live.
-- `README.md` is the operator guide for installation, configuration, and routine commands. This file records product behavior and architecture.
+The Worker supports paper import, metadata editing, PDF upload and reading, keyword and semantic search, tags, summaries, questions, hosted settings, statistics, deduplication, BibTeX and PDF exports, and versioned backup and restore. PDFs remain private in R2 and are accessed through authenticated Worker routes.
 
-## Product capabilities
+Hosted AI uses configured server-side provider credentials. Analysis jobs are dispatched through the `personal-paper-library-analysis` queue and use Workers AI for PDF text extraction.
 
-### Paper intake and metadata
+## Omarchy read-only API
 
-The add and edit flows accept arXiv identifiers and URLs, DOI values and URLs, ISBNs, titles, and BibTeX. Metadata lookup uses:
+The plugin API is available under `/api/integrations/v1/`:
 
-1. Exact arXiv identifiers through arXiv.
-2. ISBNs through Open Library.
-3. Exact DOI and corrected-title searches through Crossref.
-4. OpenAlex title lookup.
-5. Semantic Scholar title lookup.
+- `GET /papers` accepts `q` for keyword matching across titles, abstracts, identifiers, categories, authors, and tags; repeated `tag` filters with `tagMode=and|or`; `untagged=1`; and inclusive date ranges `publishedFrom`, `publishedTo`, `addedFrom`, and `addedTo` in `YYYY-MM-DD` format. Publication dates fall back to the stored publication year if no exact date is recorded. Added dates use the hosted library creation date. Invalid calendar dates return HTTP 400.
 
-Where a matched record provides a usable arXiv, open-access, or publisher PDF URL, the application attempts to download and stage the PDF. PDF retrieval is best-effort: a failed download leaves the metadata editable and offers manual PDF upload or an available web resource. Preserve a canonical arXiv abstract link for arXiv papers. Users can also import and validate their own BibTeX record.
+- `GET /papers`: paginated paper records with `hasPdf` and a relative `pdfUrl`; supports `q`, repeated `tag`, `tagMode=and|or`, `untagged=1`, `sort`, `limit` (1–100), and `offset`.
+- `GET /tags`: available user tags.
+- `GET /papers/:id/pdf`: streams the PDF inline from private R2.
 
-The metadata record supports arXiv ID and base ID, title, abstract, ordered authors, publication and update dates, year, categories and primary category, journal reference, accepted venue, DOI, ISBN, source and arXiv URLs, BibTeX, metadata source, tags, timestamps, and PDF storage/hash information. Only a title is required for a manually created paper. Metadata sources are `arxiv`, `manual`, and `mixed`.
+Paper listings do not expose internal R2 keys or PDF hashes. Responses include the existing hosted pagination fields (`total`, `stored`, `limit`, and `offset`).
 
-Users can upload one PDF or import a folder of PDFs. The server filters out non-PDF files, validates PDF signatures and configured size limits, detects exact duplicates by content hash, and reports imported, skipped, and failed files individually. Folder names can be added as tags. Bulk import can extract lightweight first-page metadata and resolve detected arXiv identifiers; it does not silently fail the entire folder because one file is invalid.
+The integration requires a valid Cloudflare Access JWT whose `common_name` equals the Worker secret `OMARCHY_ACCESS_CLIENT_ID`, or the configured owner email. Only GET requests are accepted on integration routes. All other application paths and APIs require the configured owner email when Access is enabled. The Cloudflare Access Service Auth policy is configured at the Cloudflare edge; the Worker performs a second identity and method check.
 
-### Library, organization, and citation output
+## Runtime and operational commands
 
-The library supports keyword search over paper metadata, abstracts, tags, and saved analysis text; pagination; sorting by date added, publication year, or title; tag filtering with selectable AND/OR behavior; and attention/statistics filters such as papers without PDFs or abstracts. The interface identifies PDF availability. Extracted full-PDF text is used for analysis, but is not itself indexed for keyword search. The semantic index uses paper metadata and completed summaries.
+The root package scripts operate on the Cloudflare Worker: `dev`, `dev:preview`, `typecheck`, `test`, `verify`, and `build` (Wrangler dry run), plus `cf:*` deployment, migration, tail, and PDF probe commands. The only active migrations are under `migrations/cloudflare/`.
 
-Users can add, remove, and bulk-apply tags; bulk-delete or download the current selection; open and edit paper records; and remove duplicate entries through an explicit cleanup action. Duplicate checks include normalized arXiv base ID, normalized source URL, and PDF hash. Similar-title records may be surfaced as duplicate candidates for review/cleanup; title similarity does not silently merge records. The system `NO PDF` tag reflects PDF availability and is not a user reading state.
+Required production Access variables are `ACCESS_REQUIRED`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUDIENCE`, and `ACCESS_ALLOWED_EMAIL`. Worker Secrets include provider keys and `OMARCHY_ACCESS_CLIENT_ID`. Do not commit credentials. The Omarchy plugin keeps its Access client secret in a user-owned secret store.
 
-Paper details include available citation metadata, tags, dates, PDF open/download actions, and copyable BibTeX. The library can export metadata JSON, BibTeX, or a filtered ZIP of PDFs. The browser's built-in PDF viewer is used.
+## Security requirements
 
-### PDF analysis and library search
-
-The application includes optional AI features beyond basic cataloguing:
-
-- Extract PDF text and attempt abstract extraction. Local PDF text extraction uses the configured local tools/libraries; hosted extraction uses Workers AI's `toMarkdown` binding.
-- Generate and store quick and full paper summaries, answer built-in or user-added questions about a paper, and show analysis status/progress. Hosted work is queued; the local runtime processes its own requests.
-- Configure an AI provider and models. Local settings support OpenAI and Ollama; the hosted Worker uses its configured OpenAI secret and rejects hosted Ollama until a secured reachable service is provided. Credentials are not included in backups; local OpenAI credentials are kept in macOS Keychain when available, with `OPENAI_API_KEY` as a read-only fallback.
-- Index papers and perform semantic library search with tag filters, optional query rephrasing, and optional result grouping. Index coverage and progress are visible. Semantic search requires a configured embedding provider and may be unavailable until indexing completes.
-- Suggest grouping tags. Suggestions remain user-controlled; they do not introduce reading-state tags.
-
-Analysis results can become stale when source PDFs or metadata change and should be regenerated where needed. The product does not claim that an AI summary or answer replaces reading the paper.
-
-### OpenRouter automatic tag classification
-
-The Classification AI Settings entry uses OpenRouter Decisions API with Jev Latest (`~typesafe/jev-latest`) by default and a separately configurable model and assignment threshold. A library-wide run previews the paper and existing user-tag counts, then processes bounded batches and reports tagged, unchanged, and failed papers. Failed papers can be retried. Decisions are made per paper and per candidate existing tag; only user-created tags are considered, and the system `NO PDF` tag is excluded. Existing tags are never removed, and attaching a tag is idempotent.
-
-Each candidate uses a typed `noul` decision with a known question key mapped server-side to an existing tag ID. Runtime validation checks response shape, answer type, completeness, unexpected question keys, and probability range. Missing or malformed decisions fail the paper closed. The application adds tags only after all candidate decisions for that paper validate. Provider errors, rate limits, and timeouts leave that paper unchanged and are reported as recoverable failures.
-
-Classification sends only the paper title, authors, abstract, categories, year and identifiers, an available complete saved summary, and candidate tag names to OpenRouter. It does not send the PDF binary or full extracted PDF text. Settings explains this transfer. Local use stores the OpenRouter key in a distinct macOS Keychain item and supports a read-only `OPENROUTER_API_KEY` environment fallback. Hosted use reads the `OPENROUTER_API_KEY` Worker Secret. The key is never returned to the browser or included in logs, exports, or backups.
-
-The default threshold is `0.90`, a conservative starting value that has not been calibrated against this library. It is configurable in Classification AI settings. Evaluate it against a manually labeled sample before relying on automatic assignments; a Jev probability is not a guarantee of correctness. Jev is a decision model, not a text-generation model, so newly written topic descriptions require a separate generative flow.
-
-### Appearance and settings
-
-Settings include appearance controls (accent and background colors, content width, rendering scale, and entries per page), AI provider configuration, library statistics, duplicate cleanup, and backup/restore controls. OpenRouter classification settings and the library-wide automatic tag run are in a dedicated Classification AI entry, separate from the existing AI provider settings. The hosted and local settings differ where the hosting environment has different credential, storage, or queue capabilities.
-
-## Data, storage, and recovery
-
-### Local
-
-Local data is stored in `data/` or `DATA_DIR`:
-
-- `library.sqlite`: paper metadata, authors, tags, AI settings/results, questions, and search-index records.
-- `pdfs/`: stored PDFs.
-- `staging/`: uploads awaiting confirmation.
-- `trash/`: files retained during recoverable replacement/deletion operations.
-
-The Settings page downloads a ZIP64 snapshot containing the SQLite database and PDFs. Restore stages a replacement snapshot; restart the local app for it to take effect. Treat snapshots as private because they contain the library and documents.
-
-### Cloudflare
-
-The Worker uses D1 for records and analysis/search metadata and a private R2 bucket for PDFs and backup copies. PDF routes stream objects through the authenticated Worker; the bucket must not be public. Cloud backups use a versioned JSON manifest and protected R2 PDF copies. Daily and monthly scheduled backups use the configured retention policy. Merge restore is the default and retains unrelated current records. Replace restore creates a safety backup, restores in batches, and prunes unrelated data only after successful batches; it attempts rollback if pruning fails.
-
-Local SQLite migrations are in `migrations/`; Cloudflare D1 migrations are in `migrations/cloudflare/`. Keep both schemas and migrations current when shared data behavior changes.
-
-## Security and privacy requirements
-
-- Keep the library single-user and private. Local server access is intended for loopback unless protected with `APP_PASSWORD`; hosted access requires Cloudflare Access when enabled.
-- Keep PDFs private in R2 and serve them only through authenticated application routes.
-- Validate metadata and upload inputs, enforce configured PDF/request/backup limits, reject non-PDF payloads, and use parameterized database queries.
-- Escape metadata rendered as HTML. Treat imported paper metadata and BibTeX as untrusted input; never execute or render imported markup.
-- Do not place credentials in client-side code or committed configuration. Keep the hosted OpenAI credential in a Worker Secret.
-- Keep the planned OpenRouter credential in local Keychain or a server-side environment fallback, and in the hosted `OPENROUTER_API_KEY` Worker Secret. Never expose it to the browser, logs, exports, or backups.
-- Remote PDF retrieval is limited to known metadata-provider results and canonical paper resources. Do not turn the importer into an unrestricted URL fetcher or bypass publisher access controls.
-
-## Architecture and source map
-
-The implementations share product concepts and services where possible, but have runtime-specific persistence and request handling:
-
-- `src/app.ts`: local Hono routes and application orchestration.
-- `src/worker.ts`: Cloudflare Worker routes, Access verification, D1/R2 integration, scheduled backup work, and Queue consumer.
-- `src/repositories/`: SQLite and D1 repositories for papers, tags, search, analysis, and hosted analysis jobs.
-- `src/services/`: metadata providers, validation, storage, PDF analysis, LLM/embeddings, backups, ZIP handling, and search helpers.
-- `src/db/` and `migrations/`: local SQLite setup and migrations.
-- `migrations/cloudflare/`: D1 schema migrations.
-- `src/views.ts`, `src/views/login.ts`, `public/app.js`, `public/cloud.js`, and `public/styles.css`: rendered pages and browser behavior.
-- `config/questions.yaml`: local built-in question catalog.
-- `tests/`: automated unit and application tests.
-- `wrangler.jsonc`: Worker, static asset, D1, R2, AI, Queue, scheduled trigger, and preview configuration.
-
-Keep provider clients, storage adapters, database repositories, and HTTP route logic separated. Do not replace the current stack or introduce a large framework without a concrete product need.
-
-## HTTP surface
-
-The local app and Worker expose the library, add, settings, paper detail/edit, login (local), imports, metadata lookup, single and bulk upload, abstract extraction, paper CRUD, PDF streaming, tag operations, filtered PDF/BibTeX/metadata export, AI/search APIs, and OpenRouter classification settings, preview, and run APIs. Both include paper summary and question endpoints and hosted/local-specific settings. The Worker additionally exposes hosted backup management and restore APIs; the local app provides ZIP64 snapshot export/restore.
-
-Routes are implemented in `src/app.ts` and `src/worker.ts`. This section describes route families rather than promising identical methods or exact parity; consult those files when changing an API.
-
-## Verification and release status
-
-The repository contains automated tests for arXiv and citation input, metadata providers, validation, storage, repositories, views, imports, search, PDF analysis, backups/snapshots, Worker behavior, and other services. CI configuration is in `.github/workflows/ci.yml`. Run `npm run verify` when verification is requested or required for a code change; this status review did not execute the test suite.
-
-Cloudflare deployment commands and configuration are documented in `README.md`. Before describing a release as deployed, confirm the account resources, apply migrations as required, configure Access and secrets, deploy, and smoke-test through an authenticated session. No deployed URL or latest production smoke-test result is asserted here.
-
-## Product boundaries
-
-The application remains a personal research library. Do not add collaboration, multi-user sharing, nested folders, citation insertion into writing tools, publisher paywall circumvention, or unrestricted scraping without an explicit product decision. Do not present reading-state management, priorities, personal annotations, or recommendations as existing features. AI summaries, question answers, PDF text extraction, semantic library search, ISBN/Open Library support, appearance controls, and secure OpenRouter key configuration, and OpenRouter-backed automatic tag classification are existing features and must not be removed merely because they were marked out of scope in the original build brief.
+- Keep the Access application and R2 bucket private.
+- Validate the signed Access JWT issuer, audience, and signature before using identity claims.
+- Accept the Omarchy service identity only on the read-only integration namespace, and reject non-GET requests there.
+- Require the owner email for every other application path when Access is enabled.
+- Never expose secrets or internal R2 storage keys to the browser or plugin.
+- Keep backups protected and exclude Worker secrets and Cloudflare configuration values.

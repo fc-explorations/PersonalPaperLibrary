@@ -1,6 +1,5 @@
 import type { LlmClient } from "./llm.js";
-import type { LibrarySearchHit } from "../repositories/library-search.js";
-import type { SummaryRecord } from "../repositories/analysis.js";
+import type { LibrarySearchHit, SummaryRecord } from "../types.js";
 
 export type LibraryGroup = { name: string; description: string; paperIds: string[]; evidence: string };
 

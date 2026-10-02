@@ -59,3 +59,18 @@ export interface PaperDraftInput {
 }
 
 export type SortOrder = "newest" | "oldest" | "year-desc" | "year-asc" | "title";
+
+export type TagFilterMode = "and" | "or";
+export type QuestionDefinition = { id: string; groupId: string; groupTitle: string; groupDescription: string; label: string; prompt: string; order: number; definitionHash: string; isCustom?: boolean };
+export type AiSettings = {
+  provider: "openai" | "ollama";
+  openaiModel: string;
+  openaiEmbeddingModel: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  ollamaEmbeddingModel: string;
+};
+export type SummaryRecord = { paperId: string; content: string; quickSummary?: string; provider: string; model: string; generatedAt: string; durationMs?: number; sourcePdfSha256?: string; promptVersion: string; status: "complete" | "stale" | "error"; errorMessage?: string };
+export type QuestionAnswer = { content: string; quickSummary?: string; provider: string; model: string; generatedAt: string; durationMs?: number; sourcePdfSha256?: string; promptVersion: string; questionDefinitionHash?: string; status: "complete" | "stale" | "error"; errorMessage?: string };
+export type StoredQuestion = QuestionDefinition & { paperId: string; isActive: boolean; answer?: QuestionAnswer };
+export type LibrarySearchHit = { paper: PaperRecord; score: number; semanticScore: number; keywordScore: number; matchType: "semantic" | "keyword" | "semantic+keyword"; evidence: string };

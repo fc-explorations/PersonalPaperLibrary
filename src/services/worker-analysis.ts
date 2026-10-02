@@ -5,7 +5,7 @@ import type { D1Database } from "../cloudflare/d1.js";
 import { MATH_FORMATTING_INSTRUCTION, OpenAiLlmClient, type LlmClient } from "./llm.js";
 import { excludeAppendixMaterial, hasRequiredSummaryHeadings, splitTextIntoPageChunks, SUMMARY_HEADINGS, SUMMARY_PROMPT_VERSION, QUESTION_PROMPT_VERSION } from "./pdf-analysis-core.js";
 import type { R2BucketLike } from "./r2-storage.js";
-import type { AiSettings, QuestionAnswer, SummaryRecord } from "../repositories/analysis.js";
+import type { AiSettings, QuestionAnswer, SummaryRecord } from "../types.js";
 import { hostedQuestionDefinitions } from "./question-catalog.js";
 import { PDFDocument } from "pdf-lib";
 import { compactQuickSummary, generateQuickSummary } from "./quick-summary.js";

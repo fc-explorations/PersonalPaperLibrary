@@ -1,5 +1,5 @@
 import type { PaperRecord } from "../types.js";
-import type { StoredQuestion, SummaryRecord } from "../repositories/analysis.js";
+import type { StoredQuestion, SummaryRecord } from "../types.js";
 
 export type DuplicateCleanupData = {
   summaries?: ReadonlyMap<string, SummaryRecord | null | undefined>;

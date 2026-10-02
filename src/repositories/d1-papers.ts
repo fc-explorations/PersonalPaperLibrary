@@ -6,7 +6,7 @@ import { NO_PDF_TAG, tagsForPdfStatus } from "../services/system-tags.js";
 import { libraryStatisticsFromRow, type AttentionFilter, type LibraryStatistics } from "../services/statistics.js";
 
 export type D1TagFilterMode = "and" | "or";
-export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; attention?: AttentionFilter; ids?: string[]; sort?: SortOrder; limit?: number; offset?: number };
+export type D1PaperListOptions = { q?: string; tag?: string | string[]; tagMode?: D1TagFilterMode; untagged?: boolean; attention?: AttentionFilter; ids?: string[]; publishedFrom?: string; publishedTo?: string; addedFrom?: string; addedTo?: string; sort?: SortOrder; limit?: number; offset?: number };
 
 type PaperRow = D1Row;
 
@@ -417,6 +417,22 @@ export class D1PaperRepository {
       clauses.push(`(lower(p.title) LIKE lower(?) OR lower(COALESCE(p.abstract, '')) LIKE lower(?) OR lower(COALESCE(p.arxiv_id, '')) LIKE lower(?) OR lower(COALESCE(p.categories, '')) LIKE lower(?) OR EXISTS (SELECT 1 FROM paper_authors paq JOIN authors aq ON aq.id = paq.author_id WHERE paq.paper_id = p.id AND lower(aq.display_name) LIKE lower(?)) OR EXISTS (SELECT 1 FROM paper_tags ptq JOIN tags tq ON tq.id = ptq.tag_id WHERE ptq.paper_id = p.id AND lower(tq.name) LIKE lower(?)))`);
       const query = `%${options.q.trim()}%`;
       values.push(query, query, query, query, query, query);
+    }
+    if (options.publishedFrom) {
+      clauses.push("(date(p.published_date) >= date(?) OR (date(p.published_date) IS NULL AND p.year >= ?))");
+      values.push(options.publishedFrom, Number(options.publishedFrom.slice(0, 4)));
+    }
+    if (options.publishedTo) {
+      clauses.push("(date(p.published_date) <= date(?) OR (date(p.published_date) IS NULL AND p.year <= ?))");
+      values.push(options.publishedTo, Number(options.publishedTo.slice(0, 4)));
+    }
+    if (options.addedFrom) {
+      clauses.push("date(p.created_at) >= date(?)");
+      values.push(options.addedFrom);
+    }
+    if (options.addedTo) {
+      clauses.push("date(p.created_at) <= date(?)");
+      values.push(options.addedTo);
     }
     const ids = [...new Set((options.ids || []).map((id) => id.trim()).filter(Boolean))];
     if (ids.length) {

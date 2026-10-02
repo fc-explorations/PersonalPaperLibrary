@@ -1,5 +1,5 @@
 import type { PaperRecord } from "../types.js";
-import type { StoredQuestion, SummaryRecord } from "../repositories/analysis.js";
+import type { StoredQuestion, SummaryRecord } from "../types.js";
 
 export const CLOUD_BACKUP_FORMAT = "personal-paper-library-cloud-backup";
 export const CLOUD_BACKUP_VERSION = 1;
